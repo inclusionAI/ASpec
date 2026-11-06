@@ -1,0 +1,27 @@
+.github/workflows/ci.yml
+  s_ead797203cd50f::t_bc7efcd93f506b 13,20-26
+.github/workflows/build-release.yml
+  s_ead797203cd50f::t_bc7efcd93f506b 1-82
+docs/releasing.md
+  s_ead797203cd50f::t_bc7efcd93f506b 30-39,72-78
+  s_ead797203cd50f::t_402ab81cdd2b66 71
+  s_ead797203cd50f::t_1645346d33e8f9 79
+CONTRIBUTING.md
+  s_ead797203cd50f::t_bc7efcd93f506b 33-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "75ee7bdfe5dc5816e1161aaaa2efd7979cf88a66",
+  "prompts": {},
+  "sessions": {
+    "s_ead797203cd50f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1af82-ac2a-7603-b447-16fe887515b6",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "zhouaihui <albert.zah@antgroup.com>"
+    }
+  }
+}
