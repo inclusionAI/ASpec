@@ -1,0 +1,45 @@
+aspec/offline/generate.py
+  s_313312b27069e2::t_80858a0fa74157 146-147
+docs/user-guide/training.md
+  s_313312b27069e2::t_80858a0fa74157 37-39,137-139
+  s_313312b27069e2::t_ded455896f1818 140
+examples/qwen3-8b-dsa/README.md
+  s_313312b27069e2::t_80858a0fa74157 1-5,7-82
+  s_313312b27069e2::t_d71f859de0117a 6
+docs/user-guide/structures.md
+  s_313312b27069e2::t_80858a0fa74157 175-178
+examples/qwen3-8b-offline/README.md
+  s_313312b27069e2::t_80858a0fa74157 1-70
+MANIFEST.in
+  s_313312b27069e2::t_80858a0fa74157 18
+configs/examples/qwen3_8b_offline_materialize.yaml
+  s_313312b27069e2::t_80858a0fa74157 1-57
+configs/examples/qwen3_8b_offline_replay.yaml
+  s_313312b27069e2::t_80858a0fa74157 1-67
+tests/test_startup_cleanup.py
+  s_313312b27069e2::t_80858a0fa74157 119,137-160
+  s_313312b27069e2::t_714f4d9473054a 161-162
+configs/examples/README.md
+  s_313312b27069e2::t_80858a0fa74157 24-28
+examples/qwen3-8b-dsa/run.sh
+  s_313312b27069e2::t_d71f859de0117a 3
+  s_313312b27069e2::t_80858a0fa74157 1-2,4-59
+README.md
+  s_313312b27069e2::t_80858a0fa74157 62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "53e31ef576105558dc456741ad53f94142fe4e2f",
+  "prompts": {},
+  "sessions": {
+    "s_313312b27069e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1afe0-2852-7902-9f9b-f15fd9b06a14",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "zhouaihui <albert.zah@antgroup.com>"
+    }
+  }
+}
