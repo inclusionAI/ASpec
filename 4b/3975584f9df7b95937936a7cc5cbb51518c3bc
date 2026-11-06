@@ -1,0 +1,51 @@
+.github/workflows/ci.yml
+  s_ead797203cd50f::t_bc7efcd93f506b 13,20-26
+.github/workflows/build-release.yml
+  s_ead797203cd50f::t_bc7efcd93f506b 1-82
+docs/releasing.md
+  s_ead797203cd50f::t_bc7efcd93f506b 30-39,72-78
+  s_ead797203cd50f::t_402ab81cdd2b66 71
+  s_ead797203cd50f::t_1645346d33e8f9 79
+CONTRIBUTING.md
+  s_ead797203cd50f::t_bc7efcd93f506b 33-38
+MANIFEST.in
+  s_313312b27069e2::t_880c0ee00b5423 18
+examples/qwen3-8b-shared-target/README.md
+  s_313312b27069e2::t_89aadae802002c 40-41,70,73,111-112,132
+  s_313312b27069e2::t_45a3abb77a4cf3 1-39,42-69,71-72,74-94,98-110,113-131,133-149,155-159,162-164,167-182
+  s_313312b27069e2::t_00207591e8961e 154
+  s_313312b27069e2::t_a9e6f621e95939 95-97,165-166
+  s_313312b27069e2::t_49edbbe96dcf18 150-153,160-161
+configs/recipes/README.md
+  s_313312b27069e2::t_45a3abb77a4cf3 12
+  s_313312b27069e2::t_49edbbe96dcf18 13
+tests/test_multi_draft_plan.py
+  s_313312b27069e2::t_49edbbe96dcf18 228
+  s_313312b27069e2::t_9766071d9cf3c5 227,233,238,250
+docs/user-guide/sharing.md
+  s_313312b27069e2::t_45a3abb77a4cf3 7-10,67-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4b3975584f9df7b95937936a7cc5cbb51518c3bc",
+  "prompts": {},
+  "sessions": {
+    "s_313312b27069e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1afe0-2852-7902-9f9b-f15fd9b06a14",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "zhouaihui <albert.zah@antgroup.com>"
+    },
+    "s_ead797203cd50f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1af82-ac2a-7603-b447-16fe887515b6",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "zhouaihui <albert.zah@antgroup.com>"
+    }
+  }
+}
