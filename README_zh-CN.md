@@ -22,7 +22,7 @@ ASpec 基于 [TorchSpec](https://github.com/lightseekorg/TorchSpec) 源码开发
   按有效工作量组织训练，减少两端等待。
 - **一个 Target，多个 Draft 并行实验。** 比较算法、结构或超参数时，兼容的 Target 特征只生成
   一次。各 Draft 独立维护权重、优化器、进度和 checkpoint，无需每次更新都相互等待。
-  当前单机用法见[共享训练指南](docs/user-guide/sharing.md)。
+  单机及静态多机的用法见[共享训练指南](docs/user-guide/sharing.md)。
 - **高效处理长上下文。** 结合序列打包、上下文并行与优化的注意力执行，减少 padding 浪费，
   将长序列训练分布到多张 GPU。
 - **换算法，不重搭工作流。** 通过 recipe 选择算法与结构，沿用一致的配置、报告、恢复、评估和

@@ -111,7 +111,8 @@
     "gpus": 8,
     "target_gpus": 4,
     "draft_gpus": 4,
-    "native_only_export": false
+    "native_only_export": false,
+    "draft_experiments": 2
   },
   "qwen27b-long": {
     "configs": [
@@ -146,5 +147,17 @@
     "target_gpus": 4,
     "draft_gpus": 4,
     "native_only_export": true
+  },
+  "multinode-shared": {
+    "configs": [
+      "configs/recipes/qwen3_8b_4k_multinode_multi_draft_nvlink.yaml"
+    ],
+    "model": "Qwen3-8B",
+    "nodes": 2,
+    "gpus": 16,
+    "target_gpus": 8,
+    "draft_gpus": 8,
+    "native_only_export": false,
+    "draft_experiments": 2
   }
 }

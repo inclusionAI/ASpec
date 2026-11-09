@@ -391,7 +391,7 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                 run = stage / label
                 overrides = [*base, f"training.num_train_steps={limit}"]
                 if label == "resumed":
-                    if recipe == "shared-target":
+                    if entry.get("draft_experiments", 1) > 1:
                         from omegaconf import OmegaConf
 
                         experiments = OmegaConf.to_container(
@@ -425,7 +425,7 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                     limit,
                     label == "resumed",
                     require_eval=recipe != "quickstart",
-                    expected_ranks=entry["draft_gpus"] // (2 if recipe == "shared-target" else 1),
+                    expected_ranks=entry["draft_gpus"] // entry.get("draft_experiments", 1),
                 )
                 if recipe == "qwen27b-long":
                     from aspec.commands._recipe_capacity import audit_long_run

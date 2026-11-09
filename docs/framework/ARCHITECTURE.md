@@ -75,7 +75,13 @@ These identities are not interchangeable. [Supported paths](../support.md) descr
 
 Each shared Draft owns weights, optimizer, schedule, RNG, committed work, evaluation and checkpoints.
 There is no shared optimizer-step barrier. Slow readers apply bounded backpressure; safely fenced
-failed readers need not stop healthy siblings. Shared multi-node training is outside the current path.
+failed readers need not stop healthy siblings. Static multi-node sharing keeps features node-local
+and exchanges checkpoints per Draft. Each Draft packs independently within each node; Target requests
+capture one original document at a time. Pending captures reserve each reader’s node-local ready credits.
+
+The shared source tracks each Draft's remaining demand per node. Compatible readers on the same node
+share a capture. Different restored frontiers can require a document to be captured on separate nodes
+for disjoint readers; physical capture identity remains separate from each Draft's committed work.
 
 Exact resume restores all required training state and identities. Weights-only initialization starts
 a new phase. Export preserves actual algorithm/structure/stage, vocabulary mapping, frozen Target

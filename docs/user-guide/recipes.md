@@ -27,6 +27,7 @@ connections on your hardware before training.
 | `shared-target` | Qwen3-8B / two independent DSpark Drafts | 1 node, 8 GPUs: 4T + 2D × 2; 4K | Compare independent Drafts sharing Target features |
 | `qwen27b-long` | Qwen3.8-27B / DSpark | 1 node, 8 GPUs: 3 × TP2 Target + 2D (CP2); 256K-class | Distribute long-context training with CP |
 | `multinode` | Qwen3-8B / DSpark | 2 nodes × 8 GPUs; each 4T + 4D; 4K | Keep features node-local and synchronize gradients across nodes |
+| `multinode-shared` | Qwen3-8B / two independent DSpark Drafts | 2 nodes × 8 GPUs; each 4T + 2D × 2; 4K | Share node-local Target features across independently progressing cross-node Drafts |
 
 The [27B recipe](../../configs/recipes/qwen3_8_27b_256k_cudnn_cp2_nvlink.yaml)
 uses a 261,888-token cap, native cuDNN THD attention and CP2. Each TP2 Target replica admits one request,
@@ -83,6 +84,10 @@ For segmented training, set the full `training.lr_total_steps` before segment on
 output using `--set training.load_path=/absolute/path/to/checkpoints`; see [recovery](training.md).
 The optional [runtime validation command](../contributing/validation.md) runs a short training,
 recovery and export check without changing normal training defaults.
+
+For `multinode-shared`, follow the complete
+[two-Draft start and independent resume example](sharing.md#start-two-drafts-and-resume-from-different-checkpoints).
+It preserves the full experiment list and each Draft's independent checkpoint and LR schedule.
 
 ## DSpark performance settings
 

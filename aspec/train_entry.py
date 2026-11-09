@@ -223,8 +223,6 @@ def _prepare_config() -> tuple[argparse.Namespace, ExecutionPlan]:
     if config.experiments:
         from aspec.multi_draft import compile_multi_draft_plan
 
-        if args.preflight_only:
-            parser.error("shared Target training does not support --preflight-only")
         plan = compile_multi_draft_plan(config)
     else:
         plan = compile_execution_plan(
@@ -528,16 +526,19 @@ def main() -> None:
 
 def _main() -> None:
     args, plan = _prepare_config()
-    from aspec.multi_draft import MultiDraftPlan, run_multi_draft
+    from aspec.multi_draft import MultiDraftPlan, preflight_multi_draft, run_multi_draft
 
     if isinstance(plan, MultiDraftPlan):
         try:
             with termination_signal_handlers():
                 ensure_ray_initialized()
                 install_termination_signal_handler()
-                run_multi_draft(args, plan)
+                if getattr(args, "preflight_only", False) is True:
+                    preflight_multi_draft(args, plan)
+                else:
+                    run_multi_draft(args, plan)
         finally:
-            if ray.is_initialized():
+            if not isinstance(sys.exception(), SourceTeardownBlockedError) and ray.is_initialized():
                 ray.shutdown()
         return
     # ``preflight_only`` is an argparse boolean.  Requiring the literal value

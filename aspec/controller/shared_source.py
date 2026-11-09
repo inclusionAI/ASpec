@@ -26,6 +26,7 @@ import ray
 
 from aspec.config.draft_execution import is_direct_cp_backend
 from aspec.controller.training_controller import TrainingControllerState
+from aspec.locality import allocate_node_ready_watermarks
 from aspec.transfer.mooncake.p2p import (
     MooncakeP2PDescriptor,
     MooncakeP2PTransfer,
@@ -87,9 +88,26 @@ class ExperimentController:
 
 class SharedSourceState:
     def __init__(self, source_args, experiment_args: dict):
+        scheduler_args = copy.copy(source_args)
+        # The source selects documents, while each child owns its DP queues.
+        scheduler_args.mooncake_feature_affinity = "any"
         self.source = TrainingControllerState(
-            source_args, 1, with_train_queues=False, with_eval_queues=False
+            scheduler_args, 1, with_train_queues=False, with_eval_queues=False
         )
+        self._source_nodes = (
+            list(source_args.training_node_ips)
+            if getattr(source_args, "mooncake_feature_affinity", "any") == "node_local_required"
+            else []
+        )
+        self._node_cursor = 0
+        self._node_watermarks = (
+            allocate_node_ready_watermarks(
+                int(getattr(source_args, "max_sample_pool_size", 0) or 0),
+                dict.fromkeys(self._source_nodes, 1),
+            ) if self._source_nodes else {}
+        )
+        self._pending_entries = deque()
+        self._remaining_by_node = {}
         self.experiments = {
             name: TrainingControllerState(args, args.dp_size, with_eval_queues=bool(getattr(args, "eval_data_path", None)))
             for name, args in experiment_args.items()
@@ -110,6 +128,7 @@ class SharedSourceState:
         self._lock = threading.RLock()
         self._dispatch_locks = {name: threading.Lock() for name in self.experiments}
         self._audiences: dict[str, tuple[str, ...]] = {}
+        self._admitted_nodes: dict[str, str] = {}
         self._order: deque[str] = deque()
         self._completed = {}
         self._descriptors = {name: {} for name in self.experiments}
@@ -225,6 +244,13 @@ class SharedSourceState:
                 # rather than cumulative sample count, define this attempt.
                 steps = child.args.num_train_steps - completed_steps
                 self.remaining[name] = None if getattr(child.args, "dflash_packing", False) and steps else steps * child.args.global_batch_size
+                if self._source_nodes:
+                    budget = None
+                    if self.remaining[name] is not None:
+                        budget, remainder = divmod(self.remaining[name], len(self._source_nodes))
+                        if remainder:
+                            raise ValueError("shared source demand must divide into complete node-local rounds")
+                    self._remaining_by_node[name] = dict.fromkeys(self._source_nodes, budget)
                 self.ready.add(name)
                 self._start_epochs[name] = child._dataset_epoch
                 self._committed_epoch[name] = child._dataset_epoch
@@ -257,7 +283,12 @@ class SharedSourceState:
                 return result
             if method == "get_checkpoint_work_state":
                 state = child.get_checkpoint_work_state()
-                state["dataset_epoch"] = self._committed_epoch[name]
+                # Packing may commit later documents before an older epoch's
+                # tail. Restart at the oldest outstanding epoch and skip the
+                # cumulative committed work set, rather than losing that tail.
+                state["dataset_epoch"] = min(
+                    [self._committed_epoch[name], *self._epochs[name].values()]
+                )
                 return state
             return getattr(child, method)(*args, **kwargs)
 
@@ -272,6 +303,9 @@ class SharedSourceState:
                 for index, entry in enumerate(entries, self._eval_cursor):
                     identity = entry.metadata[EXECUTION_ID_KEY]
                     audience = tuple(n for n in self._eval_names if index < len(self.experiments[n]._stored_eval_dataset))
+                    if self._source_nodes:
+                        entry.metadata["shared_source_node"] = self._source_nodes[index % len(self._source_nodes)]
+                        self._admitted_nodes[identity] = entry.metadata["shared_source_node"]
                     self._audiences[identity] = audience
                     self._order.append(identity)
                     for name in audience:
@@ -281,33 +315,88 @@ class SharedSourceState:
             if not self.active.issubset(self.ready):
                 return []
             entries = []
+            # Include requests not yet published: fetching ahead must not send
+            # an entire prompt window to the node that currently looks empty.
+            pressure = {}
+            if self._source_nodes:
+                for name in self.active:
+                    ready = self.experiments[name].get_ready_pool_size_by_node()
+                    pressure[name] = {
+                        node: ready.get(node, 0) + sum(
+                            name in readers and self._admitted_nodes[key] == node
+                            for key, readers in self._audiences.items()
+                        ) for node in self._source_nodes
+                    }
+            while self._pending_entries and len(entries) < count:
+                entries.append(self._pending_entries.popleft())
             while len(entries) < count and any(self.remaining[name] is None or self.remaining[name] > 0 for name in self.active):
+                # Reserve ready credit before fetching a logical document. All
+                # not-yet-published requests count here, so a prefetched shared
+                # audience can never block behind an already full reader.
+                if self._source_nodes and any(
+                    (self.remaining[name] is None or self.remaining[name] > 0)
+                    and not any(
+                        (self._remaining_by_node[name][node] is None or self._remaining_by_node[name][node] > 0)
+                        and (not self._node_watermarks[node] or pressure[name][node] < self._node_watermarks[node])
+                        for node in self._source_nodes
+                    ) for name in self.active
+                ):
+                    break
                 candidates = self.source.get_prompts(1)
                 if not candidates:
                     self.source.reload_dataset()
                     continue
                 entry = candidates[0]
                 work_id = entry.metadata[WORK_ID_KEY]
-                audience = tuple(
-                    sorted(
-                        name
-                        for name in self.active
-                        if (self.remaining[name] is None or self.remaining[name] > 0)
-                        and self.source._dataset_epoch >= self._start_epochs[name]
-                        and work_id not in self.experiments[name]._restored_committed_work_ids
-                    )
-                )
-                if not audience:
-                    continue
-                entry.metadata["shared_source_epoch"] = self.source._dataset_epoch
-                execution_id = entry.metadata[EXECUTION_ID_KEY]
-                self._audiences[execution_id] = audience
-                self._order.append(execution_id)
-                for name in audience:
-                    if self.remaining[name] is not None:
-                        self.remaining[name] -= 1
-                    self._epochs[name][execution_id] = self.source._dataset_epoch
-                entries.append(entry)
+                audience = {
+                    name for name in self.active
+                    if (self.remaining[name] is None or self.remaining[name] > 0)
+                    and self.source._dataset_epoch >= self._start_epochs[name]
+                    and work_id not in self.experiments[name]._restored_committed_work_ids
+                }
+                while audience:
+                    node = None
+                    selected = audience
+                    if self._source_nodes:
+                        # Readers can consume different numbers of documents per
+                        # packed row. Route each reader to its least loaded node;
+                        # share the capture when their placements agree.
+                        order = self._source_nodes[self._node_cursor:] + self._source_nodes[:self._node_cursor]
+                        preferred = {}
+                        for name in sorted(audience):
+                            eligible = [candidate for candidate in order
+                                        if (self._remaining_by_node[name][candidate] is None
+                                            or self._remaining_by_node[name][candidate] > 0)
+                                        and (not self._node_watermarks[candidate]
+                                             or pressure[name][candidate] < self._node_watermarks[candidate])]
+                            if not eligible:
+                                raise RuntimeError("shared node-local demand disagrees with remaining work")
+                            preferred[name] = min(eligible, key=pressure[name].__getitem__)
+                        node = max(order, key=lambda candidate: sum(value == candidate for value in preferred.values()))
+                        self._node_cursor = (self._source_nodes.index(node) + 1) % len(self._source_nodes)
+                        selected = {name for name in audience if preferred[name] == node}
+                    admitted = copy.copy(entry)
+                    admitted.metadata = dict(entry.metadata, shared_source_epoch=self.source._dataset_epoch)
+                    execution_id = entry.metadata[EXECUTION_ID_KEY]
+                    if node is not None:
+                        admitted.metadata["shared_source_node"] = node
+                        execution_id = f"{execution_id}/node/{self._source_nodes.index(node)}"
+                        admitted.metadata[EXECUTION_ID_KEY] = execution_id
+                        self._admitted_nodes[execution_id] = node
+                    self._audiences[execution_id] = tuple(sorted(selected))
+                    self._order.append(execution_id)
+                    for name in selected:
+                        if node is not None:
+                            pressure[name][node] += 1
+                        if self.remaining[name] is not None:
+                            self.remaining[name] -= 1
+                            if node is not None:
+                                self._remaining_by_node[name][node] -= 1
+                        self._epochs[name][execution_id] = self.source._dataset_epoch
+                    self._pending_entries.append(admitted)
+                    audience = audience - selected
+                while self._pending_entries and len(entries) < count:
+                    entries.append(self._pending_entries.popleft())
             return entries
 
     def push_inference_results(self, results):
@@ -324,12 +413,19 @@ class SharedSourceState:
                 execution_id = self._order[0]
                 output = self._completed[execution_id]
                 descriptor = MooncakeP2PDescriptor.from_key(output.mooncake_key)
+                if self._source_nodes and (
+                    output.metadata.get("feature_affinity") != "node_local_required"
+                    or output.metadata.get("source_node_ip") != self._admitted_nodes[execution_id]
+                    or output.metadata.get("shared_source_node") != self._admitted_nodes[execution_id]
+                ):
+                    raise RuntimeError("shared output violates its admitted source-node placement")
                 audience = [n for n in self._audiences[execution_id] if n in self.active]
                 if not audience:
                     source_control(descriptor)
                     self._order.popleft()
                     del self._completed[execution_id]
                     del self._audiences[execution_id]
+                    self._admitted_nodes.pop(execution_id, None)
                     continue
                 views, readers, payloads = [], [], {}
                 for name in audience:
@@ -396,6 +492,7 @@ class SharedSourceState:
                 self._order.popleft()
                 del self._completed[execution_id]
                 del self._audiences[execution_id]
+                self._admitted_nodes.pop(execution_id, None)
                 # Every registered right is tracked before publishing to any
                 # controller, so a partial fanout failure cannot orphan readers.
                 for name, sample in views:
@@ -434,6 +531,32 @@ class SharedSourceState:
                 default=0,
             )
 
+    def get_ready_pool_size_by_node(self, execution_ids=None):
+        """Count the slowest reader, optionally restricted to an admission's audience."""
+        with self._lock:
+            counts = dict.fromkeys(self._source_nodes, 0)
+            readers = self.active
+            if execution_ids is not None:
+                readers = set()
+                for identity in execution_ids:
+                    if identity not in self._audiences:
+                        raise ValueError("unknown shared source admission")
+                    readers.update(self._audiences[identity])
+                readers &= self.active
+            child_counts = {
+                name: self.experiments[name].get_ready_pool_size_by_node()
+                for name in readers
+            }
+            for name, ready in child_counts.items():
+                for node in counts:
+                    unpublished = sum(
+                        name in self._audiences[key]
+                        and output.metadata.get("source_node_ip") == node
+                        for key, output in self._completed.items()
+                    )
+                    counts[node] = max(counts[node], ready.get(node, 0) + unpublished)
+            return counts
+
     def get_pool_size(self):
         with self._lock:
             return len(
@@ -470,6 +593,8 @@ class SharedSourceState:
             if name in self.active:
                 self._cancelled[name] = str(reason)
                 self.remaining[name] = 0
+                if name in self._remaining_by_node:
+                    self._remaining_by_node[name] = dict.fromkeys(self._source_nodes, 0)
             return {"experiment": name, "requested": name in self._cancelled}
 
     def cancellation_reason(self, name):
@@ -486,6 +611,8 @@ class SharedSourceState:
                 return
             self.active.discard(name)
             self.remaining[name] = 0
+            if name in self._remaining_by_node:
+                self._remaining_by_node[name] = dict.fromkeys(self._source_nodes, 0)
             for execution_id, descriptor in self._descriptors[name].items():
                 # Replaying the frozen subscription is idempotent whether the
                 # first RPC was rejected or only its ACK was lost. Do not
@@ -541,11 +668,14 @@ class SharedSourceState:
                 del self._completed[execution_id]
                 self._order.remove(execution_id)
                 del self._audiences[execution_id]
+                self._admitted_nodes.pop(execution_id, None)
                 self._discarded_unpublished += 1
             self._abandoned_admissions += len(self._order)
             self._order.clear()
+            self._pending_entries.clear()
             self._completed.clear()
             self._audiences.clear()
+            self._admitted_nodes.clear()
             return self.status()
 
     def status(self):
@@ -563,6 +693,7 @@ class SharedSourceState:
                 "pending_source_subscriptions": len(self._pending_subscriptions),
                 "peak_completed_unpublished_observations": self._peak_unpublished,
                 "remaining_source_demand": dict(self.remaining),
+                "remaining_source_demand_by_node": copy.deepcopy(self._remaining_by_node),
                 "error": self._error,
                 "cancelled_experiments": dict(self._cancelled),
                 "abandoned_admissions_without_output": self._abandoned_admissions,
