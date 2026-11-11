@@ -92,6 +92,7 @@ class DFlashTrainer(Trainer):
         self.l1_loss_alpha = getattr(args, "dflash_l1_loss_alpha", 0.0)
         self._last_hs_prenorm = getattr(args, "last_hidden_states_prenorm", False)
         self.verifier_norm: Optional[torch.nn.Module] = None
+        self._mtp_binding_validated = False
 
     def init_model(
         self,
@@ -143,7 +144,10 @@ class DFlashTrainer(Trainer):
 
             draft_model = self._build_draft_model(config)
 
+        conditioning = getattr(config, "mtp_conditioning", None)
         if dist.get_rank() == 0:
+            if conditioning:
+                draft_model.initialize_mtp_conditioning(target_model_path)
             initial_path = getattr(self.args, "initial_draft_model_path", None)
             if initial_path:
                 checkpoint.load_initial_draft_weights(
@@ -197,6 +201,15 @@ class DFlashTrainer(Trainer):
         _unwrapped = getattr(self.model, "_orig_mod", self.model)  # torch.compile
         self.dflash = getattr(_unwrapped, "module", _unwrapped)  # DDP/replicate
         self.draft_model = self.dflash.draft_model
+        if conditioning:
+            self._anchor_slot_offset = self.dflash.prediction_start
+            if hasattr(self, "confidence_head_alpha"):
+                self._extra_loss_component_keys = [
+                    "ce_loss", "l1_loss", "confidence_loss",
+                    *(f"suffix_accept_rate@{index}" for index in range(
+                        self.block_size - self.dflash.prediction_start)),
+                    "suffix_tau_probabilistic",
+                ]
 
         total_steps = self.args.lr_total_steps
         decay_style = getattr(self.args, "lr_decay_style", "cosine")
@@ -234,6 +247,11 @@ class DFlashTrainer(Trainer):
         self.lr_scheduler = self.optimizer.lr_scheduler
 
         checkpoint_payload = checkpoint.load(self)
+        if conditioning:
+            self.draft_model.validate_mtp_binding(
+                target_model_path,
+                embedding_key=getattr(self.args, "embedding_key", "model.embed_tokens.weight"),
+            )
 
         self._init_target_lm_head(target_model_path)
 
@@ -248,6 +266,7 @@ class DFlashTrainer(Trainer):
         self.target_lm_head_weight = (
             None if self.target_lm_head is None else self.target_lm_head.lm_head.weight
         )
+        self._mtp_binding_validated = bool(conditioning)
 
         # Frozen Target helpers can initialize temporary random parameters.
         # Restore the training RNG only after all model initialization ends.
@@ -296,6 +315,27 @@ class DFlashTrainer(Trainer):
         from aspec.models.draft.moe import QwenDraftMoE
 
         draft = getattr(self, "draft_model", None)
+        if getattr(getattr(draft, "config", None), "mtp_conditioning", None):
+            import inspect
+            import sys
+
+            from aspec.config.mtp_conditioning import mtp_conditioning_semantics
+
+            status = dict(status)
+            status["mtp_conditioning"] = {
+                **mtp_conditioning_semantics(draft.config.to_dict()),
+                "prediction_start": self.dflash.prediction_start,
+                "frozen_source_parameters": sum(p.numel() for p in draft.mtp_source.parameters()),
+                "fusion_parameters": (sum(p.numel() for p in draft.mtp_fusion.parameters())
+                                      if draft.mtp_fusion is not None else 0),
+                "target_binding_validated": self._mtp_binding_validated,
+                "runtime_origin": {
+                    "python": sys.executable,
+                    "trainer": inspect.getfile(type(self)),
+                    "draft": inspect.getfile(type(draft)),
+                    "native_features": inspect.getfile(type(draft.mtp_source)),
+                },
+            }
         layers = list(getattr(draft, "layers", []))
         if layers and any(isinstance(layer.mlp, (QwenDraftMoE, LingDraftMoE)) for layer in layers):
             status = dict(status)
@@ -337,6 +377,8 @@ class DFlashTrainer(Trainer):
         return status
 
     def save_draft_model_for_serving(self, output_dir: str) -> None:
+        if getattr(self.draft_model.config, "mtp_conditioning", None):
+            raise NotImplementedError("MTP-conditioned Draft requires native --format aspec export")
         if getattr(self.draft_model.config, "ffn_type", "dense") != "dense":
             raise NotImplementedError(
                 "MoE Draft serving export is not yet supported; retain the complete training checkpoint"
