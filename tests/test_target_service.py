@@ -140,6 +140,18 @@ def test_native_scheduler_uses_the_callers_run_identity(service, monkeypatch):
     assert environment["ASPEC_SHARED_SOURCE"] == "0"
 
 
+@pytest.mark.parametrize("second,views", [("contract-a", "0"), ("contract-b", "1")])
+def test_shared_source_view_flags_follow_the_consumer_contract_ids(second, views):
+    from aspec.inference.service import session_environment
+
+    environment = session_environment(Namespace(
+        aspec_run_id="run", aspec_attempt_id="attempt", aspec_shared_source=True,
+        aspec_shared_consumer_contracts={"first": "contract-a", "second": second},
+    ))
+    assert environment["ASPEC_SHARED_SOURCE"] == "1"
+    assert environment["ASPEC_SHARED_FEATURE_VIEWS"] == views
+
+
 def test_disconnect_retains_unverified_reader_storage(service, monkeypatch):
     service.create(creation(service))
     service.reap_disconnected(expiry=-1)

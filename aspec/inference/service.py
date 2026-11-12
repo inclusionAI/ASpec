@@ -265,9 +265,7 @@ def session_environment(args):
         "ASPEC_RUN_ID": args.aspec_run_id,
         "ASPEC_ATTEMPT_ID": args.aspec_attempt_id,
         "ASPEC_SHARED_SOURCE": str(int(bool(getattr(args, "aspec_shared_source", False)))),
-        "ASPEC_SHARED_FEATURE_VIEWS": str(int(len({
-            value["contract_id"] for value in contracts.values()
-        }) > 1)),
+        "ASPEC_SHARED_FEATURE_VIEWS": str(int(len(set(contracts.values())) > 1)),
     }
 
 
