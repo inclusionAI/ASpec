@@ -253,7 +253,8 @@ def _prepare_sgl_engines(
     if not target_python or not Path(target_python).is_absolute():
         raise ValueError("Set inference.target_python or ASPEC_TARGET_PYTHON to the absolute "
                          "Python path of the isolated Target environment")
-    if Path(target_python).parent == Path(sys.executable).parent:
+    if (getattr(args, "cluster_mode", "single_node") == "single_node"
+            and Path(target_python).parent == Path(sys.executable).parent):
         raise ValueError("Target and Draft must use separate virtual environments")
 
     pg_obj, reordered_bundle_indices, reordered_gpu_ids = pg
