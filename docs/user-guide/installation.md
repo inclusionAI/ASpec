@@ -48,7 +48,7 @@ aspec patch-sglang --check
 ```
 
 Applying the patch again verifies an already patched installation. Conflicting changes or an
-unsupported SGLang version are rejected. `--check` never installs dependencies or modifies files.
+unsupported SGLang version are rejected. `--check` never installs dependencies or modifies SGLang files.
 
 ## Check the environment
 

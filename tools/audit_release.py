@@ -74,6 +74,7 @@ SDIST_REQUIRED = {
     "aspec/models/target/target_utils.py",
     "aspec/compat/patches/sglang-v0.5.21.patch",
     "requirements/sglang-v0.5.21.txt",
+    "requirements/draft.txt",
     "tools/audit_release.py",
     "tools/recipe_catalog.json",
     "tools/build_release.py",
@@ -81,6 +82,9 @@ SDIST_REQUIRED = {
     "setup.py",
 }
 WHEEL_REQUIRED = {
+    "aspec/_target_worker.py",
+    "aspec/inference/target_runtime.py",
+    "aspec/inference/engine/target_actor.py",
     "aspec/compat/fa4_cutlass.py",
     "aspec/compat/sglang_patch.py",
     "aspec/compat/patches/sglang-v0.5.21.patch",

@@ -85,7 +85,9 @@ def test_release_audit_accepts_complete_artifact_pair(tmp_path):
 
 
 @pytest.mark.parametrize("member", ["aspec/compat/sglang_patch.py",
-                                  "aspec/compat/patches/sglang-v0.5.21.patch"])
+                                  "aspec/compat/patches/sglang-v0.5.21.patch",
+                                  "aspec/_target_worker.py",
+                                  "aspec/inference/engine/target_actor.py"])
 def test_release_audit_requires_bundled_patch_command_and_resource(tmp_path, member):
     _artifacts(tmp_path, wheel_omit=(member,))
     with pytest.raises(ValueError, match="missing wheel members"):

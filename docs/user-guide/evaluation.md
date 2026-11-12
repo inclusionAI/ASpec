@@ -2,6 +2,9 @@
 
 Training health, held-out learning, asset compatibility and decode usefulness are separate questions.
 
+Serving-based `aspec evaluate` runs in the Target environment selected by `ASPEC_TARGET_PYTHON`.
+Checkpoint export runs in Draft. Held-out training evaluation uses the configured Target workers.
+
 ## Held-out evaluation
 
 Set `dataset.eval_data_path` and `dataset.eval_interval`. Target observations are cached with

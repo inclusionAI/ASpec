@@ -736,7 +736,6 @@ def test_evidence_separates_initialized_and_end_to_end_capabilities(tmp_path):
         "gpu_direct_transport",
         "target_prefill_output",
         "producer_consumer_pipeline",
-        "draft_attention_execution",
         "target_logits",
         "mixed_length_packing",
         "long_context_execution",

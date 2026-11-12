@@ -3,6 +3,9 @@
 Target generation, training rows and decode prefixes have different boundaries. Bundled synthetic
 data is a smoke fixture, not a quality recipe.
 
+`aspec prepare-target-data` uses the Target environment selected by `ASPEC_TARGET_PYTHON`.
+Other local preprocessing commands run in Draft.
+
 ## Conversations
 
 One JSON object per JSONL line:

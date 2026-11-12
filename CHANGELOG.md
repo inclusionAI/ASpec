@@ -2,8 +2,12 @@
 
 ## Unreleased
 
-- Install training dependencies with the default distribution. Target nodes can prepare SGLang
-  and its training patch with `aspec patch-sglang`; `aspec doctor --target` checks that runtime.
+- Install independent Draft (`ling-aspec`) and Target (`ling-aspec-target`) environments,
+  sharing the version-aligned `ling-aspec-runtime` code package. Target retains SGLang's own
+  dependency requirements; no resolver overrides are used. Select Target's interpreter with
+  `ASPEC_TARGET_PYTHON` or `inference.target_python`.
+- Keep `aspec patch-sglang` limited to patching files. Report role-specific worker provenance,
+  and expose pip CUDA toolkit libraries through a private JIT development view.
 - Set the first PyPI version to `0.1.0b0`; developers maintain release versions with the `b0`
   suffix while CI checks the matching tag without changing the version.
 - Use `ling-aspec` as the distribution name, retaining the `aspec` namespace and CLI. Publish

@@ -108,4 +108,4 @@ def test_target_interpreter_selection_is_recorded_in_plan(monkeypatch, explicit)
     plan = compile_execution_plan(load_config(base_config=config))
     expected = explicit or "/environment-target/bin/python"
     assert plan.to_runtime_args().target_python == expected
-    assert plan.to_dict()["policy"]["topology"]["inference"]["python_executable"] == expected
+    assert plan.to_dict()["policy"]["resources"]["inference"]["python_executable"] == expected
