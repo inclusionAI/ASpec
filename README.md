@@ -52,25 +52,30 @@ paths have explicit support boundaries, and DFlash2 remains experimental.
 Scale from a first multi-GPU run to static multi-node training, with NVLink, TCP and RDMA data paths.
 Check [supported paths and limitations](docs/support.md), then browse the [recipes](docs/user-guide/recipes.md) for starting points.
 
-## Start here
+## Installation
 
-The PyPI distribution is named `ling-aspec`; the Python import and command remain `aspec`.
-Use the [installation guide](docs/user-guide/installation.md) for the complete pinned GPU runtime.
-
-1. [Run source setup](docs/user-guide/installation.md); [containers](docs/user-guide/containers.md) are also available.
-2. [Choose Qwen3-8B or Ling tiny](docs/user-guide/quickstart.md) for the same two-GPU Plan, train,
-   report, resume and export workflow.
-3. [Choose a training recipe](docs/user-guide/recipes.md) and [prepare training data](docs/user-guide/data.md).
-
-Recipes cover Qwen3-8B, Qwen3.5-9B Native MTP, Qwen3.8-27B long context, and Ling tiny/flash 3.0/flash 3.1.
-For complete feature workflows, see [offline feature generation and replay](examples/qwen3-8b-offline/README.md)
-and [DSA dense → indexer → sparse training](examples/qwen3-8b-dsa/README.md).
-
-From the repository root:
+In an activated Linux virtual environment:
 
 ```bash
-bash setup.sh
-source .venv/bin/activate
+pip install ling-aspec
+```
+
+This installs the training dependencies. On nodes that run the Target model, prepare SGLang
+and apply the training patch:
+
+```bash
+aspec patch-sglang
+```
+
+See the [installation guide](docs/user-guide/installation.md) for prerequisites, source installation
+and release wheels, or use the [container setup](docs/user-guide/containers.md).
+Optionally run `aspec doctor` to check the environment.
+
+## Quickstart
+
+With two NVLink-connected GPUs:
+
+```bash
 CUDA_VISIBLE_DEVICES=0,1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
 # Or choose Qwen3-8B:
 CUDA_VISIBLE_DEVICES=0,1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
@@ -78,8 +83,13 @@ CUDA_VISIBLE_DEVICES=0,1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
 
 Both profiles use bundled raw conversations, their own tokenizer/template and an eight-step
 train/resume/native-export check. Add `--target /absolute/path/to/model` to use a local checkpoint.
+See [Quickstart](docs/user-guide/quickstart.md) for the full workflow, then choose a
+[training recipe](docs/user-guide/recipes.md) and [prepare your data](docs/user-guide/data.md).
 For training with Target-generated data and held-out evaluation, continue with the
 [Qwen3-8B DSpark recipe](docs/user-guide/recipes.md#qwen3-8b-dspark-quality-recipe).
+
+Additional workflows cover [offline feature generation and replay](examples/qwen3-8b-offline/README.md)
+and [DSA dense → indexer → sparse training](examples/qwen3-8b-dsa/README.md).
 
 ## Performance
 

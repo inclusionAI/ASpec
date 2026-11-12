@@ -67,6 +67,54 @@ def test_unknown_wheel_changes_are_not_overwritten(wheel):
     assert file.read_text() == "value = 99\n"
 
 
+@pytest.mark.parametrize("check", [False, True])
+def test_missing_target_runtime_is_prepared_only_for_explicit_apply(monkeypatch, tmp_path, check):
+    events = []
+
+    def installed_site(**kwargs):
+        events.append(("locate", kwargs["writable"]))
+        if len(events) == 1:
+            raise importlib.metadata.PackageNotFoundError("sglang")
+        return tmp_path
+
+    monkeypatch.setattr(patcher, "installed_site", installed_site)
+    monkeypatch.setattr(patcher, "install_target_runtime", lambda: events.append(("install",)))
+    monkeypatch.setattr(patcher, "patch_state", lambda _: "patched")
+    monkeypatch.setattr(sys, "argv", ["patch", *(["--check"] if check else [])])
+    if check:
+        with pytest.raises(SystemExit) as error:
+            patcher.main()
+        assert error.value.code == 1
+        assert events == [("locate", False)]
+    else:
+        patcher.main()
+        assert events == [("locate", True), ("install",), ("locate", True)]
+
+
+def test_target_install_uses_bundled_overrides_and_current_interpreter(monkeypatch):
+    calls = []
+    monkeypatch.setattr(patcher, "command_environment", lambda: {"PATH": "/verified/bin"})
+    monkeypatch.setattr(patcher.shutil, "which", lambda *_, **__: "/verified/bin/git")
+    monkeypatch.setattr(patcher.subprocess, "run", lambda args, **kwargs: calls.append((args, kwargs)))
+    patcher.install_target_runtime()
+    args, kwargs = calls[0]
+    assert args[:5] == [sys.executable, "-m", "uv", "pip", "install"]
+    assert args[args.index("--python") + 1] == sys.executable
+    assert Path(args[args.index("--override") + 1]).name == "cute-overrides.txt"
+    assert Path(args[args.index("-r") + 1]).name == "sglang-v0.5.21.txt"
+    assert kwargs == {"env": {"PATH": "/verified/bin"}, "check": True}
+
+
+def test_target_install_rejects_an_invalid_environment_before_installing(monkeypatch):
+    def invalid():
+        raise ValueError("Activate the intended venv")
+
+    monkeypatch.setattr(patcher, "command_environment", invalid)
+    monkeypatch.setattr(patcher.subprocess, "run", lambda *_, **__: pytest.fail("must not install"))
+    with pytest.raises(ValueError, match="intended venv"):
+        patcher.install_target_runtime()
+
+
 def test_patch_check_works_inside_an_unrelated_git_checkout(wheel):
     site, file, patch = wheel
     subprocess.run(["git", "init", "-q", str(site.parent)], check=True)

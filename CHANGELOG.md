@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Install training dependencies with the default distribution. Target nodes can prepare SGLang
+  and its training patch with `aspec patch-sglang`; `aspec doctor --target` checks that runtime.
 - Set the first PyPI version to `0.1.0b0`; developers maintain release versions with the `b0`
   suffix while CI checks the matching tag without changing the version.
 - Use `ling-aspec` as the distribution name, retaining the `aspec` namespace and CLI. Publish

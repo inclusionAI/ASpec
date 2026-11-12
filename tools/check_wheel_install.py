@@ -86,6 +86,9 @@ print(json.dumps({'sglang':str(Path(spec.origin).parent),'identity':identity}))
         doctor = json.loads(run([cli, "doctor", "--json"], expected=1))
         if doctor["ok"] or not doctor["checks"] or doctor["gpu_requested"]:
             raise RuntimeError("CPU fixture must not claim full runtime readiness")
+        target_doctor = json.loads(run([cli, "doctor", "--target", "--json"], expected=1))
+        if not target_doctor["target_requested"]:
+            raise RuntimeError("Target doctor must require the Target runtime")
         package = Path(observed["sglang"])
 
         def hashes():

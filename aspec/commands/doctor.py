@@ -71,9 +71,9 @@ def expected_versions():
             for name, version in [line.split("==", 1)]}
 
 
-def inspect_environment(*, gpu=False):
+def inspect_environment(*, gpu=False, target=False):
     result = {"python": sys.executable, "prefix": sys.prefix, "platform": platform.platform(),
-              "gpu_requested": gpu, "checks": [], "errors": []}
+              "gpu_requested": gpu, "target_requested": target, "checks": [], "errors": []}
     result["dependencies"] = check_dependency_metadata()
     result["errors"].extend(result["dependencies"]["conflicts"])
     if error := venv_error():
@@ -82,24 +82,31 @@ def inspect_environment(*, gpu=False):
         result["errors"].append("Python >=3.11 is required")
     if sys.platform != "linux":
         result["errors"].append("The GPU runtime requires Linux; macOS/Windows training is not validated")
+    has_sglang = False
     for name, expected in expected_versions().items():
         try:
             actual = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             actual = None
+        if name == "sglang":
+            has_sglang = actual is not None
+            if not target and not has_sglang:
+                continue
         ok = actual is not None and actual.split("+", 1)[0] == expected
         result["checks"].append({"package": name, "expected": expected, "installed": actual, "ok": ok})
         if not ok:
             result["errors"].append(f"{name}: expected {expected}, found {actual}; use the pinned requirements")
-    try:
-        site = installed_site()
-        result["sglang_path"] = str(site / "sglang")
-        result["patch"] = patch_state(site)
-        if result["patch"] != "patched":
-            result["errors"].append("Apply the training patch: aspec patch-sglang")
-    except (RuntimeError, OSError, importlib.metadata.PackageNotFoundError) as exc:
-        if str(exc) not in result["errors"]:
-            result["errors"].append(str(exc))
+    result["patch"] = "unavailable" if target or has_sglang else "not_required"
+    if target or has_sglang:
+        try:
+            site = installed_site()
+            result["sglang_path"] = str(site / "sglang")
+            result["patch"] = patch_state(site)
+            if result["patch"] != "patched":
+                result["errors"].append("Apply the training patch: aspec patch-sglang")
+        except (RuntimeError, OSError, importlib.metadata.PackageNotFoundError) as exc:
+            if str(exc) not in result["errors"]:
+                result["errors"].append(str(exc))
     if gpu:
         try:
             import torch
@@ -125,9 +132,10 @@ def inspect_environment(*, gpu=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu", action="store_true", help="Also allocate a small CUDA tensor and import Mooncake")
+    parser.add_argument("--target", action="store_true", help="Also require SGLang and its training patch")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    result = inspect_environment(gpu=args.gpu)
+    result = inspect_environment(gpu=args.gpu, target=args.target)
     if args.json:
         print(json.dumps(result, indent=2))
     else:

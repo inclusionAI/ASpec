@@ -1,17 +1,22 @@
 # Advanced installation and native prerequisites
 
-Start with [one-command source setup](installation.md). This page explains its pinned lane,
+Start with the [installation guide](installation.md). This page explains the supported runtime,
 native prerequisites, compatibility exceptions and manual recovery procedures.
 
 The [release wheel](installation.md#install-a-release-wheel) includes public commands, formal recipes,
 Quickstart data and the pinned patch. Source setup and developer `python -m tools.*` commands below
 run from the repository root. Both installation forms use the same runtime lane and overrides.
 
+`pip install ling-aspec` installs the Draft training runtime. On Target nodes,
+`aspec patch-sglang` also prepares a missing SGLang installation using the bundled dependency
+manifest and compatibility overrides before applying the patch. `aspec doctor --target` checks
+that setup; `aspec doctor` can check a training environment without SGLang.
+
 ## Requirements
 
 - Linux x86-64 with **glibc 2.34 or newer** (required by the pinned SGLang wheel); Python >=3.11. Check the host with `getconf GNU_LIBC_VERSION`.
-- A CUDA-13-compatible NVIDIA driver/runtime. This lane pins Torch2.13.0, SGLang0.5.21,
-  Transformers5.12.1, FA4 4.0.0b34, CUTLASS DSL 4.7.1 and Quack 0.6.5.
+- An NVIDIA driver compatible with the CUDA runtime selected by the
+  [dependency manifest](../../requirements/sglang-v0.5.21.txt).
 - Git, a C++20 compiler **and standard library supporting `std::bit_cast`**, and sufficient disk/host memory for CUDA wheels, models and checkpoints. The default SGLang JIT requires both compiler and library support; the presence of `g++` alone is insufficient.
 - The quickstart requires **two NVLink-connected GPUs**; larger recipes differ.
 
@@ -73,7 +78,8 @@ aspec patch-sglang
 The official SGLang 0.5.21 metadata requires CUTLASS DSL 4.6.2 and Quack 0.6.4. ASpec's
 shared FA4/Q/K lane uses 4.7.1 and 0.6.5 through the explicit
 [override file](../../requirements/cute-overrides.txt). Ordinary pip resolution rejects this
-combination. The override leaves upstream metadata intact: `python -m pip check` reports these
+combination together with upstream SGLang. Target setup handles this explicit override separately
+from the default pip installation. The override leaves upstream metadata intact: `python -m pip check` reports these
 two mismatches. `python -m tools.doctor` discloses the exact exceptions and fails for any other
 active missing/conflicting dependency. It does not label the original metadata satisfied.
 `cuda-tile==1.6.0rc5`, required by SGLang, is pinned explicitly so resolution does not require

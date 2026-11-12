@@ -60,3 +60,17 @@ def test_sglang_requirements_match_the_shared_cute_runtime() -> None:
     }
 
     assert expected <= requirements
+
+
+def test_default_install_declares_the_training_runtime() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    runtime = {
+        line.strip()
+        for line in (ROOT / "requirements/sglang-v0.5.21.txt").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    # SGLang's upstream pins conflict with the validated Draft kernels; the
+    # explicit Target setup command prepares it with the declared overrides.
+    assert runtime - {"sglang==0.5.21"} <= set(project["dependencies"])
+    assert not any(requirement.startswith("sglang==") for requirement in project["dependencies"])
+    assert "uv==0.13.5" in project["dependencies"]

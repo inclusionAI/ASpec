@@ -55,6 +55,25 @@ def test_missing_dependency_fails_and_inactive_extra_is_ignored():
     assert "missing" in result["conflicts"][0]
 
 
+@pytest.mark.parametrize("target", [False, True])
+def test_doctor_requires_sglang_only_for_target_nodes(monkeypatch, target):
+    from tools import doctor
+
+    monkeypatch.setattr(doctor, "check_dependency_metadata", lambda: {"conflicts": [], "overrides": []})
+    monkeypatch.setattr(doctor, "venv_error", lambda: None)
+    monkeypatch.setattr(doctor, "expected_versions", lambda: {"sglang": "0.5.21"})
+
+    def missing(_=None):
+        raise doctor.importlib.metadata.PackageNotFoundError("sglang")
+
+    monkeypatch.setattr(doctor.importlib.metadata, "version", missing)
+    monkeypatch.setattr(doctor, "installed_site", missing)
+    result = doctor.inspect_environment(target=target)
+    assert result["ok"] == (not target)
+    assert result["patch"] == ("unavailable" if target else "not_required")
+    assert result["target_requested"] == target
+
+
 @pytest.mark.parametrize("version", [(3, 10), (3, 11), (3, 12), (3, 13), (3, 14)])
 def test_doctor_enforces_only_the_python_minimum(monkeypatch, tmp_path, version):
     from tools import doctor

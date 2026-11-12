@@ -10,8 +10,8 @@ These decisions describe the maintained implementation and its public behavior.
   installed alongside it because their import namespaces can overlap. ASpec uses Apache-2.0;
   inherited material retains its own licenses and notices. PyPI publication requires the
   [release checks and publishing configuration](../releasing.md).
-- **Release versions.** Developers maintain the major/minor/patch version and currently retain
-  the `b0` beta suffix for public releases, for example `0.1.0b0`, `0.2.0b0` and `0.2.1b0`.
+- **Release versions.** Maintainers choose the major/minor/patch version and currently retain
+  the `b0` beta suffix for public releases.
   CI validates the matching `v<version>` tag without incrementing or promoting the version.
   See [versioning](../releasing.md#versioning).
 - **Reuse.** Review the pinned upstream implementation before adding overlapping functionality.
@@ -21,6 +21,10 @@ These decisions describe the maintained implementation and its public behavior.
   SGLang v0.5.21, commit `e00930c5489053f26d86b179cee0d087f846acbb`, with the retained training
   patch. FA4 b34, CUTLASS DSL 4.7.1 and Quack 0.6.5 share a compatible dependency lane. Upstream
   migration references do not constrain ASpec to their older runtime versions.
+- **Installation.** The default distribution installs the Draft runtime. Target nodes explicitly
+  run `aspec patch-sglang`, which prepares a missing SGLang runtime with the documented overrides
+  and applies the patch. Read-only patch checks never install dependencies. Doctor checks the
+  Target runtime when present or explicitly requested with `--target`.
 - **Semantics and execution.** Workload, capability, Plan and observed Evidence are distinct.
   Required capability failures are errors; fallback/omission is explicit. No legacy fields leak
   across the canonical boundary. [Architecture](ARCHITECTURE.md) defines the work/ownership invariants.

@@ -47,26 +47,37 @@ Qwen、Ling 上的 DSpark/DFlash 是主要优化方向和 recipe 维护重点；
 从首次多卡运行扩展到静态多机训练，支持 NVLink、TCP 和 RDMA 数据路径。
 先查看[支持范围与已知限制](docs/support.md)，再从 [recipe 导航](docs/user-guide/recipes.md)选择起点。
 
-## 开始使用
+## 安装
 
-PyPI 发行包名为 `ling-aspec`，Python 导入名和命令仍为 `aspec`。
-完整的固定版本 GPU 运行环境请按[安装指南](docs/user-guide/installation.md)配置。
-
-1. 按[安装指南](docs/user-guide/installation.md)一键创建源码环境，也可选择[容器](docs/user-guide/containers.md)；
-2. 在[快速上手](docs/user-guide/quickstart.md)中选择 Qwen3-8B 或 Ling tiny，用两张 GPU 完成
-   相同的 Plan、训练、报告、恢复和导出流程；
-3. 根据[recipe 导航](docs/user-guide/recipes.md)选择算法/结构并准备实际数据。
+在已激活的 Linux 虚拟环境中安装：
 
 ```bash
-bash setup.sh
-source .venv/bin/activate
+pip install ling-aspec
+```
+
+该命令会安装训练依赖。需要运行 Target 模型的节点，再准备 SGLang 并应用训练补丁：
+
+```bash
+aspec patch-sglang
+```
+
+环境要求、源码安装和本地 wheel 安装见[安装指南](docs/user-guide/installation.md)，
+也可使用[容器](docs/user-guide/containers.md)。可选执行 `aspec doctor` 检查环境。
+
+## 快速上手
+
+使用两张 NVLink 互联的 GPU：
+
+```bash
 CUDA_VISIBLE_DEVICES=0,1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
 # 或选择 Qwen3-8B：
 CUDA_VISIBLE_DEVICES=0,1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
 ```
 
 两个入口都使用内置原始对话和各自的 tokenizer/template，完成 8 步训练、精确恢复和 native 导出加载。
-使用已有模型时添加 `--target /absolute/path/to/model`。使用 Target 生成的数据开展训练与
+使用已有模型时添加 `--target /absolute/path/to/model`。完整流程见[快速上手](docs/user-guide/quickstart.md)，
+实际训练可从 [recipe 导航](docs/user-guide/recipes.md)选择算法与结构，并[准备数据](docs/user-guide/data.md)。
+使用 Target 生成的数据开展训练与
 独立评估，可继续阅读 [Qwen3-8B DSpark recipe](docs/user-guide/recipes.md#qwen3-8b-dspark-quality-recipe)。
 
 ## 性能
