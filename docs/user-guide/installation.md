@@ -110,3 +110,4 @@ Then run the same `aspec train --config ...` command. This optional supervisor n
 Target environment location; independent startup only needs a service address. Both forms use
 the same Target interface and support checkpoint restoration. Logs go to `target-service.log`
 inside the run directory. Existing services are never adopted or stopped by the supervisor.
+Quickstart also accepts `--managed-target /absolute/path/to/target-venv/bin/python`.
