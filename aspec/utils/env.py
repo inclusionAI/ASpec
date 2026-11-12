@@ -9,6 +9,7 @@ import os
 # use its own node-local default (/tmp/torchinductor_$USER/) to avoid
 # cross-node triton kernel cache corruption over NFS.
 _ASPEC_ENV_KEYS = [
+    "ASPEC_CUDA_COMPAT_DIR",
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",

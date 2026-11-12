@@ -19,6 +19,7 @@ import importlib.metadata
 import json
 import platform
 import sys
+from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
@@ -26,12 +27,6 @@ from packaging.utils import canonicalize_name
 from aspec.assets import asset_path
 from aspec.compat.sglang_patch import installed_site, patch_state, venv_error
 
-# These are deliberate overrides, not satisfied upstream metadata. Keep the
-# upstream requirement and installed version exact so new conflicts fail closed.
-APPROVED_OVERRIDES = {
-    ("sglang", "0.5.21", "nvidia-cutlass-dsl[cu13]==4.6.2", "4.7.1"),
-    ("sglang", "0.5.21", "quack-kernels==0.6.4", "0.6.5"),
-}
 
 
 def check_dependency_metadata(distributions=None):
@@ -53,19 +48,14 @@ def check_dependency_metadata(distributions=None):
             actual = dependency.version if dependency is not None else None
             if actual is not None and requirement.specifier.contains(actual, prereleases=True):
                 continue
-            identity = (name, dist.version, str(requirement), actual)
-            if identity in APPROVED_OVERRIDES:
-                result["overrides"].append({"package": name, "version": dist.version,
-                                            "requires": str(requirement), "installed": actual})
-            else:
-                result["conflicts"].append(
-                    f"{name} {dist.version} requires {requirement}; installed: {actual}"
-                )
+            result["conflicts"].append(
+                f"{name} {dist.version} requires {requirement}; installed: {actual}"
+            )
     return result
 
 
-def expected_versions():
-    source = asset_path("requirements/sglang-v0.5.21.txt")
+def expected_versions(target=False):
+    source = asset_path("requirements/sglang-v0.5.21.txt" if target else "requirements/draft.txt")
     return {name.split("[")[0]: version for line in source.read_text().splitlines()
             if line and not line.startswith("#") and "==" in line
             for name, version in [line.split("==", 1)]}
@@ -82,8 +72,14 @@ def inspect_environment(*, gpu=False, target=False):
         result["errors"].append("Python >=3.11 is required")
     if sys.platform != "linux":
         result["errors"].append("The GPU runtime requires Linux; macOS/Windows training is not validated")
+    installed = {canonicalize_name(dist.metadata["Name"]) for dist in importlib.metadata.distributions()}
+    marker = Path(sys.prefix) / ".aspec-role"
+    target = target or "ling-aspec-target" in installed or (marker.is_file() and marker.read_text().strip() == "target")
+    result["role"] = "target" if target else "draft"
+    if {"ling-aspec", "ling-aspec-target"} <= installed:
+        result["errors"].append("Install Draft and Target in separate venvs")
     has_sglang = False
-    for name, expected in expected_versions().items():
+    for name, expected in expected_versions(target).items():
         try:
             actual = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
@@ -96,6 +92,13 @@ def inspect_environment(*, gpu=False, target=False):
         result["checks"].append({"package": name, "expected": expected, "installed": actual, "ok": ok})
         if not ok:
             result["errors"].append(f"{name}: expected {expected}, found {actual}; use the pinned requirements")
+    if not target:
+        try:
+            importlib.metadata.version("sglang")
+        except importlib.metadata.PackageNotFoundError:
+            pass
+        else:
+            result["errors"].append("SGLang belongs in the isolated Target environment")
     result["patch"] = "unavailable" if target or has_sglang else "not_required"
     if target or has_sglang:
         try:

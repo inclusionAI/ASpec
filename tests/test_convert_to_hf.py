@@ -54,7 +54,7 @@ def _model():
 
 
 def test_convert_checkpoint_writes_strict_loadable_serving_artifact(tmp_path, monkeypatch):
-    versions = {"ling-aspec": "0.1.0b0", "aspec": "0.0.16"}
+    versions = {"ling-aspec-runtime": "0.1.0b0", "aspec": "0.0.16"}
     original_version = importlib.metadata.version
     monkeypatch.setattr(importlib.metadata, "version",
                         lambda name: versions[name] if name in versions else original_version(name))

@@ -58,7 +58,7 @@ def test_installed_command_runner_preserves_cwd_and_arguments(tmp_path, monkeypa
 
 
 def test_package_identity_hashes_bundled_patch_and_does_not_borrow_parent_git(tmp_path, monkeypatch):
-    versions = {"ling-aspec": "0.1.0b0", "aspec": "0.0.16"}
+    versions = {"ling-aspec-runtime": "0.1.0b0", "aspec": "0.0.16"}
 
     def version(name):
         if name not in versions:
@@ -67,7 +67,7 @@ def test_package_identity_hashes_bundled_patch_and_does_not_borrow_parent_git(tm
 
     monkeypatch.setattr(importlib.metadata, "version", version)
     observed = _package_versions()
-    assert observed["ling-aspec"] == "0.1.0b0"
+    assert observed["ling-aspec-runtime"] == "0.1.0b0"
     assert "aspec" not in observed
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     package = tmp_path / "venv/lib/site-packages/aspec"

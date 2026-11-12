@@ -59,7 +59,7 @@ assert asset_path('requirements/sglang-v0.5.21.txt').is_relative_to(prefix)
 identity=_source_identity()
 assert identity['revision'] is None and identity['dirty'] is None
 assert identity['source_file_count'] > 0
-assert identity['version'] == importlib.metadata.version('ling-aspec')
+assert identity['version'] == importlib.metadata.version('ling-aspec-runtime')
 assert _aspec_version() == identity['version']
 assert identity['build'] is not None
 spec=importlib.util.find_spec('sglang')

@@ -28,9 +28,8 @@ def test_declared_overrides_remain_visible():
         distribution("sglang", "0.5.21", ["nvidia-cutlass-dsl[cu13]==4.6.2", "quack-kernels==0.6.4"]),
         distribution("nvidia-cutlass-dsl", "4.7.1"), distribution("quack-kernels", "0.6.5"),
     ])
-    assert not result["conflicts"]
-    assert len(result["overrides"]) == 2
-    assert {row["installed"] for row in result["overrides"]} == {"4.7.1", "0.6.5"}
+    assert len(result["conflicts"]) == 2
+    assert not result["overrides"]
 
 
 @pytest.mark.parametrize("owner,version,requires,installed", [
@@ -61,7 +60,7 @@ def test_doctor_requires_sglang_only_for_target_nodes(monkeypatch, target):
 
     monkeypatch.setattr(doctor, "check_dependency_metadata", lambda: {"conflicts": [], "overrides": []})
     monkeypatch.setattr(doctor, "venv_error", lambda: None)
-    monkeypatch.setattr(doctor, "expected_versions", lambda: {"sglang": "0.5.21"})
+    monkeypatch.setattr(doctor, "expected_versions", lambda target=False: {"sglang": "0.5.21"})
 
     def missing(_=None):
         raise doctor.importlib.metadata.PackageNotFoundError("sglang")
@@ -80,7 +79,7 @@ def test_doctor_enforces_only_the_python_minimum(monkeypatch, tmp_path, version)
 
     monkeypatch.setattr(doctor, "check_dependency_metadata", lambda: {"conflicts": [], "overrides": []})
     monkeypatch.setattr(doctor, "venv_error", lambda: None)
-    monkeypatch.setattr(doctor, "expected_versions", lambda: {})
+    monkeypatch.setattr(doctor, "expected_versions", lambda target=False: {})
     monkeypatch.setattr(doctor, "installed_site", lambda: tmp_path)
     monkeypatch.setattr(doctor, "patch_state", lambda _: "patched")
     monkeypatch.setattr(doctor.sys, "version_info", (*version, *doctor.sys.version_info[2:]))

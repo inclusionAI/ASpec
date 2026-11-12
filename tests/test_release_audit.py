@@ -31,7 +31,7 @@ def _artifacts(
     wheel_version="0.1.0b0",
     sdist_version="0.1.0b0",
     sdist_link=False,
-    distribution="ling-aspec",
+    distribution="ling-aspec-runtime",
 ):
     archive_name = distribution.replace("-", "_")
     wheel = directory / f"{archive_name}-0.1.0b0-py3-none-any.whl"
@@ -61,13 +61,27 @@ def _artifacts(
             link.type = tarfile.SYMTYPE
             link.linkname = "target"
             output.addfile(link)
+    for role in ("ling-aspec", "ling-aspec-target"):
+        normalized = role.replace("-", "_")
+        metadata = (f"Name: {role}\nVersion: {wheel_version}\n"
+                    f"Requires-Dist: ling-aspec-runtime=={wheel_version}\n")
+        with zipfile.ZipFile(directory / f"{normalized}-0.1.0b0-py3-none-any.whl", "w") as output:
+            output.writestr(f"{normalized}-0.1.0b0.dist-info/METADATA", metadata)
+        with tarfile.open(directory / f"{normalized}-0.1.0b0.tar.gz", "w:gz") as output:
+            for relative in ("PKG-INFO", "LICENSE", "README.md", "pyproject.toml"):
+                data = metadata.encode() if relative == "PKG-INFO" else b"fixture"
+                info = tarfile.TarInfo(f"{normalized}-0.1.0b0/{relative}")
+                info.size = len(data)
+                output.addfile(info, io.BytesIO(data))
     return wheel, source
 
 
 def test_release_audit_accepts_complete_artifact_pair(tmp_path):
     wheel, source = _artifacts(tmp_path)
     result = audit(tmp_path)
-    assert result == {wheel.name: len(WHEEL_REQUIRED) + 1, source.name: len(SDIST_REQUIRED)}
+    assert result[wheel.name] == len(WHEEL_REQUIRED) + 1
+    assert result[source.name] == len(SDIST_REQUIRED)
+    assert len(result) == 6
 
 
 @pytest.mark.parametrize("member", ["aspec/compat/sglang_patch.py",
@@ -99,7 +113,7 @@ def test_release_audit_rejects_non_source_members(tmp_path, member):
 
 
 def test_release_audit_requires_one_wheel_and_one_sdist(tmp_path):
-    with pytest.raises(ValueError, match="exactly one wheel and one sdist"):
+    with pytest.raises(ValueError, match="exactly three wheels and three sdists"):
         audit(tmp_path)
 
 

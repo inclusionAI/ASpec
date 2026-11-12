@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 dev=0
+role=draft
 gpu=()
 for argument in "$@"; do
   case "$argument" in
     --dev) dev=1 ;;
+    --target) role=target ;;
     --gpu) gpu=(--gpu) ;;
     --help)
-      echo 'Usage: bash tools/install.sh [--dev] [--gpu]'
+      echo 'Usage: bash tools/install.sh [--target] [--dev] [--gpu]'
       echo 'For an already activated isolated venv. New users: bash setup.sh'
       exit 0 ;;
     *) printf 'Unknown argument: %s\n' "$argument" >&2; exit 2 ;;
@@ -46,11 +48,18 @@ if ! printf '#include <bit>\nint main() { return std::bit_cast<unsigned>(1.0f) =
   echo 'Install a modern C++ toolchain (Ubuntu: g++), or set CXX to one; see installation-advanced.md.' >&2
   exit 2
 fi
-extras=fa
-(( dev == 0 )) || extras=dev,$extras
-python -m pip install uv==0.13.5
-python -m uv pip install --link-mode copy --python "$VIRTUAL_ENV/bin/python" \
-  --override requirements/cute-overrides.txt -r requirements/sglang-v0.5.21.txt -e ".[${extras}]"
-aspec patch-sglang
-aspec patch-sglang --check
-bash tools/run_in_env.sh python -m tools.doctor "${gpu[@]}"
+manifest=requirements/draft.txt
+check=()
+if [[ $role == target ]]; then
+  manifest=requirements/sglang-v0.5.21.txt
+  check=(--target)
+fi
+extras="."
+(( dev == 0 )) || extras=".[dev]"
+python -m pip install -r "$manifest" -e "$extras"
+printf '%s\n' "$role" > "$VIRTUAL_ENV/.aspec-role"
+if [[ $role == target ]]; then
+  aspec patch-sglang
+  aspec patch-sglang --check
+fi
+aspec doctor "${check[@]}" "${gpu[@]}"

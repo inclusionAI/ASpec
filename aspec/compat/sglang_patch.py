@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Prepare the pinned Target runtime and apply/check its training patch."""
+"""Apply/check the training patch in the active Target environment."""
 
 import argparse
 import importlib.metadata
 import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from aspec._environment import command_environment
-from aspec.assets import asset_path
 
 VERSION = "0.5.21"
 PATCH = Path(__file__).with_name("patches") / "sglang-v0.5.21.patch"
@@ -92,33 +89,12 @@ def installed_site(*, writable=False):
     return package.parent
 
 
-def install_target_runtime():
-    """Reuse tools/install.sh's explicit overrides in this isolated environment."""
-    env = command_environment()
-    if shutil.which("git", path=env.get("PATH")) is None:
-        raise RuntimeError("Install Git before preparing the SGLang training patch")
-    print(f"Installing the pinned SGLang Target runtime in {sys.prefix}", flush=True)
-    subprocess.run(
-        [sys.executable, "-m", "uv", "pip", "install", "--link-mode", "copy",
-         "--python", sys.executable,
-         "--override", str(asset_path("requirements/cute-overrides.txt")),
-         "-r", str(asset_path("requirements/sglang-v0.5.21.txt"))],
-        env=env, check=True,
-    )
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Require the complete patch; do not change files")
     args = parser.parse_args()
     try:
-        try:
-            site = installed_site(writable=not args.check)
-        except importlib.metadata.PackageNotFoundError:
-            if args.check:
-                raise
-            install_target_runtime()
-            site = installed_site(writable=True)
+        site = installed_site(writable=not args.check)
         state = patch_state(site)
         if state == "unpatched":
             if args.check:

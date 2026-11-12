@@ -77,7 +77,7 @@ jobs:
           python -m pip install -r requirements/ci-cpu.txt
           # Deliberately test the wheel and patch CLI with a CPU dependency subset.
           # This is not installation/acceptance of the production GPU runtime.
-          python -m pip install --no-deps dist/*.whl sglang==0.5.21
+          python -m pip install --no-deps dist/ling_aspec_runtime-*.whl sglang==0.5.21
       - name: Exercise installed commands outside the checkout
         env:
           CUDA_VISIBLE_DEVICES: ""

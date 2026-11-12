@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ling-aspec"
+name = "ling-aspec-runtime"
 version = "0.1.0b0"
 description = "A Torch-native framework for speculative decoding training"
 readme = "README.md"
@@ -11,38 +11,10 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "licenses/*"]
 requires-python = ">=3.11"
 dependencies = [
-    "accelerate",
-    "apache-tvm-ffi==0.1.11",
-    "cmake",
-    "cuda-tile==1.6.0rc5",
-    "datasets>=5.0.1,<6",
-    "flash-attn-4==4.0.0b34",
-    "flashinfer-python[cu13]==0.6.18",
-    "mooncake-transfer-engine==0.3.13.post1",
-    "ninja",
-    "numba",
-    "numpy<2.4",
-    "nvidia-cuda-runtime-cu12==12.9.79",
-    "nvidia-cudnn-frontend==1.31.0",
-    "nvidia-cutlass-dsl[cu13]==4.7.1",
-    "omegaconf",
-    "openai",
-    "openai-harmony",
-    "packaging",
-    "psutil",
-    "pydantic",
-    "pyzmq",
-    "qwen-vl-utils",
-    "quack-kernels[cu13]==0.6.5",
-    "ray==2.59.0",
-    "setuptools",
-    "sglang-kernel==0.4.7",
-    "torch==2.13.0",
-    "torchvision==0.28.0",
-    "tqdm",
-    "transformers==5.12.1",
-    "uv==0.13.5",
-    "wandb>=0.19.10",
+    "accelerate", "datasets>=5.0.1,<6", "numpy<2.4", "omegaconf", "openai",
+    "openai-harmony", "packaging", "psutil", "pydantic", "pyzmq", "qwen-vl-utils",
+    "ray==2.59.0", "setuptools", "tqdm", "transformers", "wandb>=0.19.10",
+    "mooncake-transfer-engine==0.3.13.post1", "nvidia-cuda-runtime-cu12==12.9.79",
 ]
 
 [project.scripts]

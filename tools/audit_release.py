@@ -101,7 +101,7 @@ WHEEL_REQUIRED = {
     "aspec/commands/_checkpoint_audit.py",
     "aspec/commands/_recipe_capacity.py",
     "aspec/resources/requirements/sglang-v0.5.21.txt",
-    "aspec/resources/requirements/cute-overrides.txt",
+    "aspec/resources/requirements/draft.txt",
     "aspec/resources/tools/recipe_catalog.json",
     "aspec/resources/examples/data/sample_conversations.jsonl",
 }
@@ -138,8 +138,8 @@ def _identity(raw: bytes, artifact: Path) -> tuple[str, str]:
     version = metadata.get("Version")
     if not name or not version:
         raise ValueError(f"{artifact.name}: package metadata lacks Name or Version")
-    if name != "ling-aspec":
-        raise ValueError(f"{artifact.name}: unexpected distribution name {name!r}; expected 'ling-aspec'")
+    if name not in {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime"}:
+        raise ValueError(f"{artifact.name}: unexpected distribution name {name!r}")
     return name, version
 
 
@@ -155,7 +155,9 @@ def _wheel_members(path: Path) -> tuple[set[str], tuple[str, str]]:
         if len(metadata_names) != 1:
             raise ValueError(f"{path.name}: expected one dist-info/METADATA")
         identity = _identity(wheel.read(metadata_names[0]), path)
-    missing = WHEEL_REQUIRED - names
+    missing = WHEEL_REQUIRED - names if identity[0] == "ling-aspec-runtime" else set()
+    if identity[0] != "ling-aspec-runtime" and any(name.startswith("aspec/") for name in names):
+        raise ValueError(f"{path.name}: role packages must not own runtime files")
     if missing:
         raise ValueError(f"{path.name}: missing wheel members {sorted(missing)}")
     return names, identity
@@ -181,10 +183,10 @@ def _sdist_members(path: Path) -> tuple[set[str], tuple[str, str]]:
         for member in members
         if len(PurePosixPath(member.name).parts) > 1
     }
-    missing = SDIST_REQUIRED - names
+    missing = SDIST_REQUIRED - names if root.startswith("ling_aspec_runtime-") else {"PKG-INFO", "LICENSE", "README.md", "pyproject.toml"} - names
     if missing:
         raise ValueError(f"{path.name}: missing source members {sorted(missing)}")
-    if not root.startswith("ling_aspec-"):
+    if not root.startswith(("ling_aspec-", "ling_aspec_target-", "ling_aspec_runtime-")):
         raise ValueError(f"{path.name}: unexpected source root {root!r}")
     with tarfile.open(path, mode="r:gz") as source:
         metadata_member = source.getmember(f"{root}/PKG-INFO")
@@ -198,18 +200,20 @@ def _sdist_members(path: Path) -> tuple[set[str], tuple[str, str]]:
 def audit(directory: Path) -> dict[str, int]:
     wheels = sorted(directory.glob("*.whl"))
     sdists = sorted(directory.glob("*.tar.gz"))
-    if len(wheels) != 1 or len(sdists) != 1:
-        raise ValueError(
-            f"{directory}: expected exactly one wheel and one sdist, "
-            f"found {len(wheels)} wheel(s) and {len(sdists)} sdist(s)"
-        )
-    wheel_members, wheel_identity = _wheel_members(wheels[0])
-    sdist_members, sdist_identity = _sdist_members(sdists[0])
-    if wheel_identity != sdist_identity:
-        raise ValueError(
-            f"wheel identity {wheel_identity!r} does not match sdist identity {sdist_identity!r}"
-        )
-    return {wheels[0].name: len(wheel_members), sdists[0].name: len(sdist_members)}
+    if len(wheels) != 3 or len(sdists) != 3:
+        raise ValueError(f"{directory}: expected exactly three wheels and three sdists")
+    result, identities = {}, {}
+    for artifact in [*wheels, *sdists]:
+        members, identity = (_wheel_members(artifact) if artifact.suffix == ".whl"
+                             else _sdist_members(artifact))
+        result[artifact.name] = len(members)
+        identities.setdefault(identity, []).append(artifact.suffix == ".whl")
+    expected = {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime"}
+    if ({name for name, version in identities} != expected
+            or len({version for name, version in identities}) != 1
+            or any(sorted(kinds) != [False, True] for kinds in identities.values())):
+        raise ValueError("wheel identity does not match the three version-aligned source identities")
+    return result
 
 
 def main() -> None:

@@ -164,6 +164,8 @@ class OfflineTrainingConfig:
 
 @dataclass
 class InferenceConfig:
+    # Absolute interpreter path on each Target node; independent of Draft's venv.
+    target_python: Optional[str] = None
     aux_hidden_states_layers: Optional[list] = None
     inference_batch_size: int = 1
     inference_buffer_threshold: int = 32
