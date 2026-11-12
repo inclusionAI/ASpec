@@ -3,7 +3,7 @@
 Target generation, training rows and decode prefixes have different boundaries. Bundled synthetic
 data is a smoke fixture, not a quality recipe.
 
-`aspec prepare-target-data` uses the Target environment selected by `ASPEC_TARGET_PYTHON`.
+Run `aspec prepare-target-data` in the Target environment.
 Other local preprocessing commands run in Draft.
 
 ## Conversations

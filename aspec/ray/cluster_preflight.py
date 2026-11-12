@@ -284,7 +284,7 @@ def _filesystem_capacity(path: Path) -> dict[str, int]:
 def _collect_local_inventory(
     required_paths: Sequence[str], marker_path: str, marker_sha256: str,
     storage_mode: str = "shared", output_dir: str | None = None,
-    target_python: str | None = None,
+    target_address: str | None = None,
     roles: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     marker = Path(marker_path)
@@ -313,15 +313,14 @@ def _collect_local_inventory(
             item["content_sha256"] = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
     memlock_soft, memlock_hard = resource.getrlimit(resource.RLIMIT_MEMLOCK)
     target_runtime = None
-    if target_python:
+    if target_address:
+        from aspec.inference.service_protocol import request
         from aspec.inference.target_runtime import code_identity
 
-        result = subprocess.run([target_python, "-m", "aspec._target_worker", "-m",
-                                 "aspec.inference.target_runtime"], capture_output=True, text=True,
-                                timeout=60, check=True)
-        target_runtime = json.loads(result.stdout)
+        info = request(target_address, "/v1/info", timeout=30)
+        target_runtime = info["runtime"]
         expected = code_identity()
-        if any(target_runtime.get(key) != value for key, value in expected.items()):
+        if info["identity"] != expected:
             raise ClusterPreflightError("Target and Draft ASpec code identity differs")
     return {
         "node_id": ray.get_runtime_context().get_node_id(),
@@ -1174,8 +1173,9 @@ def run_cluster_preflight(args) -> dict[str, Any] | None:
             roles = (["draft"] if node_ip in (getattr(args, "training_node_ips", None) or ()) else [])
             if node_ip in (getattr(args, "inference_node_ips", None) or ()):
                 roles.append("target")
-            target_python = ((getattr(args, "target_python", None) or os.environ.get("ASPEC_TARGET_PYTHON"))
-                             if "target" in roles else None)
+            service = getattr(args, "target_service", None) or {}
+            target_address = ((service.get("addresses") or {}).get(node_ip, service.get(
+                "address", "http://127.0.0.1:30000")) if "target" in roles else None)
             refs.append(
                 probe.options(
                     scheduling_strategy=NodeAffinitySchedulingStrategy(
@@ -1183,7 +1183,7 @@ def run_cluster_preflight(args) -> dict[str, Any] | None:
                     )
                 ).remote(_required_paths(args), str(marker), marker_sha256,
                          getattr(args, "cluster_storage_mode", "shared"), str(output_dir),
-                         target_python, roles)
+                         target_address, roles)
             )
         inventories = ray.get(
             refs,

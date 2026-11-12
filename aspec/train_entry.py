@@ -411,6 +411,9 @@ def train_async_no_generation(args, evidence: RunEvidenceRecorder | None = None)
             pg=pgs["training"],
             training_class=TrainerActor,
         )
+        args.aspec_read_owners = ray.get([
+            actor.get_owner_identity.remote() for actor in train_group._actor_handlers
+        ])
         train_init_refs = train_group.async_init(
             args, role="training", mooncake_config=mooncake_config, with_ref=False
         )
@@ -528,6 +531,13 @@ def main() -> None:
 
 def _main() -> None:
     args, plan = _prepare_config()
+    from aspec.inference.managed import managed_target
+
+    with managed_target(args):
+        _run_prepared(args, plan)
+
+
+def _run_prepared(args, plan):
     from aspec.multi_draft import MultiDraftPlan, run_multi_draft
 
     if isinstance(plan, MultiDraftPlan):

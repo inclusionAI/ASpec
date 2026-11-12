@@ -11,6 +11,12 @@ run from the repository root. Both installation forms use the same role dependen
 `pip install ling-aspec-target` installs SGLang and `aspec patch-sglang` applies its training patch.
 Both role packages depend on the same version of `ling-aspec-runtime`, which owns the code/CLI.
 `aspec doctor` selects the installed role; `--target` explicitly checks the Target setup.
+Start `aspec target` in Target and `aspec train --config ...` in Draft. The control service uses
+`inference.target_service.address`; metadata and token requests cross this interface, while feature
+tensors retain Mooncake transport. Use services on trusted cluster networks. `--gpus 0,1,...`
+restricts the service's allowed physical GPU IDs; it does not remap device ordinals.
+For static multi-node runs, start a service on each Target node and set
+`inference.target_service.addresses` as a map from planned node IP to service URL.
 
 ## Requirements
 
@@ -31,7 +37,7 @@ CPU planning does not imply CPU training support.
 On Python 3.13, `outlines-core==0.1.26`, inherited through the pinned SGLang/Outlines dependency,
 may require a source build. Install a Rust toolchain (`rustc` and `cargo`) on `PATH` when no
 matching wheel is available; pip builds the extension during setup. Setup does not install host
-toolchains. The runtime lane pins `nvidia-cudnn-frontend==1.31.0` to retain CUTLASS DSL 4.7.1
+toolchains. The Draft role pins `nvidia-cudnn-frontend==1.31.0` to retain CUTLASS DSL 4.7.1
 compatibility; frontend 1.32 requires CUTLASS >=4.8.
 
 The C++20 requirement comes from the pinned SGLang JIT: its
@@ -92,7 +98,7 @@ ASpec ships the DSpark Q/K RMSNorm + indexed-RoPE forward and backward under
 `aspec.kernels.cutedsl`, without an external cuDNN source checkout or custom build. The implementation
 supports separate context/draft K planes, asymmetric GQA heads, deterministic FP32 norm-weight
 reduction, and the same BF16/FP16 operand precision as the eager reference. It requires
-`nvidia-cutlass-dsl[cu13]==4.7.1`; the default `fa` extra already provides that pin and retains
+`nvidia-cutlass-dsl[cu13]==4.7.1`; the Draft role provides that pin and retains
 `quack-kernels[cu13]==0.6.5` for the other fused training operations.
 
 Install the normal runtime, or only the kernel dependency for a focused environment:

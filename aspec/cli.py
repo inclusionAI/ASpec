@@ -14,7 +14,6 @@
 
 """Workflow shortcuts and native-library bootstrap for the public CLI."""
 import importlib.metadata
-import os
 import sys
 from pathlib import Path
 
@@ -24,6 +23,8 @@ from aspec._environment import execute
 def main():
     arguments = sys.argv[1:]
     modules = {
+        "train": "aspec.train_entry",
+        "target": "aspec.inference.service",
         "quickstart": "aspec.commands.quickstart",
         "recipes": "aspec.commands.recipes",
         "doctor": "aspec.commands.doctor",
@@ -59,15 +60,8 @@ def main():
     if not help_requested and module in {"aspec.train_entry", "aspec.commands.quickstart"} and target_role:
         raise SystemExit("Run training from the Draft venv (pip install ling-aspec); "
                          "this interpreter belongs to Target")
-    target_command = module in {"aspec.compat.sglang_patch", "aspec.commands.evaluate_draft",
-                                "aspec.commands.prepare_target_dataset"}
-    target_command = target_command or (module == "aspec.commands.doctor" and "--target" in arguments)
-    target_python = os.environ.get("ASPEC_TARGET_PYTHON")
-    if target_command and not target_role and not help_requested and target_python:
-        if not Path(target_python).is_absolute():
-            raise SystemExit("ASPEC_TARGET_PYTHON must be an absolute Target interpreter path")
-        execute([target_python, "-m", "aspec._target_worker", "-m", module, *arguments])
-        return
+    if module == "aspec.inference.service" and not target_role and not help_requested:
+        raise SystemExit("Start aspec target in the Target environment (pip install ling-aspec-target)")
     try:
         execute([sys.executable, "-m", module, *arguments])
     except (ValueError, OSError) as error:

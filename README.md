@@ -66,10 +66,12 @@ the SGLang integration and apply its patch:
 ```bash
 pip install ling-aspec-target
 aspec patch-sglang
+aspec target
 ```
 
-In the Draft environment, set `ASPEC_TARGET_PYTHON=/absolute/path/to/target-venv/bin/python`
-before training. Target and Draft keep independent dependencies.
+Keep the Target service running, then start training in the Draft environment below.
+The default connection is `http://127.0.0.1:30000`; set `inference.target_service.address`
+for a remote Target. Each command uses its own environment.
 
 See the [installation guide](docs/user-guide/installation.md) for prerequisites, source installation
 and release wheels, or use the [container setup](docs/user-guide/containers.md).

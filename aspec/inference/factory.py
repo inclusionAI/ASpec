@@ -20,11 +20,7 @@
 
 """Inference engine creation and initialization with Ray placement groups."""
 
-import os
 import secrets
-import shlex
-import sys
-from pathlib import Path
 
 import ray
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
@@ -246,29 +242,25 @@ def _prepare_sgl_engines(
         f"({gpus_per_engine} GPU(s) each, nnodes={nnodes}, replicas={num_replicas})"
     )
 
-    from aspec.inference.engine.target_actor import TargetActor
-    from aspec.inference.target_runtime import code_identity
-
-    target_python = getattr(args, "target_python", None) or os.environ.get("ASPEC_TARGET_PYTHON")
-    if not target_python or not Path(target_python).is_absolute():
-        raise ValueError("Set inference.target_python or ASPEC_TARGET_PYTHON to the absolute "
-                         "Python path of the isolated Target environment")
-    if (getattr(args, "cluster_mode", "single_node") == "single_node"
-            and Path(target_python).parent == Path(sys.executable).parent):
-        raise ValueError("Target and Draft must use separate virtual environments")
+    from aspec.inference.service_client import TargetServiceClient
 
     pg_obj, reordered_bundle_indices, reordered_gpu_ids = pg
 
-    SglRayActor = ray.remote(TargetActor)
+    SglRayActor = ray.remote(TargetServiceClient)
     env_vars = get_aspec_env_vars(args)
-    # The Target bootstrap reconstructs loader paths from its own installation.
-    env_vars.pop("LD_LIBRARY_PATH", None)
-    env_vars.pop("PYTHONPATH", None)
-    env_vars.pop("CUTE_DSL_CACHE_DIR", None)
-    env_vars.pop("FLASH_ATTENTION_CUTE_DSL_CACHE_DIR", None)
-    runtime_env = {"env_vars": env_vars, "py_executable": shlex.join(
-        [target_python, "-m", "aspec._target_worker"])}
-    expected_runtime = code_identity()
+    runtime_env = {"env_vars": env_vars}
+    service = getattr(args, "target_service", None) or {}
+    address = service.get("address", "http://127.0.0.1:30000")
+    addresses = service.get("addresses") or {}
+    node_addresses = {}
+    if addresses:
+        from ray.util.placement_group import placement_group_table
+
+        table = placement_group_table(pg_obj)
+        nodes = {node["NodeID"]: node["NodeManagerAddress"] for node in ray.nodes() if node["Alive"]}
+        node_addresses = {int(bundle): addresses.get(nodes[node], address)
+                          for bundle, node in table["bundles_to_node_id"].items()
+                          if int(bundle) in reordered_bundle_indices}
 
     # Step 1: Create all engine actors (without calling init yet)
     engines = []
@@ -290,7 +282,7 @@ def _prepare_sgl_engines(
             scheduling_strategy=scheduling_strategy,
             runtime_env=runtime_env,
         ).remote(
-            expected_runtime=expected_runtime,
+            address=node_addresses.get(reordered_bundle_indices[bundle_offset], address),
             args=args,
             rank=i,
             base_gpu_id=base_gpu_id,

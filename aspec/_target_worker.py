@@ -1,6 +1,6 @@
 # Copyright 2026 Ant Group Co., Ltd.
 # SPDX-License-Identifier: Apache-2.0
-"""Bootstrap a Ray worker with its own venv libraries before native imports."""
+"""Bootstrap the optional managed-local Target with its own native libraries."""
 import os
 import sys
 from pathlib import Path
@@ -17,7 +17,7 @@ def main():
     if cache := os.environ.get("ASPEC_CACHE_HOME"):
         if Path(cache).name != "target":
             os.environ["ASPEC_CACHE_HOME"] = str(Path(cache) / "target")
-    # The Ray head belongs to Draft. Never load its CUDA libraries in Target.
+    # The supervisor belongs to Draft. Never load its CUDA libraries in Target.
     os.environ.pop("LD_LIBRARY_PATH", None)
     os.environ.pop("LIBRARY_PATH", None)
     os.environ.pop("PYTHONPATH", None)

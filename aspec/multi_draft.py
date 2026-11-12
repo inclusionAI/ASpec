@@ -492,6 +492,9 @@ def run_multi_draft(args, plan: MultiDraftPlan):
             destination.gpu_buffer_size = build_mooncake_config(child).gpu_buffer_size
             destination_configs[name] = destination
             init_refs[name] = group.async_init(child, "training", mooncake_config=destination)
+        source_args.aspec_read_owners = [
+            owner for statuses in actor_statuses.values() for owner in statuses
+        ]
         engines, engine_refs = prepare_inference_engines(source_args, pgs["inference"], mooncake)
         ray.get(engine_refs)  # Target initialization failure is a shared fault.
         producer_placements = ray.get([engine.get_status.remote() for engine in engines])

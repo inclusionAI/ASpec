@@ -265,11 +265,12 @@ def stop_memory_monitor(process, stream):
     stream.close()
 
 
-def acceptance(recipe, output, steps):
-    return run_acceptance(recipe, catalog()[recipe], output, steps, inputs=check_inputs(recipe, acceptance=True))
+def acceptance(recipe, output, steps, overrides=()):
+    return run_acceptance(recipe, catalog()[recipe], output, steps,
+                          inputs=check_inputs(recipe, acceptance=True), overrides=overrides)
 
 
-def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None, progress=None):
+def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None, progress=None, overrides=()):
     if steps < 2 or steps % 2:
         raise ValueError("--steps must be a positive even number >= 2")
     if entry["nodes"] == 1:
@@ -355,6 +356,7 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                 "logging.use_wandb=false",
                 f"dataset.eval_interval={steps // 2}",
                 f"cache_dir={output / 'cache'}",
+                *overrides,
             ]
             announce("Inspecting the execution Plan")
             execute(
@@ -389,7 +391,7 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                 )
             for label, limit in (("first", steps // 2), ("resumed", steps)):
                 run = stage / label
-                overrides = [*base, f"training.num_train_steps={limit}"]
+                stage_overrides = [*base, f"training.num_train_steps={limit}"]
                 if label == "resumed":
                     if recipe == "shared-target":
                         from omegaconf import OmegaConf
@@ -401,9 +403,9 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                             experiment.setdefault("training", {})["load_path"] = str(
                                 stage / "first" / experiment["name"] / "checkpoints"
                             )
-                        overrides.append("experiments=" + json.dumps(experiments))
+                        stage_overrides.append("experiments=" + json.dumps(experiments))
                     else:
-                        overrides.append(f"training.load_path={stage / 'first' / 'checkpoints'}")
+                        stage_overrides.append(f"training.load_path={stage / 'first' / 'checkpoints'}")
                 command = [
                     sys.executable,
                     "-m",
@@ -419,7 +421,7 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                     command += ["--cluster-address", os.environ["RAY_ADDRESS"]]
                 announce(f"Training the first {limit} steps" if label == "first"
                          else f"Restoring the checkpoint and continuing to step {limit}")
-                execute([*command, *overrides], stage / f"{label}.log")
+                execute([*command, *stage_overrides], stage / f"{label}.log")
                 children = audit_run(
                     run,
                     limit,
@@ -476,11 +478,11 @@ def main():
         command = sub.add_parser(action)
         command.add_argument("recipe", choices=catalog())
         command.add_argument("--output", required=action != "plan")
+        command.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
         if action == "accept":
             command.add_argument("--steps", type=int, default=8)
         else:
             command.add_argument("--stage", type=int, default=1)
-            command.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     args = parser.parse_args()
     if args.action == "list":
         for name, entry in catalog().items():
@@ -503,7 +505,7 @@ def main():
             print(path.resolve())
         return
     if args.action == "accept":
-        acceptance(args.recipe, args.output, args.steps)
+        acceptance(args.recipe, args.output, args.steps, args.set)
         return
     if not 1 <= args.stage <= len(entry["configs"]):
         parser.error("Invalid stage for recipe")

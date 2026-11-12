@@ -23,10 +23,13 @@ These decisions describe the maintained implementation and its public behavior.
   migration references do not constrain ASpec to their older runtime versions.
 - **Installation.** `ling-aspec` and `ling-aspec-target` install separate Draft/Target dependency
   environments, sharing one version of `ling-aspec-runtime`. Target follows upstream SGLang pins;
-  no metadata overrides are accepted. `aspec patch-sglang` only patches files. The launcher selects
-  Target's explicit interpreter and verifies code identity before loading SGLang. This boundary is
-  inspired by SpecForge's independently provisioned capture-server interpreter, adapted to the
-  retained Ray actor/transport path rather than introducing another training pipeline.
+  no metadata overrides are accepted. `aspec patch-sglang` only patches files. `aspec target` and
+  `aspec train` start in their own environments and connect through a versioned JSON control
+  protocol; feature tensors retain Mooncake transport. Target's private Ray runtime orchestrates
+  its source processes; the Draft Plan retains the physical GPU reservations. Optional single-node
+  managed-local supervision starts the same service, with an explicit Target interpreter only for
+  that supervisor. Both forms retain exact resume. This boundary is inspired by SpecForge
+  f8cc3dc external/managed-local capture; its newer SGLang plugin is not copied.
 - **Semantics and execution.** Workload, capability, Plan and observed Evidence are distinct.
   Required capability failures are errors; fallback/omission is explicit. No legacy fields leak
   across the canonical boundary. [Architecture](ARCHITECTURE.md) defines the work/ownership invariants.

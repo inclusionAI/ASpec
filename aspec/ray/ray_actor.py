@@ -56,6 +56,12 @@ def node_affinity_for_ip(ip: str, name: str = None) -> NodeAffinitySchedulingStr
 class RayActor:
     """Base class for all aspec Ray actors."""
 
+    def get_owner_identity(self):
+        import psutil
+
+        return {"node_ip": self.get_node_ip(), "pid": os.getpid(),
+                "created": psutil.Process().create_time()}
+
     @staticmethod
     def get_node_ip() -> str:
         """Get current node IP address."""

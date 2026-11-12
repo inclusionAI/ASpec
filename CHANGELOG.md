@@ -4,8 +4,9 @@
 
 - Install independent Draft (`ling-aspec`) and Target (`ling-aspec-target`) environments,
   sharing the version-aligned `ling-aspec-runtime` code package. Target retains SGLang's own
-  dependency requirements; no resolver overrides are used. Select Target's interpreter with
-  `ASPEC_TARGET_PYTHON` or `inference.target_python`.
+  dependency requirements; no resolver overrides are used. Start `aspec target` and `aspec train`
+  in their respective environments and connect by service address. Optional managed-local
+  supervision uses the same service interface and retains full checkpoint/resume.
 - Keep `aspec patch-sglang` limited to patching files. Report role-specific worker provenance,
   and expose pip CUDA toolkit libraries through a private JIT development view.
 - Set the first PyPI version to `0.1.0b0`; developers maintain release versions with the `b0`

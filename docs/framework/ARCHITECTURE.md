@@ -22,6 +22,13 @@ flowchart LR
 
 The diagram describes responsibilities, not a required class hierarchy or process topology.
 
+Target and Draft start in independent environments. A versioned JSON service interface carries
+model/capture identity, token requests, output descriptors and lifecycle calls; feature tensors use
+the existing Mooncake data plane. The Draft Plan reserves physical GPUs, and Target validates and
+exclusively leases its requested GPU set. Each side owns its runtime and native library paths.
+An optional local supervisor starts this same service and retains the full checkpoint/resume path.
+Lost control stops admission; source storage remains retained until reader process exit is verified.
+
 ## Configuration, workload and Plan
 
 The configuration boundary translates supported native or TorchSpec-style inputs into canonical

@@ -7,7 +7,6 @@ WORKDIR /opt/ASpec
 COPY . .
 RUN bash setup.sh --venv /opt/aspec-venv --python /usr/bin/python3.12
 RUN bash setup.sh --target --venv /opt/aspec-target --python /usr/bin/python3.12
-ENV ASPEC_TARGET_PYTHON=/opt/aspec-target/bin/python
 ENV VIRTUAL_ENV=/opt/aspec-venv
 ENV PATH="/opt/aspec-venv/bin:${PATH}"
 CMD ["bash"]

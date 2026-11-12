@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 import os
 import socket
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -334,7 +335,13 @@ def _ensure_ray_initialized():
     if ray.is_initialized():
         return
 
-    ray_address = os.environ.get("RAY_ADDRESS", "auto")
+    # Target owns a separate Ray runtime. Do not auto-attach Draft to it (or
+    # another user's local cluster) merely because it was started last.
+    ray_address = os.environ.get("RAY_ADDRESS", "local")
+    if ray_address == "local":
+        ray.init(address="local", ignore_reinit_error=True, include_dashboard=False,
+                 _temp_dir=tempfile.mkdtemp(prefix="aspec-d-", dir="/tmp"))
+        return
     try:
         ray.init(address=ray_address, ignore_reinit_error=True)
         logger.info(f"Connected to Ray cluster at {ray_address}")

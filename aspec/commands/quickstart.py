@@ -54,13 +54,13 @@ def main():
     parser.add_argument("model", choices=MODELS)
     parser.add_argument("--target", help="Optional compatible local Target directory or Hub ID")
     parser.add_argument("--output", required=True, type=Path, help="Fresh run directory")
-    parser.add_argument("--target-python", help="Python interpreter of the isolated Target venv")
+    parser.add_argument("--target-address", help="Address of an already running Target service")
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--plan", action="store_true", help="Inspect CPU Plan only; no GPU services")
     args = parser.parse_args()
     config = build_profile(args.model, args.target)
-    if args.target_python:
-        config.inference.target_python = args.target_python
+    if args.target_address:
+        config.inference.target_service = {"address": args.target_address}
     output = args.output.resolve()
     if args.plan:
         with tempfile.TemporaryDirectory(prefix="aspec-plan-") as folder:

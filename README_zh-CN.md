@@ -60,10 +60,11 @@ pip install ling-aspec
 ```bash
 pip install ling-aspec-target
 aspec patch-sglang
+aspec target
 ```
 
-Target 使用独立虚拟环境。在 Draft 环境中设置
-`ASPEC_TARGET_PYTHON=/absolute/path/to/target-venv/bin/python` 后启动训练，两边分别维护依赖。
+随后在 Draft 环境启动训练；Target 服务保持运行。默认连接 `http://127.0.0.1:30000`，远程 Target 通过
+`inference.target_service.address` 配置地址。两个命令各自使用当前环境。
 
 环境要求、源码安装和本地 wheel 安装见[安装指南](docs/user-guide/installation.md)，
 也可使用[容器](docs/user-guide/containers.md)。可选执行 `aspec doctor` 检查环境。

@@ -63,6 +63,7 @@ jobs:
             tests/test_onboarding.py \
             tests/test_dependency_extras.py \
             tests/test_target_environment.py \
+            tests/test_target_service.py \
             tests/test_cudnn_gqa_mode.py \
             tests/test_dependency_audit.py \
             tests/test_draft_model_config.py \

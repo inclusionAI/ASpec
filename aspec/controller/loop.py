@@ -615,6 +615,11 @@ def _safe_training_cleanup(
     if inference_engines and force_kill_trainers and source_teardown_safe:
         for engine in inference_engines:
             try:
+                if getattr(args, "target_service", None):
+                    # The facade is Draft-owned; the actual source is owned by
+                    # Target. Acknowledged teardown follows the reader fence.
+                    ray.get(engine.shutdown.remote(), timeout=float(
+                        getattr(args, "inference_shutdown_timeout_seconds", 120)))
                 ray.kill(engine, no_restart=True)
                 record("inference_engine", "force_killed")
             except Exception as exc:

@@ -26,20 +26,23 @@ python -m venv .venv-target
 source .venv-target/bin/activate
 pip install ling-aspec-target
 aspec patch-sglang
+aspec target
 ```
 
 Target dependencies follow SGLang's requirements; Draft acceleration packages stay in the Draft
 venv. The patch command only changes the supported SGLang source files, never dependencies.
 
-In the Draft environment, point training at the Target interpreter:
+Keep this service running. In the Draft environment, start training:
 
 ```bash
-export ASPEC_TARGET_PYTHON=/absolute/path/to/.venv-target/bin/python
+aspec train --config /path/to/run.yaml
 ```
 
-Alternatively set `inference.target_python` in the training config, or pass `--target-python`
-to Quickstart. Target and Draft use the same Python minor version and Ray version. On multiple Target nodes,
-the configured absolute path must exist on each node.
+The default Target address is `http://127.0.0.1:30000`. Set `inference.target_service.address`
+for a remote service, or pass `--target-address` to Quickstart. Use the same ASpec release
+and Python minor version in both environments. No interpreter path is exchanged.
+`aspec target --config /path/to/run.yaml` reads its address and Target model from the same config.
+The service remains available after a training session ends; each session releases its own workers.
 
 Recheck the patch after reinstalling SGLang:
 
@@ -79,7 +82,7 @@ source .venv/bin/activate
 ```
 
 Setup installs the Draft environment. Run `bash setup.sh --target` to prepare `.venv-target`,
-then set `ASPEC_TARGET_PYTHON` as above. Each setup runs the appropriate doctor. Contributors can use
+then activate it and run `aspec target`. Each setup runs the appropriate doctor. Contributors can use
 `bash setup.sh --dev`. Run `bash setup.sh --help` for environment and interpreter options.
 
 ## Install a release wheel
@@ -91,3 +94,19 @@ recipes and Quickstart data work outside the source checkout.
 
 See [advanced installation](installation-advanced.md) for native-library paths and manual
 dependency management, or [troubleshooting](troubleshooting.md) if a check fails.
+
+## Optional local supervision
+
+To start and stop Target automatically for a single-node run, add:
+
+```yaml
+inference:
+  target_service:
+    mode: managed-local
+    python_executable: /absolute/path/to/target-venv/bin/python
+```
+
+Then run the same `aspec train --config ...` command. This optional supervisor needs the
+Target environment location; independent startup only needs a service address. Both forms use
+the same Target interface and support checkpoint restoration. Logs go to `target-service.log`
+inside the run directory. Existing services are never adopted or stopped by the supervisor.

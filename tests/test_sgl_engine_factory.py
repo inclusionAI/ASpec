@@ -48,7 +48,6 @@ def _make_args(**overrides):
     """Build a minimal args Namespace for _init_sgl_engines."""
     defaults = dict(
         target_model_path="/fake/model",
-        target_python="/isolated-target/bin/python",
         inference_num_gpus=8,
         inference_num_gpus_per_engine=8,
         inference_num_gpus_per_node=8,
