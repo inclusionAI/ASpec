@@ -12,13 +12,13 @@
 """Build and audit wheel/sdist, then collect runtime pins and SHA256 checksums."""
 
 import argparse
-import json
-import tempfile
-import tomllib
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
+import tempfile
+import tomllib
 from pathlib import Path
 
 from tools.audit_release import audit

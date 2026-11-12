@@ -28,9 +28,8 @@ from aspec.assets import asset_path
 from aspec.compat.sglang_patch import installed_site, patch_state, venv_error
 
 
-
 def check_dependency_metadata(distributions=None):
-    """Audit installed active requirements and disclose exact approved exceptions."""
+    """Audit installed active requirements; no metadata conflicts are exempted."""
     if distributions is None:
         distributions = importlib.metadata.distributions()
     installed = {canonicalize_name(dist.metadata["Name"]): dist for dist in distributions}
@@ -56,9 +55,11 @@ def check_dependency_metadata(distributions=None):
 
 def expected_versions(target=False):
     source = asset_path("requirements/sglang-v0.5.21.txt" if target else "requirements/draft.txt")
-    return {name.split("[")[0]: version for line in source.read_text().splitlines()
-            if line and not line.startswith("#") and "==" in line
-            for name, version in [line.split("==", 1)]}
+    requirements = [Requirement(line) for line in source.read_text().splitlines()
+                    if line.strip() and not line.startswith("#")]
+    return {requirement.name: next((spec.version for spec in requirement.specifier
+                                   if spec.operator == "=="), None)
+            for requirement in requirements}
 
 
 def inspect_environment(*, gpu=False, target=False):
@@ -88,7 +89,7 @@ def inspect_environment(*, gpu=False, target=False):
             has_sglang = actual is not None
             if not target and not has_sglang:
                 continue
-        ok = actual is not None and actual.split("+", 1)[0] == expected
+        ok = actual is not None and (expected is None or actual.split("+", 1)[0] == expected)
         result["checks"].append({"package": name, "expected": expected, "installed": actual, "ok": ok})
         if not ok:
             result["errors"].append(f"{name}: expected {expected}, found {actual}; use the pinned requirements")

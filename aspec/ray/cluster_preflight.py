@@ -283,7 +283,8 @@ def _filesystem_capacity(path: Path) -> dict[str, int]:
 
 def _collect_local_inventory(
     required_paths: Sequence[str], marker_path: str, marker_sha256: str,
-    storage_mode: str = "shared", output_dir: str | None = None
+    storage_mode: str = "shared", output_dir: str | None = None,
+    target_python: str | None = None,
 ) -> dict[str, Any]:
     marker = Path(marker_path)
     if storage_mode == "node_local":
@@ -310,6 +311,17 @@ def _collect_local_inventory(
                          p.stat().st_size, file_digest(p)) for p in files]
             item["content_sha256"] = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
     memlock_soft, memlock_hard = resource.getrlimit(resource.RLIMIT_MEMLOCK)
+    target_runtime = None
+    if target_python:
+        from aspec.inference.target_runtime import code_identity
+
+        result = subprocess.run([target_python, "-m", "aspec._target_worker", "-m",
+                                 "aspec.inference.target_runtime"], capture_output=True, text=True,
+                                timeout=60, check=True)
+        target_runtime = json.loads(result.stdout)
+        expected = code_identity()
+        if any(target_runtime.get(key) != value for key, value in expected.items()):
+            raise ClusterPreflightError("Target and Draft ASpec code identity differs")
     return {
         "node_id": ray.get_runtime_context().get_node_id(),
         "node_ip": ray.util.get_node_ip_address(),
@@ -317,8 +329,9 @@ def _collect_local_inventory(
         "python": sys.version.split()[0],
         "source_tree_sha256": _source_tree_sha256(),
         "packages": _package_versions(),
+        "target_runtime": target_runtime,
         "runtime_artifacts": {
-            "sglang": module_runtime_identity(
+            "sglang": target_runtime["sglang"] if target_runtime else module_runtime_identity(
                 "sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS
             ),
             "mooncake": module_runtime_identity("mooncake.engine"),
@@ -384,6 +397,11 @@ def validate_cluster_inventories(
     }
     if len(package_sets) != 1:
         raise ClusterPreflightError("required package versions differ across nodes")
+    target_sets = {json.dumps({key: value for key, value in node["target_runtime"].items()
+                              if key not in {"python", "prefix", "sglang"}}, sort_keys=True)
+                   for node in inventories if node.get("target_runtime")}
+    if len(target_sets) > 1:
+        raise ClusterPreflightError("Target runtime identities differ across nodes")
     runtime_artifact_sets = set()
     for node in inventories:
         artifacts = node.get("runtime_artifacts") or {}
@@ -1159,7 +1177,8 @@ def run_cluster_preflight(args) -> dict[str, Any] | None:
                         node_id=node_id, soft=False
                     )
                 ).remote(_required_paths(args), str(marker), marker_sha256,
-                         getattr(args, "cluster_storage_mode", "shared"), str(output_dir))
+                         getattr(args, "cluster_storage_mode", "shared"), str(output_dir),
+                         getattr(args, "target_python", None) or os.environ.get("ASPEC_TARGET_PYTHON"))
             )
         inventories = ray.get(
             refs,

@@ -3,12 +3,17 @@
 """Bootstrap a Ray worker with its own venv libraries before native imports."""
 import os
 import sys
+from pathlib import Path
 
 from aspec._environment import execute
 
 
 def main():
     os.environ["VIRTUAL_ENV"] = sys.prefix
+    os.environ["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
+    if cache := os.environ.get("ASPEC_CACHE_HOME"):
+        if Path(cache).name != "target":
+            os.environ["ASPEC_CACHE_HOME"] = str(Path(cache) / "target")
     # The Ray head belongs to Draft. Never load its CUDA libraries in Target.
     os.environ.pop("LD_LIBRARY_PATH", None)
     os.environ.pop("PYTHONPATH", None)

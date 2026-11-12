@@ -40,6 +40,10 @@ def command_environment():
             raise ValueError("ASPEC_CUDA_COMPAT_DIR must contain libcuda.so.1.")
         paths.append(str(path))
     purelib = Path(sysconfig.get_paths()["purelib"])
+    toolkit = purelib / "nvidia/cu13"
+    if not env.get("CUDA_HOME") and not env.get("CUDA_PATH") and (toolkit / "bin/nvcc").is_file():
+        env["CUDA_HOME"] = str(toolkit)
+        env["PATH"] = str(toolkit / "bin") + os.pathsep + env.get("PATH", "")
     paths.extend(str(p) for p in (purelib / "nvidia/cuda_runtime/lib", purelib / "torch/lib")
                  if p.is_dir())
     if paths:

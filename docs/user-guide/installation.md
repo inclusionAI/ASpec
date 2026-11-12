@@ -13,21 +13,32 @@ source .venv/bin/activate
 pip install ling-aspec
 ```
 
-This installs ASpec and its training dependencies. The Python package and command are named
+This installs ASpec and its Draft training dependencies. The Python package and command are named
 `aspec`. Keep the unrelated PyPI package `aspec` out of this environment.
 
 ## Target nodes
 
-On nodes that run the Target model:
+In a separate virtual environment on nodes that run the Target model:
 
 ```bash
+python -m venv .venv-target
+source .venv-target/bin/activate
+pip install ling-aspec-target
 aspec patch-sglang
 ```
 
-The command installs the compatible SGLang runtime if it is missing, then applies the training
-patch. Runtime versions and compatibility overrides are shipped with ASpec; no manual dependency
-selection is needed. See [advanced installation](installation-advanced.md#dedicated-environment)
-for the override details.
+Target dependencies follow SGLang's requirements; Draft acceleration packages stay in the Draft
+venv. The patch command only changes the supported SGLang source files, never dependencies.
+
+In the Draft environment, point training at the Target interpreter:
+
+```bash
+export ASPEC_TARGET_PYTHON=/absolute/path/to/.venv-target/bin/python
+```
+
+Alternatively set `inference.target_python` in the training config, or pass `--target-python`
+to Quickstart. Target and Draft use the same Python minor version and Ray version. On multiple Target nodes,
+the configured absolute path must exist on each node.
 
 Recheck the patch after reinstalling SGLang:
 
@@ -66,13 +77,15 @@ bash setup.sh
 source .venv/bin/activate
 ```
 
-Setup installs the runtime, applies the patch and runs doctor. Contributors can use
+Setup installs the Draft environment. Run `bash setup.sh --target` to prepare `.venv-target`,
+then set `ASPEC_TARGET_PYTHON` as above. Each setup runs the appropriate doctor. Contributors can use
 `bash setup.sh --dev`. Run `bash setup.sh --help` for environment and interpreter options.
 
 ## Install a release wheel
 
-Replace `ling-aspec` in the PyPI install command with the path to the downloaded wheel.
-Then prepare Target nodes and optionally check the environment as above. The installed commands,
+Use `pip install --find-links /path/to/release ling-aspec` in Draft, and
+`pip install --find-links /path/to/release ling-aspec-target` in Target. Each role installs
+the same `ling-aspec-runtime` wheel, which owns the `aspec` code and CLI. Then prepare Target nodes and optionally check the environment as above. The installed commands,
 recipes and Quickstart data work outside the source checkout.
 
 See [advanced installation](installation-advanced.md) for native-library paths and manual

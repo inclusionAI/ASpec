@@ -13,7 +13,10 @@
 # limitations under the License.
 
 """Workflow shortcuts and native-library bootstrap for the public CLI."""
+import importlib.metadata
+import os
 import sys
+from pathlib import Path
 
 from aspec._environment import execute
 
@@ -45,6 +48,26 @@ def main():
         module = modules[arguments.pop(0)]
     else:
         module = "aspec.train_entry"
+    marker = Path(sys.prefix) / ".aspec-role"
+    target_role = marker.is_file() and marker.read_text().strip() == "target"
+    try:
+        importlib.metadata.version("ling-aspec-target")
+        target_role = True
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    help_requested = arguments in (["--help"], ["-h"])
+    if not help_requested and module in {"aspec.train_entry", "aspec.commands.quickstart"} and target_role:
+        raise SystemExit("Run training from the Draft venv (pip install ling-aspec); "
+                         "this interpreter belongs to Target")
+    target_command = module in {"aspec.compat.sglang_patch", "aspec.commands.evaluate_draft",
+                                "aspec.commands.prepare_target_dataset"}
+    target_command = target_command or (module == "aspec.commands.doctor" and "--target" in arguments)
+    target_python = os.environ.get("ASPEC_TARGET_PYTHON")
+    if target_command and not target_role and not help_requested and target_python:
+        if not Path(target_python).is_absolute():
+            raise SystemExit("ASPEC_TARGET_PYTHON must be an absolute Target interpreter path")
+        execute([target_python, "-m", "aspec._target_worker", "-m", module, *arguments])
+        return
     try:
         execute([sys.executable, "-m", module, *arguments])
     except (ValueError, OSError) as error:

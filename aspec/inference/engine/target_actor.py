@@ -48,10 +48,11 @@ class TargetActor:
         return self.engine.find_free_port(*args, **kwargs)
 
     def get_status(self):
-        import aspec
         import ray
         import sglang
         import torch
+
+        import aspec
 
         result = self.engine.get_status()
         result["runtime"] = {

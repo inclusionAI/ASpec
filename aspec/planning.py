@@ -1589,6 +1589,7 @@ def _policy(
                 "engines": (runtime["offline_num_engines"] if runtime["inference_engine_type"] == "offline"
                             else runtime["inference_num_gpus"] // runtime["inference_num_gpus_per_engine"]),
                 "target_group_locality": "node_local",
+                "python_executable": _select(config, "inference.target_python"),
             },
             "locality_domains": locality_domains,
         },

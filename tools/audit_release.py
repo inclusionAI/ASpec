@@ -140,6 +140,10 @@ def _identity(raw: bytes, artifact: Path) -> tuple[str, str]:
         raise ValueError(f"{artifact.name}: package metadata lacks Name or Version")
     if name not in {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime"}:
         raise ValueError(f"{artifact.name}: unexpected distribution name {name!r}")
+    if name != "ling-aspec-runtime":
+        requirements = {value.replace(" ", "") for value in metadata.get_all("Requires-Dist", [])}
+        if f"ling-aspec-runtime=={version}" not in requirements:
+            raise ValueError(f"{artifact.name}: role must require the matching runtime version")
     return name, version
 
 

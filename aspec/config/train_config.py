@@ -1006,6 +1006,10 @@ def load_config(
         configs_to_merge.append(cli_config)
 
     config = OmegaConf.merge(*configs_to_merge)
+    if config.inference.target_python is None:
+        config.inference.target_python = os.environ.get("ASPEC_TARGET_PYTHON") or None
+    if config.inference.target_python is not None and not Path(config.inference.target_python).is_absolute():
+        raise ValueError("inference.target_python must be an absolute Target interpreter path")
     _resolve_relative_paths(config, os.getcwd())
 
     _validate_current_scope(config)

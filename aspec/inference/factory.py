@@ -20,9 +20,10 @@
 
 """Inference engine creation and initialization with Ray placement groups."""
 
-import secrets
 import os
+import secrets
 import shlex
+import sys
 from pathlib import Path
 
 import ray
@@ -252,6 +253,8 @@ def _prepare_sgl_engines(
     if not target_python or not Path(target_python).is_absolute():
         raise ValueError("Set inference.target_python or ASPEC_TARGET_PYTHON to the absolute "
                          "Python path of the isolated Target environment")
+    if Path(target_python).parent == Path(sys.executable).parent:
+        raise ValueError("Target and Draft must use separate virtual environments")
 
     pg_obj, reordered_bundle_indices, reordered_gpu_ids = pg
 
@@ -260,6 +263,8 @@ def _prepare_sgl_engines(
     # The Target bootstrap reconstructs loader paths from its own installation.
     env_vars.pop("LD_LIBRARY_PATH", None)
     env_vars.pop("PYTHONPATH", None)
+    env_vars.pop("CUTE_DSL_CACHE_DIR", None)
+    env_vars.pop("FLASH_ATTENTION_CUTE_DSL_CACHE_DIR", None)
     runtime_env = {"env_vars": env_vars, "py_executable": shlex.join(
         [target_python, "-m", "aspec._target_worker"])}
     expected_runtime = code_identity()

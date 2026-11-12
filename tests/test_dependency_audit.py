@@ -23,7 +23,7 @@ def distribution(name, version, requires=()):
     return SimpleNamespace(metadata={"Name": name}, version=version, requires=requires)
 
 
-def test_declared_overrides_remain_visible():
+def test_previous_overrides_are_now_rejected():
     result = check_dependency_metadata([
         distribution("sglang", "0.5.21", ["nvidia-cutlass-dsl[cu13]==4.6.2", "quack-kernels==0.6.4"]),
         distribution("nvidia-cutlass-dsl", "4.7.1"), distribution("quack-kernels", "0.6.5"),
@@ -38,7 +38,7 @@ def test_declared_overrides_remain_visible():
     ("sglang", "0.5.21", "quack-kernels==0.6.4", "0.6.6"),
     ("another-package", "0.5.21", "quack-kernels==0.6.4", "0.6.5"),
 ])
-def test_other_conflicts_cannot_borrow_the_override(owner, version, requires, installed):
+def test_all_dependency_conflicts_are_rejected(owner, version, requires, installed):
     result = check_dependency_metadata([
         distribution(owner, version, [requires]), distribution("quack-kernels", installed),
     ])

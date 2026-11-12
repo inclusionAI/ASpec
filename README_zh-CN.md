@@ -55,11 +55,15 @@ Qwen、Ling 上的 DSpark/DFlash 是主要优化方向和 recipe 维护重点；
 pip install ling-aspec
 ```
 
-该命令会安装训练依赖。需要运行 Target 模型的节点，再准备 SGLang 并应用训练补丁：
+该命令安装 Draft 训练依赖。在独立的 Target 虚拟环境中安装 SGLang 集成并应用补丁：
 
 ```bash
+pip install ling-aspec-target
 aspec patch-sglang
 ```
+
+Target 使用独立虚拟环境。在 Draft 环境中设置
+`ASPEC_TARGET_PYTHON=/absolute/path/to/target-venv/bin/python` 后启动训练，两边分别维护依赖。
 
 环境要求、源码安装和本地 wheel 安装见[安装指南](docs/user-guide/installation.md)，
 也可使用[容器](docs/user-guide/containers.md)。可选执行 `aspec doctor` 检查环境。

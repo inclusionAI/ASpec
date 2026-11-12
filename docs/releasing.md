@@ -1,6 +1,7 @@
 # Releasing
 
-ASpec is distributed on PyPI as `ling-aspec`. Python imports and the CLI use `aspec`.
+ASpec publishes the Draft package `ling-aspec`, Target package `ling-aspec-target`, and
+shared code package `ling-aspec-runtime` at the same version. Python imports and the CLI use `aspec`.
 
 ## Versioning
 
@@ -37,7 +38,7 @@ maintenance tools. `setup.py` collects resources from their canonical source loc
 
 In the release repository, configure a GitHub environment named `pypi`:
 
-- Add the environment secret `PYPI_API_TOKEN` with a PyPI token authorized for `ling-aspec`.
+- Add the environment secret `PYPI_API_TOKEN` with a PyPI token authorized for all three distributions.
   Creating the project on its first upload requires an account-wide token; afterward, use a
   project-scoped token.
 - Allow deployments from `v*` tags.

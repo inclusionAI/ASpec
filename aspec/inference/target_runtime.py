@@ -3,6 +3,8 @@
 """Identity shared across the independently installed Draft and Target roles."""
 import hashlib
 import importlib.metadata
+import json
+import sys
 from pathlib import Path
 
 
@@ -18,4 +20,32 @@ def code_identity():
         version = importlib.metadata.version("ling-aspec-runtime")
     except importlib.metadata.PackageNotFoundError:
         version = None
-    return {"version": version, "code_sha256": digest.hexdigest()}
+    return {"version": version, "code_sha256": digest.hexdigest(),
+            "python_minor": list(sys.version_info[:2])}
+
+
+def dependency_versions(*names):
+    result = {}
+    for name in names:
+        try:
+            result[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            result[name] = None
+    return result
+
+
+def inventory():
+    """Read Target identity in its own interpreter, without starting GPU services."""
+    from aspec.commands.doctor import inspect_environment
+    from aspec.runtime_identity import SGLANG_RUNTIME_RELATIVE_PATHS, module_runtime_identity
+
+    doctor = inspect_environment(target=True)
+    if not doctor["ok"]:
+        raise RuntimeError("Target environment is not ready: " + "; ".join(doctor["errors"]))
+    return {**code_identity(), "python": sys.executable, "prefix": sys.prefix,
+            "sglang": module_runtime_identity("sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS),
+            "dependencies": dependency_versions("torch", "ray", "nvidia-cutlass-dsl", "quack-kernels")}
+
+
+if __name__ == "__main__":
+    print(json.dumps(inventory()))

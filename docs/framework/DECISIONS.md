@@ -19,12 +19,14 @@ These decisions describe the maintained implementation and its public behavior.
   Preserve transitive provenance. See [retention boundaries](RETENTION_BOUNDARY.md).
 - **Runtime baseline.** Use the [pinned installation lane](../user-guide/installation.md): official
   SGLang v0.5.21, commit `e00930c5489053f26d86b179cee0d087f846acbb`, with the retained training
-  patch. FA4 b34, CUTLASS DSL 4.7.1 and Quack 0.6.5 share a compatible dependency lane. Upstream
+  patch in Target. Draft uses FA4 b34, CUTLASS DSL 4.7.1 and Quack 0.6.5 independently. Upstream
   migration references do not constrain ASpec to their older runtime versions.
-- **Installation.** The default distribution installs the Draft runtime. Target nodes explicitly
-  run `aspec patch-sglang`, which prepares a missing SGLang runtime with the documented overrides
-  and applies the patch. Read-only patch checks never install dependencies. Doctor checks the
-  Target runtime when present or explicitly requested with `--target`.
+- **Installation.** `ling-aspec` and `ling-aspec-target` install separate Draft/Target dependency
+  environments, sharing one version of `ling-aspec-runtime`. Target follows upstream SGLang pins;
+  no metadata overrides are accepted. `aspec patch-sglang` only patches files. The launcher selects
+  Target's explicit interpreter and verifies code identity before loading SGLang. This boundary is
+  inspired by SpecForge's independently provisioned capture-server interpreter, adapted to the
+  retained Ray actor/transport path rather than introducing another training pipeline.
 - **Semantics and execution.** Workload, capability, Plan and observed Evidence are distinct.
   Required capability failures are errors; fallback/omission is explicit. No legacy fields leak
   across the canonical boundary. [Architecture](ARCHITECTURE.md) defines the work/ownership invariants.

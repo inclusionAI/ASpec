@@ -22,7 +22,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 VERSION = "0.5.21"
 PATCH = Path(__file__).with_name("patches") / "sglang-v0.5.21.patch"
 
@@ -105,7 +104,9 @@ def main():
             print(f"Applied ASpec training patch to {site / 'sglang'}")
         else:
             print(f"ASpec training patch already present: {site / 'sglang'}")
-    except (ValueError, RuntimeError, OSError, importlib.metadata.PackageNotFoundError, subprocess.CalledProcessError) as exc:
+    except importlib.metadata.PackageNotFoundError:
+        parser.exit(1, "Activate the Target venv and install ling-aspec-target before patching SGLang\n")
+    except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"ASpec patch check failed: {exc}\n")
 
 

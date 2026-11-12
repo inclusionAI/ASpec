@@ -60,12 +60,16 @@ In an activated Linux virtual environment:
 pip install ling-aspec
 ```
 
-This installs the training dependencies. On nodes that run the Target model, prepare SGLang
-and apply the training patch:
+This installs the Draft training environment. In a **separate Target virtual environment**, install
+the SGLang integration and apply its patch:
 
 ```bash
+pip install ling-aspec-target
 aspec patch-sglang
 ```
+
+In the Draft environment, set `ASPEC_TARGET_PYTHON=/absolute/path/to/target-venv/bin/python`
+before training. Target and Draft keep independent dependencies.
 
 See the [installation guide](docs/user-guide/installation.md) for prerequisites, source installation
 and release wheels, or use the [container setup](docs/user-guide/containers.md).
