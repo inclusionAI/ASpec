@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Set the first PyPI version to `0.1.0b0`; developers maintain release versions with the `b0`
+  suffix while CI checks the matching tag without changing the version.
+- Use `ling-aspec` as the distribution name, retaining the `aspec` namespace and CLI. Publish
+  audited tag artifacts to PyPI after wheel installation checks through the GitHub `pypi` environment.
+- Allow repeatable manual build/install validation without publication; reserve PyPI uploads
+  for version tag pushes.
 - Consolidate supplementary examples around distinct workflows; use recipe/config overrides for
   alternative lengths, backends and structure combinations.
 - Advance fully committed restored epochs for repeating training sources, including new

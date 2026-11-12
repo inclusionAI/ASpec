@@ -49,6 +49,9 @@ Qwen、Ling 上的 DSpark/DFlash 是主要优化方向和 recipe 维护重点；
 
 ## 开始使用
 
+PyPI 发行包名为 `ling-aspec`，Python 导入名和命令仍为 `aspec`。
+完整的固定版本 GPU 运行环境请按[安装指南](docs/user-guide/installation.md)配置。
+
 1. 按[安装指南](docs/user-guide/installation.md)一键创建源码环境，也可选择[容器](docs/user-guide/containers.md)；
 2. 在[快速上手](docs/user-guide/quickstart.md)中选择 Qwen3-8B 或 Ling tiny，用两张 GPU 完成
    相同的 Plan、训练、报告、恢复和导出流程；

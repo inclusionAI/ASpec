@@ -5,6 +5,8 @@ toolkit containing `nvcc`. Training requires NVIDIA GPUs and a CUDA-13-compatibl
 Quickstart uses two NVLink-connected GPUs.
 Source setup is the easiest complete installation. Release bundles also provide a wheel with
 the public CLI, formal recipes and Quickstart data; developer validation tools remain in the source.
+The distribution name on PyPI is `ling-aspec`; the Python import and CLI remain `aspec`.
+The PyPI project named `aspec` is unrelated. Use a fresh venv so overlapping packages cannot mix.
 
 On Python 3.13, the pinned grammar dependency may build from source and needs Rust/Cargo on
 `PATH` when no matching wheel is available; see [native prerequisites](installation-advanced.md#requirements).
@@ -73,8 +75,13 @@ python -m pip install uv==0.13.5
 python -m uv pip install --link-mode copy --python "$VIRTUAL_ENV/bin/python" \
   --override /path/to/release/runtime/cute-overrides.txt \
   -r /path/to/release/runtime/sglang-v0.5.21.txt \
-  '/path/to/release/aspec-0.1.0rc1-py3-none-any.whl[fa]'
+  '/path/to/release/ling_aspec-0.1.0b0-py3-none-any.whl[fa]'
 ```
+
+To use a published PyPI release, replace the wheel argument in that command with
+`'ling-aspec[fa]==0.1.0b0'`, choosing the version that matches the audited runtime requirement
+files. Installing `ling-aspec` alone does not install or validate the complete pinned GPU runtime;
+keep the requirements and explicit overrides above.
 
 The versioned runtime requirements and explicit overrides are also bundled as package resources
 for doctor. The wheel does not include Torch/SGLang/CUDA binaries or model weights.

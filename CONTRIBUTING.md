@@ -32,8 +32,10 @@ Default tests are fast/offline. GPU, tokenizer, training and cuDNN gates need ex
 declared in their test files. A skip is not GPU acceptance. Public CI checks lint, local doc links,
 compilation, plus a curated CPU/offline contract suite installed from `requirements/ci-cpu.txt`
 on pull requests and configured branch pushes. The separate [release build](.github/workflows/build-release.yml)
-workflow builds and audits sdist/wheel artifacts and checks wheel installation only when a `v*` tag
-is pushed; see [release instructions](docs/releasing.md). Neither workflow certifies GPU health or
+workflow builds and audits sdist/wheel artifacts and checks wheel installation on manual runs and
+`v*` tag pushes. Manual runs only validate the artifacts and their installation.
+In `inclusionAI/ASpec`, tag pushes publish `ling-aspec` to PyPI through the `pypi` environment;
+see [release instructions](docs/releasing.md). Neither workflow certifies GPU health or
 replaces the complete pinned-runtime suite above. Equivalent remote checks are not proof that hosted
 GitHub Actions has already run.
 

@@ -28,34 +28,36 @@ def _artifacts(
     wheel_extra=(),
     wheel_omit=(),
     sdist_extra=(),
-    wheel_version="0.1.0rc1",
-    sdist_version="0.1.0rc1",
+    wheel_version="0.1.0b0",
+    sdist_version="0.1.0b0",
     sdist_link=False,
+    distribution="ling-aspec",
 ):
-    wheel = directory / "aspec-0.1.0rc1-py3-none-any.whl"
+    archive_name = distribution.replace("-", "_")
+    wheel = directory / f"{archive_name}-0.1.0b0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as output:
         for name in sorted(WHEEL_REQUIRED - set(wheel_omit)):
             output.writestr(name, "")
         output.writestr(
-            "aspec-0.1.0rc1.dist-info/METADATA",
-            f"Name: aspec\nVersion: {wheel_version}\n",
+            f"{archive_name}-0.1.0b0.dist-info/METADATA",
+            f"Name: {distribution}\nVersion: {wheel_version}\n",
         )
         for name in wheel_extra:
             output.writestr(name, "")
 
-    source = directory / "aspec-0.1.0rc1.tar.gz"
+    source = directory / f"{archive_name}-0.1.0b0.tar.gz"
     with tarfile.open(source, "w:gz") as output:
         for relative in sorted(SDIST_REQUIRED | set(sdist_extra)):
             data = (
-                f"Name: aspec\nVersion: {sdist_version}\n".encode()
+                f"Name: {distribution}\nVersion: {sdist_version}\n".encode()
                 if relative == "PKG-INFO"
                 else relative.encode()
             )
-            info = tarfile.TarInfo(f"aspec-0.1.0rc1/{relative}")
+            info = tarfile.TarInfo(f"{archive_name}-0.1.0b0/{relative}")
             info.size = len(data)
             output.addfile(info, io.BytesIO(data))
         if sdist_link:
-            link = tarfile.TarInfo("aspec-0.1.0rc1/aspec/link")
+            link = tarfile.TarInfo(f"{archive_name}-0.1.0b0/aspec/link")
             link.type = tarfile.SYMTYPE
             link.linkname = "target"
             output.addfile(link)
@@ -102,8 +104,14 @@ def test_release_audit_requires_one_wheel_and_one_sdist(tmp_path):
 
 
 def test_release_audit_rejects_mismatched_package_identity(tmp_path):
-    _artifacts(tmp_path, sdist_version="0.1.0rc2")
+    _artifacts(tmp_path, sdist_version="0.2.0b0")
     with pytest.raises(ValueError, match="does not match"):
+        audit(tmp_path)
+
+
+def test_release_audit_rejects_the_unrelated_aspec_distribution(tmp_path):
+    _artifacts(tmp_path, distribution="aspec")
+    with pytest.raises(ValueError, match="unexpected distribution name"):
         audit(tmp_path)
 
 

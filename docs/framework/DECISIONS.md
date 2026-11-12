@@ -5,9 +5,15 @@ These decisions describe the maintained implementation and its public behavior.
 - **Product scope.** SGLang with DSpark/DFlash and Qwen3 is the primary multi-GPU performance path.
   Other implemented algorithms and structures have explicit [support boundaries](../support.md).
   A source release does not promise all combinations or production fault certification.
-- **Naming and licensing.** Project, Python namespace and CLI use ASpec / `aspec`.
-  ASpec uses Apache-2.0; inherited material retains its own licenses and notices. Source release
-  does not establish a PyPI distribution or promise name coexistence with unrelated packages.
+- **Naming and licensing.** The project uses ASpec; the Python namespace and CLI use `aspec`.
+  The distribution name on PyPI is `ling-aspec`; the unrelated `aspec` distribution must not be
+  installed alongside it because their import namespaces can overlap. ASpec uses Apache-2.0;
+  inherited material retains its own licenses and notices. PyPI publication requires the
+  [release checks and publishing configuration](../releasing.md).
+- **Release versions.** Developers maintain the major/minor/patch version and currently retain
+  the `b0` beta suffix for public releases, for example `0.1.0b0`, `0.2.0b0` and `0.2.1b0`.
+  CI validates the matching `v<version>` tag without incrementing or promoting the version.
+  See [versioning](../releasing.md#versioning).
 - **Reuse.** Review the pinned upstream implementation before adding overlapping functionality.
   Adapt working code by default; explain a rewrite and verify it against the original behavior.
   Preserve transitive provenance. See [retention boundaries](RETENTION_BOUNDARY.md).

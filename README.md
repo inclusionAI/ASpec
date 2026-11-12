@@ -54,6 +54,9 @@ Check [supported paths and limitations](docs/support.md), then browse the [recip
 
 ## Start here
 
+The PyPI distribution is named `ling-aspec`; the Python import and command remain `aspec`.
+Use the [installation guide](docs/user-guide/installation.md) for the complete pinned GPU runtime.
+
 1. [Run source setup](docs/user-guide/installation.md); [containers](docs/user-guide/containers.md) are also available.
 2. [Choose Qwen3-8B or Ling tiny](docs/user-guide/quickstart.md) for the same two-GPU Plan, train,
    report, resume and export workflow.

@@ -40,7 +40,7 @@ from aspec.runtime_identity import (
 
 EVIDENCE_SCHEMA_VERSION = "aspec.run-evidence/v0alpha8"
 _PACKAGE_NAMES = (
-    "aspec",
+    "ling-aspec",
     "torch",
     "ray",
     "sglang",
@@ -179,7 +179,7 @@ def _source_identity(package_root: Path | None = None) -> dict[str, Any]:
     build_info = package / "_build_info.json"
     identity["build"] = json.loads(build_info.read_text()) if build_info.is_file() else None
     try:
-        identity["version"] = importlib.metadata.version("aspec")
+        identity["version"] = importlib.metadata.version("ling-aspec")
     except importlib.metadata.PackageNotFoundError:
         identity["version"] = None
     source_files = [path for path in package.rglob("*") if path.suffix in

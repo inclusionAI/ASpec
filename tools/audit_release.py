@@ -138,6 +138,8 @@ def _identity(raw: bytes, artifact: Path) -> tuple[str, str]:
     version = metadata.get("Version")
     if not name or not version:
         raise ValueError(f"{artifact.name}: package metadata lacks Name or Version")
+    if name != "ling-aspec":
+        raise ValueError(f"{artifact.name}: unexpected distribution name {name!r}; expected 'ling-aspec'")
     return name, version
 
 
@@ -182,7 +184,7 @@ def _sdist_members(path: Path) -> tuple[set[str], tuple[str, str]]:
     missing = SDIST_REQUIRED - names
     if missing:
         raise ValueError(f"{path.name}: missing source members {sorted(missing)}")
-    if not root.startswith("aspec-"):
+    if not root.startswith("ling_aspec-"):
         raise ValueError(f"{path.name}: unexpected source root {root!r}")
     with tarfile.open(path, mode="r:gz") as source:
         metadata_member = source.getmember(f"{root}/PKG-INFO")

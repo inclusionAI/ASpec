@@ -1,9 +1,27 @@
 # Preparing a release
 
+The distribution name is `ling-aspec`; the project name, Python import and CLI remain ASpec / `aspec`.
+Setuptools normalizes archive filenames to `ling_aspec-<version>...`. Do not upload under the
+unrelated PyPI project `aspec`.
+
 Wheels contain the runtime, public CLI, model JSON assets, formal recipes, Quickstart conversations,
 runtime dependency manifests and the pinned SGLang patch. Source distributions also contain full
 documentation, tests, setup and maintenance tools. Canonical resource files live in their existing
 source locations; `setup.py` collects them into the wheel during the build.
+
+## Versioning
+
+Current public PyPI releases use the `b0` beta suffix, starting with `0.1.0b0`.
+Developers maintain the major/minor/patch version in `pyproject.toml` and retain that suffix,
+for example `0.1.0b0`, `0.2.0b0`, then `0.2.1b0`. Each upload containing changed source or
+artifacts needs a new version selected by the developer. The current policy does not advance
+the beta suffix to `b1`/`b2` or automatically promote a release to an unsuffixed version.
+
+The release tag is exactly `v` plus that complete version, such as `v0.1.0b0`.
+CI reads and validates the selected version; it does not choose or increment it.
+The team's current "debug" release designation uses the standard
+[Python beta version syntax](https://packaging.python.org/en/latest/specifications/version-specifiers/#pre-releases).
+An exact install pin such as `ling-aspec==0.1.0b0` selects that prerelease explicitly.
 
 ## Prepare
 
@@ -31,10 +49,12 @@ files under `runtime/`, and writes `SHA256SUMS`. It rejects a nonempty output di
 requests and configured branch pushes. It does not build distributions. Packaging-related source
 contracts remain in that suite so resource and audit regressions can be found before tagging.
 
-The separate [release build workflow](../.github/workflows/build-release.yml) runs when a `v*` tag is
-pushed to GitHub. Creating a local tag alone does not trigger it. The tag must exactly match `v` plus
-the version in `pyproject.toml`, for example `v0.1.0rc1` for `0.1.0rc1`; a mismatch fails before
-building. The workflow runs the same build command, saves the audited release bundle as the
+The separate [release build workflow](../.github/workflows/build-release.yml) supports manual
+validation and runs when a `v*` tag is pushed to GitHub. A default manual run builds and checks
+artifacts without publishing. Creating a local tag alone does not trigger it. On tag pushes, the tag must exactly match `v` plus
+the version in `pyproject.toml`, for example `v0.1.0b0` for `0.1.0b0`; a mismatch fails before
+building. The workflow runs the same build command, checks distribution metadata with
+`twine check --strict`, saves the audited release bundle as the
 `aspec-distributions` workflow artifact, and runs a dependent `wheel-install` job on Python 3.11.
 That job checks SHA256s, installs the built wheel in a dedicated CPU venv, and executes:
 
@@ -66,7 +86,59 @@ Evidence records the effective installed package hash (including the bundled pat
 distribution version and build provenance when available. A wheel does not borrow Git identity from
 an enclosing checkout; unavailable build revision remains unknown.
 
+## Rehearse before publishing
+
+### Build and install without uploading
+
+First run the source CI for the same commit and require its quality and CPU contract jobs to pass.
+The release workflow checks packaging and wheel installation; it does not rerun that source suite.
+
+Once this workflow configuration is on the repository's default branch, open **Actions → Build and
+publish release → Run workflow**, select the branch to check, and run the workflow.
+GitHub requires the manual trigger to be present on the default branch before exposing this entry;
+see [manual workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+
+This runs `build` and `wheel-install`, retaining the audited bundle in `aspec-distributions`.
+The publishing job is skipped. The build and installation jobs receive no publishing secrets.
+Manual runs never publish to production PyPI, even when the selected ref is a version tag.
+Repeat these checks without changing the version or creating a release tag.
+
+The installation check covers installed command origins, version identity, assets, recipe/Quickstart
+Plans and SGLang patch behavior. Before the first production release, download the audited bundle
+and follow the [wheel installation guide](user-guide/installation.md#install-a-release-wheel) in a
+fresh Linux venv on allocated GPUs. Complete Quickstart training, recovery and export; use the
+relevant [validation gates](contributing/validation.md) for runtime changes. The CPU fixture does not
+establish GPU or complete production dependency acceptance.
+
 ## Publish
+
+### One-time PyPI and GitHub setup
+
+The workflow uses your PyPI API token. Configure it in the repository that publishes releases,
+[`inclusionAI/ASpec`](https://github.com/inclusionAI/ASpec), rather than the development fork:
+
+1. Sign in to [PyPI account settings](https://pypi.org/manage/account/) and create or verify an API
+   token. The first upload creates `ling-aspec`, so it needs an account-wide token when the project
+   does not exist yet. A token scoped to another project cannot create it. After the first successful
+   release, replace it with a token scoped to `ling-aspec` and revoke the bootstrap token.
+2. Open **Settings → Environments → New environment** in the GitHub repository and name it **`pypi`**.
+   Under **Environment secrets**, add **`PYPI_API_TOKEN`** with the entire token value, including
+   its `pypi-` prefix. Enter the token directly in GitHub; keep it out of source files and logs.
+3. Configure **Required reviewers** on the environment to require approval before each upload.
+   Choose maintainers who can approve releases. If the tag creator must approve their own release,
+   leave **Prevent self-review** disabled. Environment approval happens after the build/install jobs.
+4. Under **Deployment branches and tags**, select **Selected branches and tags** and add a rule
+   with ref type **Tag** and pattern **`v*`**. A branch-only rule will not permit version tags.
+5. Ensure GitHub Actions is enabled and any organization/repository action allowlist permits the
+   actions referenced by the workflow, including `pypa/gh-action-pypi-publish`.
+
+See PyPA's [first-upload instructions](https://packaging.python.org/en/latest/guides/distributing-packages-using-setuptools/#create-an-account),
+GitHub's [environment configuration guide](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+and the PyPA action's [API token usage](https://github.com/pypa/gh-action-pypi-publish#specifying-a-different-username).
+This workflow explicitly uses token authentication and disables attestations, which require Trusted
+Publishing. No PyPI Trusted Publisher or GitHub `id-token: write` permission is needed for this setup.
+
+### Release a version
 
 Before pushing a version tag, verify that its exact commit has passed the CI source checks and the
 applicable release checks above. The tag workflow does not rerun the source test suite. After pushing,
@@ -74,8 +146,31 @@ require both `build` and `wheel-install` to pass; an uploaded artifact alone is 
 acceptance. A failed run can be rerun for the same tag after an infrastructure issue is resolved;
 source fixes require a new reviewed commit and version/tag.
 
-The release build only saves Actions artifacts. It does not create a GitHub Release or publish to
-PyPI; publication is a separate, explicitly authorized step.
+1. Merge the reviewed release changes, including the version in `pyproject.toml`, into the main
+   repository. Choose a version that has not already been uploaded or tagged; `0.1.0b0` requires
+   exactly `v0.1.0b0`. Creating a GitHub Release for an existing tag does not send a new tag-push event.
+2. Push that tag to `inclusionAI/ASpec` at the reviewed commit. Alternatively, in GitHub's
+   **Releases → Draft a new release**, create the new tag at that commit and publish the release.
+   Mark a GitHub Release for a `b0` version as a pre-release.
+   Pushing a version tag authorizes the publishing workflow; with required reviewers configured,
+   uploading still waits for environment approval.
+3. Open **Actions → Build and publish release**. After `build` and `wheel-install` pass, review the
+   `aspec-distributions` artifact and approve the pending `pypi` deployment.
+4. The `publish` job downloads that same artifact, verifies `SHA256SUMS`, and uploads only its wheel
+   and sdist. It does not rebuild them or upload `runtime/` and `SHA256SUMS` as Python packages.
+5. Verify the files and version on [PyPI](https://pypi.org/project/ling-aspec/), then follow the
+   [pinned runtime installation guide](user-guide/installation.md) in a fresh Linux venv.
+
+The publishing job runs only in `inclusionAI/ASpec`; forks still build and check artifacts but skip
+publication. Production publishing requires a `v*` tag push; manual runs cannot enable it. The
+workflow does not create a GitHub Release itself. The `0.1.0b0`
+version is a prerelease; installing that version requires an exact pin or `--pre` until a stable
+release is available.
+
+Missing tokens, rejected metadata, failed checks and duplicate uploads fail the workflow. PyPI
+does not allow replacing an existing distribution file. Before retrying an upload failure, inspect
+PyPI for partially uploaded files; a rerun does not silently skip existing files. Keep failures and
+their logs, and use a new version for source changes.
 
 Review the exact artifacts, repository destination, version/tag and release notes. Summarize checks
 actually performed and any known limitations. Publish only the reviewed source and artifacts;

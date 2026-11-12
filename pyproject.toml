@@ -3,8 +3,8 @@ requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aspec"
-version = "0.1.0rc1"
+name = "ling-aspec"
+version = "0.1.0b0"
 description = "A Torch-native framework for speculative decoding training"
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,6 +35,11 @@ dependencies = [
 
 [project.scripts]
 aspec = "aspec.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/inclusionAI/ASpec"
+Documentation = "https://github.com/inclusionAI/ASpec/blob/main/docs/README.md"
+Issues = "https://github.com/inclusionAI/ASpec/issues"
 
 [project.optional-dependencies]
 dev = ["build", "pre-commit", "pytest", "ruff", "tensorboard"]
