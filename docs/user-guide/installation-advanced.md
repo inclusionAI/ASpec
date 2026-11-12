@@ -48,8 +48,9 @@ printf '#include <bit>\nint main() { return std::bit_cast<unsigned>(1.0f) == 0; 
 ```
 
 SGLang also invokes the CUDA toolkit's `nvcc` for JIT kernels. Setup checks the executable selected
-by `CUDA_HOME`/`CUDA_PATH`, or `PATH` when those variables are unset. A CUDA-enabled PyTorch wheel
-alone does not establish that this compiler is discoverable. The optional container supplies a CUDA
+by `CUDA_HOME`/`CUDA_PATH`, or `PATH` when those variables are unset. The Target package installs its matching CUDA compiler; the CLI exposes a private development
+toolkit view for JITs that expect `lib64` and unversioned linker names. An explicit host toolkit
+selection is preserved. A CUDA-enabled PyTorch wheel alone does not establish compiler availability. The optional container supplies a CUDA
 13.0.2 development toolkit. Setup preserves an explicit host compiler/toolkit selection.
 
 Use `python -m tools.doctor --gpu` below to check the native Mooncake import in the selected venv. A missing RDMA library should be resolved in the environment before training.

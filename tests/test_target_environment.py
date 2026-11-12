@@ -57,7 +57,7 @@ def test_target_actor_selects_its_interpreter_without_draft_loader_paths(monkeyp
 def test_target_bootstrap_rebuilds_environment_before_starting_worker(monkeypatch):
     from aspec import _target_worker
 
-    for name in ("PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH"):
+    for name in ("PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH", "LIBRARY_PATH"):
         monkeypatch.setenv(name, "/draft/foreign")
     monkeypatch.setenv("VIRTUAL_ENV", "/draft")
     monkeypatch.setenv("PATH", "/draft/bin:/usr/bin")
@@ -70,7 +70,7 @@ def test_target_bootstrap_rebuilds_environment_before_starting_worker(monkeypatc
     assert os.environ["VIRTUAL_ENV"] == sys.prefix
     assert os.environ["PATH"].startswith(os.path.dirname(sys.executable) + os.pathsep)
     assert os.environ["ASPEC_CACHE_HOME"] == "/tmp/aspec-cache/target"
-    assert not any(name in os.environ for name in ("PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH"))
+    assert not any(name in os.environ for name in ("PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH", "LIBRARY_PATH"))
 
 
 def test_target_rejects_different_code_before_loading_engine(monkeypatch):
@@ -108,4 +108,4 @@ def test_target_interpreter_selection_is_recorded_in_plan(monkeypatch, explicit)
     plan = compile_execution_plan(load_config(base_config=config))
     expected = explicit or "/environment-target/bin/python"
     assert plan.to_runtime_args().target_python == expected
-    assert plan.to_dict()["topology"]["inference"]["python_executable"] == expected
+    assert plan.to_dict()["policy"]["topology"]["inference"]["python_executable"] == expected
