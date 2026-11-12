@@ -71,8 +71,11 @@ def service(monkeypatch):
     handle.shutdown.remote.return_value = None
     actor = MagicMock()
     actor.options.return_value.remote.return_value = handle
+    import ray
+
     monkeypatch.setattr(module, "ray", SimpleNamespace(remote=lambda _: actor,
-                                                     get=lambda x, **_: x, kill=MagicMock()))
+                                                     get=lambda x, **_: x, kill=MagicMock(),
+                                                     exceptions=ray.exceptions))
     instance = TargetService(model="qwen", devices=[0, 1], runtime={})
     instance.test_handle = handle
     return instance
@@ -119,6 +122,26 @@ def test_disconnect_retains_unverified_reader_storage(service, monkeypatch):
     monkeypatch.setattr("aspec.inference.service.readers_exited", lambda *_: True)
     service.reap_disconnected(expiry=-1)
     assert service.idle()
+
+
+def test_failed_source_actor_is_retired_only_after_reader_fence(service, monkeypatch):
+    import ray
+
+    service.create(creation(service))
+    item = service.engines["engine"]
+    item["processes"] = {999999999: 1.0}
+    service.test_handle.shutdown.remote.side_effect = ray.exceptions.RayActorError("actor exited")
+    monkeypatch.setattr("aspec.inference.service.readers_exited", lambda *_: False)
+    stop = MagicMock()
+    monkeypatch.setattr("aspec.inference.service.stop_owned_processes", stop)
+    service.reap_disconnected(expiry=-1)
+    stop.assert_not_called()
+    assert not service.idle()
+    monkeypatch.setattr("aspec.inference.service.readers_exited", lambda *_: True)
+    service.reap_disconnected(expiry=-1)
+    stop.assert_called_once_with(item["processes"])
+    assert service.idle()
+    assert item["terminal_reason"] == "actor_failed_readers_fenced_sources_exited"
 
 
 def test_shutdown_does_not_race_active_generation(service):

@@ -48,6 +48,7 @@ class TargetActor:
         return self.engine.find_free_port(*args, **kwargs)
 
     def get_status(self):
+        import psutil
         import ray
         import sglang
         import torch
@@ -62,6 +63,7 @@ class TargetActor:
             "source_file_count": backend["file_count"], "missing_files": backend["missing_files"],
         }
         result = self.engine.get_status()
+        result["created"] = psutil.Process().create_time()
         result["runtime"] = {
             **self.runtime_identity,
             "python": sys.executable, "prefix": sys.prefix,

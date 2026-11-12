@@ -119,12 +119,14 @@ class TargetService:
             self.engines[key] = {"actor": actor, "state": "created", "session": session,
                                  "gpus": gpus, "heartbeat": time.monotonic(),
                                  "owners": getattr(args, "aspec_read_owners", None),
-                                 "status": {}, "features": {}, "active": 0}
+                                 "status": {}, "features": {}, "active": 0, "processes": {}}
             self.claims.update({gpu: key for gpu in gpus})
         try:
             status = ray.get(actor.get_status.remote(), timeout=120)
             with self.lock:
                 self.engines[key]["status"] = status
+                if status.get("pid") and status.get("created"):
+                    self.engines[key]["processes"][status["pid"]] = status["created"]
         except BaseException:
             # SglEngine's constructor loads no model or source buffers. Failure
             # here precedes init/publication, so this creation can be rolled back.
@@ -199,6 +201,12 @@ class TargetService:
         from aspec.utils.misc import get_current_node_ip
 
         with self.lock:
+            # Record descendants while their parent is still alive. A backend
+            # scheduler can kill its actor on initialization failure; later
+            # cleanup must identify only this service's own remaining children.
+            for item in self.engines.values():
+                if item["state"] != "closed":
+                    observe_process_tree(item["processes"])
             candidates = [(key, item) for key, item in self.engines.items()
                           if item["state"] not in ("closed", "closing")
                           and item["active"] == 0
@@ -208,11 +216,65 @@ class TargetService:
         for key, item in candidates:
             if readers_exited(item["owners"], get_current_node_ip()):
                 logger.warning("Fenced disconnected session %s; cancelling Target %s", item["session"], key)
-                self.call(key, "shutdown", [], {})
+                try:
+                    self.call(key, "shutdown", [], {})
+                except ray.exceptions.RayActorError:
+                    # The read fence is established above. Observe exact source
+                    # process identities before retiring a dead actor's lease.
+                    if not item["processes"]:
+                        raise
+                    stop_owned_processes(item["processes"])
+                    with self.lock:
+                        item["state"] = "closed"
+                        item["terminal_reason"] = "actor_failed_readers_fenced_sources_exited"
+                        for gpu in item["gpus"]:
+                            self.claims.pop(gpu, None)
+                    logger.warning("Retired failed Target %s after observed source exit", key)
 
     def idle(self):
         with self.lock:
             return not self.claims
+
+
+def observe_process_tree(identities):
+    import psutil
+
+    for pid, created in list(identities.items()):
+        try:
+            process = psutil.Process(pid)
+            if process.create_time() == created:
+                for child in process.children(recursive=True):
+                    try:
+                        identities[child.pid] = child.create_time()
+                    except psutil.NoSuchProcess:
+                        pass
+        except psutil.NoSuchProcess:
+            pass
+
+
+def stop_owned_processes(identities):
+    """Called only after the read fence; never discover or stop unrelated PIDs."""
+    import psutil
+
+    processes = []
+    for pid, created in identities.items():
+        try:
+            process = psutil.Process(pid)
+            if process.create_time() == created:
+                processes.append(process)
+                process.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(processes, timeout=5)
+    for process in alive:
+        try:
+            if process.create_time() == identities[process.pid]:
+                process.kill()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(alive, timeout=5)
+    if alive:
+        raise RuntimeError("Owned Target source process exit remains unverified")
 
 
 def http_server(service, host, port):
