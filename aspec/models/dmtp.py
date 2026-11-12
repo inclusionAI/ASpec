@@ -154,7 +154,11 @@ def condition_noise_embeddings(draft, embeddings, input_ids, anchors, keep, pref
         if hidden is None or hidden.shape != expected:
             raise ValueError(f"MTP prediction hidden must have shape {expected}")
         indices = (anchors - 1).clamp_min(0).unsqueeze(-1).expand(-1, -1, hidden.shape[-1])
-        first = draft.mtp_fusion(first, hidden.gather(1, indices))
+        selected = hidden.gather(1, indices)
+        # Inactive features must be finite before trainable normalization/projection;
+        # masking their loss afterwards cannot prevent NaN parameter gradients.
+        selected = torch.where(keep.unsqueeze(-1), selected, 0.0)
+        first = draft.mtp_fusion(first, selected)
     elif prefix.prediction_hidden is not None:
         raise ValueError("Token-only conditioning does not consume MTP hidden features")
     blocks = embeddings.reshape(input_ids.shape[0], anchors.shape[1], block_size, -1)

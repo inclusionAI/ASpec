@@ -52,6 +52,10 @@ as token-only conditioning.
 DFlash supervises input slots `2..B-1`; DSpark supervises prediction slots `1..B-1`.
 The visible T1 is excluded from loss, accuracy and decay position zero. DSpark
 reports `suffix_accept_rate@k` and `suffix_tau_probabilistic` conditional on T1.
+Both algorithms report `train/suffix_simulated_acc_len` and
+`eval/suffix_simulated_acc_len`; their per-position `suffix_acc_0` and
+`suffix_ploss_0` start at T2. Checkpoint selection and evaluation metadata use the
+suffix proxy explicitly. Plain DSpark/DFlash runs retain their ordinary metric names.
 These observations omit acceptance of the native MTP proposal and cannot establish
 full-block accepted length or serving speed.
 

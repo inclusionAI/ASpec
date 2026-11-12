@@ -675,6 +675,10 @@ class DFlashTrainer(Trainer):
 
         return self._aggregate_eval_metrics(all_metrics)
 
+    def _prediction_metric_prefix(self) -> str:
+        """MTP observations cover the unknown suffix conditional on visible T1."""
+        return "suffix_" if getattr(getattr(self, "dflash", None), "mtp_conditioning", None) else ""
+
     def _aggregate_eval_metrics(self, all_step_metrics: list[dict]) -> dict:
         if not all_step_metrics:
             return {}
@@ -701,7 +705,7 @@ class DFlashTrainer(Trainer):
             count_key="count_pp",
         )
 
-        # Drop anchor slot (index 0) — see _aggregate_metrics for rationale.
+        # Observe only unknown predictions, excluding visible T1 when conditioned.
         pred_loss_pp = avg_loss_pp[self._anchor_slot_offset :]
         pred_acc_pp = avg_acc_pp[self._anchor_slot_offset :]
         pred_count_pp = count_pp[self._anchor_slot_offset :]
@@ -715,22 +719,23 @@ class DFlashTrainer(Trainer):
         weighted_avg_loss, avg_acc = self._compute_scalar_metrics(
             pred_loss_pp, pred_acc_pp, pred_count_pp
         )
+        prefix = self._prediction_metric_prefix()
 
         metrics: dict = {
             "eval/avg_loss": weighted_avg_loss,
             "eval/avg_acc": avg_acc,
-            "eval/simulated_acc_len": simulated_acc_len,
+            f"eval/{prefix}simulated_acc_len": simulated_acc_len,
         }
         for i in range(pred_loss_pp.shape[0]):
-            metrics[f"eval/ploss_{i}"] = pred_loss_pp[i].item()
-            metrics[f"eval/acc_{i}"] = pred_acc_pp[i].item()
+            metrics[f"eval/{prefix}ploss_{i}"] = pred_loss_pp[i].item()
+            metrics[f"eval/{prefix}acc_{i}"] = pred_acc_pp[i].item()
 
         metrics.update(loss_components)
 
         if dist.get_rank() == 0:
             logger.info(
                 f"eval: loss={weighted_avg_loss:.4f}, acc={avg_acc:.4f}, "
-                f"sim_acc_len={simulated_acc_len:.2f}"
+                f"{prefix}sim_acc_len={simulated_acc_len:.2f}"
             )
 
         return metrics
@@ -886,9 +891,7 @@ class DFlashTrainer(Trainer):
             count_key="count_per_position",
         )
 
-        # Skip index 0 (anchor slot, always zero); indices 1..B-1 are the
-        # predicted tokens at 1..B-1 steps past the anchor. Re-index to 0..B-2
-        # so the naming matches Eagle3 (acc_0 = first predicted token).
+        # Re-index unknown predictions from zero; conditioned suffix_0 denotes T2.
         pred_loss_pp = avg_loss_pp[self._anchor_slot_offset :]
         pred_acc_pp = avg_acc_pp[self._anchor_slot_offset :]
         pred_count_pp = count_pp[self._anchor_slot_offset :]
@@ -902,11 +905,12 @@ class DFlashTrainer(Trainer):
             simulated_acc_len += cumulative
 
         avg_loss, avg_acc = self._compute_scalar_metrics(pred_loss_pp, pred_acc_pp, pred_count_pp)
+        prefix = self._prediction_metric_prefix()
 
         metrics = {
             "train/avg_loss": avg_loss,
             "train/avg_acc": avg_acc,
-            "train/simulated_acc_len": simulated_acc_len,
+            f"train/{prefix}simulated_acc_len": simulated_acc_len,
             "train/grad_norm": grad_norm.item() if grad_norm is not None else 0.0,
             "train/global_step": self.global_step,
             "train/lr": self.optimizer.get_learning_rate(),
@@ -914,8 +918,8 @@ class DFlashTrainer(Trainer):
         }
 
         for i in range(pred_loss_pp.shape[0]):
-            metrics[f"train/ploss_{i}"] = pred_loss_pp[i].item()
-            metrics[f"train/acc_{i}"] = pred_acc_pp[i].item()
+            metrics[f"train/{prefix}ploss_{i}"] = pred_loss_pp[i].item()
+            metrics[f"train/{prefix}acc_{i}"] = pred_acc_pp[i].item()
 
         metrics.update(loss_components)
 

@@ -161,10 +161,10 @@ class DSparkModel(DFlashModel):
         )
 
     def _decay_weights(self, device: torch.device) -> torch.Tensor:
-        """exp(-k/gamma) over within-block position k (DeepSpec convention).
+        """Weight one at the first unknown prediction, then decay within the block.
 
-        Every slot 0..B-1 is a real prediction here, so slot 0 (the first
-        predicted token) gets weight 1.0 and later slots decay.
+        Plain DSpark starts at slot zero; conditioning makes T1 visible there
+        and starts the suffix weights at slot one.
         """
         k = torch.arange(self.block_size, device=device).view(1, 1, -1)
         if self.loss_decay_gamma is not None and self.loss_decay_gamma > 0:
@@ -237,9 +237,8 @@ class DSparkModel(DFlashModel):
             draft_prefix=draft_prefix,
         )
         # ---- Labels + eval mask (DeepSpec convention) ----
-        # Slot j predicts the token at anchor+j+1 (the real anchor token seeds
-        # slot 0). All block_size slots are supervised — there is no masked
-        # anchor slot, unlike DFlash.
+        # Slot j predicts anchor+j+1. Plain DSpark supervises every slot;
+        # conditioning excludes visible T1 using prediction_start below.
         label_offsets = torch.arange(1, self.block_size + 1, device=device).view(1, 1, -1)
         label_indices = anchor_positions.unsqueeze(-1) + label_offsets  # [B, nb, bs]
         valid_label_mask = label_indices < seq_len
@@ -533,7 +532,7 @@ class DSparkModel(DFlashModel):
                 }
             loss_components.update(observations)
 
-        # ---- Metrics (cross-entropy based; all block_size slots are productive) ----
+        # ---- Metrics over the unknown prediction slots ----
         with torch.no_grad():
             accuracy = correct_position_sum.sum() / eval_mask.sum().clamp(min=1e-6)
             count_per_position = eval_mask.sum(dim=(0, 1))

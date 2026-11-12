@@ -1031,8 +1031,7 @@ class DFlashModel(nn.Module):
             loss: scalar training loss (objective-weighted)
             accuracy: scalar accuracy (binary mask, no decay)
             loss_per_position: [block_size] mean loss at each within-block position
-                (index 0 is the anchor slot and always 0; indices 1..B-1 are the
-                predicted tokens at 1..B-1 steps past the anchor)
+                (slots before prediction_start are known inputs and always 0)
             acc_per_position: [block_size] mean accuracy at each within-block position
             count_per_position: [block_size] valid label count at each within-block
                 position before loss decay is applied
