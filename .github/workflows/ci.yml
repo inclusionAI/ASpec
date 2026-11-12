@@ -66,6 +66,7 @@ jobs:
             tests/test_dependency_audit.py \
             tests/test_draft_model_config.py \
             tests/test_draft_dsa.py \
+            tests/test_peagle.py \
             tests/test_eagle4.py \
             tests/test_eagle4_moe.py \
             tests/test_eagle4_validation.py \
