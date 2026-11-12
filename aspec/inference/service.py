@@ -87,8 +87,9 @@ class TargetService:
         if self.model and args.target_model_path != self.model:
             raise ValueError("Target model differs from the service configuration")
         session = getattr(args, "aspec_attempt_id", None)
-        if not isinstance(session, str) or not session:
-            raise ValueError("Target requires an explicit attempt identity")
+        run_id = getattr(args, "aspec_run_id", None)
+        if not isinstance(session, str) or not session or not isinstance(run_id, str) or not run_id:
+            raise ValueError("Target requires explicit run and attempt identities")
         base, count = value["base_gpu_id"], value["num_gpus_per_engine"]
         if type(base) is not int or type(count) is not int or base < 0 or count <= 0:
             raise ValueError("Invalid Target GPU allocation")
@@ -111,15 +112,17 @@ class TargetService:
             # Draft's placement group reserves these physical GPUs. This private
             # Ray instance only orchestrates Target processes; it owns no second
             # GPU allocator and cannot schedule an overlapping training worker.
+            environment = get_aspec_env_vars(args)
+            environment.update(session_environment(args))
             actor = ray.remote(TargetActor).options(
-                num_cpus=0.2, num_gpus=0, runtime_env={"env_vars": get_aspec_env_vars(args)},
+                num_cpus=0.2, num_gpus=0, runtime_env={"env_vars": environment},
             ).remote(expected_runtime=self.identity, args=args, rank=value["rank"],
                      base_gpu_id=base, num_gpus_per_engine=count,
                      node_rank=value["node_rank"], engine_group=value["engine_group"])
             self.engines[key] = {"actor": actor, "state": "created", "session": session,
                                  "gpus": gpus, "heartbeat": time.monotonic(),
                                  "owners": getattr(args, "aspec_read_owners", None),
-                                 "status": {}, "features": {}, "active": 0, "processes": {}}
+                                 "status": {}, "features": {}, "active": 1, "processes": {}}
             self.claims.update({gpu: key for gpu in gpus})
         try:
             status = ray.get(actor.get_status.remote(), timeout=120)
@@ -136,6 +139,9 @@ class TargetService:
                 for gpu in gpus:
                     self.claims.pop(gpu)
             raise
+        finally:
+            with self.lock:
+                self.engines[key]["active"] -= 1
         return {"key": key}
 
     def heartbeat(self, key):
@@ -250,6 +256,19 @@ def observe_process_tree(identities):
                         pass
         except psutil.NoSuchProcess:
             pass
+
+
+def session_environment(args):
+    """Native scheduler children inherit this session, never the service's job."""
+    contracts = getattr(args, "aspec_shared_consumer_contracts", None) or {}
+    return {
+        "ASPEC_RUN_ID": args.aspec_run_id,
+        "ASPEC_ATTEMPT_ID": args.aspec_attempt_id,
+        "ASPEC_SHARED_SOURCE": str(int(bool(getattr(args, "aspec_shared_source", False)))),
+        "ASPEC_SHARED_FEATURE_VIEWS": str(int(len({
+            value["contract_id"] for value in contracts.values()
+        }) > 1)),
+    }
 
 
 def stop_owned_processes(identities):
@@ -374,7 +393,7 @@ def main():
                 service.reap_disconnected()
                 time.sleep(1)
             except BaseException:
-                logger.exception("Target retained while reader exit is unverified")
+                logger.exception("Target cleanup is incomplete; retaining the service")
         server.server_close()
         ray.shutdown()
         for sig, handler in previous.items():

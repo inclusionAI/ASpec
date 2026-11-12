@@ -83,7 +83,8 @@ def service(monkeypatch):
 
 def creation(service, key="engine", gpu=0):
     return {"key": key, "identity": service.identity,
-            "arguments": {"target_model_path": "qwen", "aspec_attempt_id": "attempt-1"},
+            "arguments": {"target_model_path": "qwen", "aspec_attempt_id": "attempt-1",
+                          "aspec_run_id": "run-1"},
             "rank": 0, "base_gpu_id": gpu, "num_gpus_per_engine": 1,
             "node_rank": 0, "engine_group": 0}
 
@@ -111,6 +112,32 @@ def test_model_identity_and_allowed_gpu_fail_before_creation(service):
     with pytest.raises(ValueError, match="GPU set"):
         service.create(creation(service, gpu=3))
     assert service.idle()
+
+
+def test_pending_creation_is_not_expired_before_heartbeat_can_start(service, monkeypatch):
+    import aspec.inference.service as module
+
+    def initializing(value, **_):
+        service.reap_disconnected(expiry=-1)
+        assert service.engines["engine"]["state"] == "created"
+        return value
+
+    monkeypatch.setattr(module.ray, "get", initializing)
+    service.create(creation(service))
+    assert service.engines["engine"]["active"] == 0
+
+
+def test_native_scheduler_uses_the_callers_run_identity(service, monkeypatch):
+    import aspec.inference.service as module
+
+    monkeypatch.setenv("ASPEC_RUN_ID", "stale-service-run")
+    monkeypatch.setenv("ASPEC_ATTEMPT_ID", "stale-service-attempt")
+    actor = module.ray.remote(None)
+    service.create(creation(service))
+    environment = actor.options.call_args.kwargs["runtime_env"]["env_vars"]
+    assert environment["ASPEC_RUN_ID"] == "run-1"
+    assert environment["ASPEC_ATTEMPT_ID"] == "attempt-1"
+    assert environment["ASPEC_SHARED_SOURCE"] == "0"
 
 
 def test_disconnect_retains_unverified_reader_storage(service, monkeypatch):
