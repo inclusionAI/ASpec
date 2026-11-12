@@ -305,6 +305,7 @@ class RunEvidenceRecorder:
                 "plan": plan_dict["source"],
                 "aspec": _source_identity(),
                 "packages": _package_versions(),
+                "package_scope": "draft_driver",
                 "backends": {"sglang": _module_source_identity("sglang")},
                 "host": {
                     "hostname": platform.node(),
@@ -429,6 +430,17 @@ class RunEvidenceRecorder:
             training_actor_statuses=training_actor_statuses,
             inference_engine_statuses=inference_engine_statuses,
         )
+        target_runtimes = [dict(status["runtime"]) for status in (inference_engine_statuses or ())
+                           if isinstance(status.get("runtime"), Mapping)]
+        if target_runtimes:
+            backend_identities = [item.get("backend_identity") for item in target_runtimes]
+            if (len(target_runtimes) != inference_engine_count
+                    or any(not isinstance(item, Mapping) or not item.get("effective_tree_sha256")
+                           or item.get("missing_files") for item in backend_identities)
+                    or len({item["effective_tree_sha256"] for item in backend_identities}) != 1):
+                raise RuntimeError("Target workers reported incomplete or different SGLang identities")
+            self._data["source"]["backends"]["sglang"] = dict(backend_identities[0])
+            self._data["source"]["target_runtimes"] = target_runtimes
 
         prior_runtime = self._data["observations"]["runtime"]
         if dataset_admission is not None:

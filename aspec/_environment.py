@@ -28,7 +28,7 @@ def _toolkit_view(toolkit, env):
     the installed wheels and host toolkit remain untouched.
     """
     cache = Path(env.get("ASPEC_CACHE_HOME") or
-                 Path(env.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "aspec")
+                 Path(env.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "aspec")
     identity = hashlib.sha256(str(toolkit).encode()).hexdigest()[:16]
     view = cache.expanduser().resolve() / "cuda-toolkit" / identity
     libraries = view / "lib64"

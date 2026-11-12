@@ -53,7 +53,14 @@ class TargetActor:
         import torch
 
         import aspec
+        from aspec.runtime_identity import SGLANG_RUNTIME_RELATIVE_PATHS, module_runtime_identity
 
+        backend = module_runtime_identity("sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS)
+        backend_identity = {
+            "path": backend["path"], "git_revision": None, "git_dirty": None,
+            "effective_tree_sha256": backend["effective_tree_sha256"],
+            "source_file_count": backend["file_count"], "missing_files": backend["missing_files"],
+        }
         result = self.engine.get_status()
         result["runtime"] = {
             **self.runtime_identity,
@@ -61,6 +68,8 @@ class TargetActor:
             "aspec": str(Path(aspec.__file__).resolve()),
             "ray": str(Path(ray.__file__).resolve()),
             "sglang": str(Path(sglang.__file__).resolve()),
+            "backend_identity": backend_identity,
+            "sglang_version": importlib.metadata.version("sglang"),
             "torch": torch.__version__, "cuda": torch.version.cuda,
             "cutlass": importlib.metadata.version("nvidia-cutlass-dsl"),
             "quack": importlib.metadata.version("quack-kernels"),

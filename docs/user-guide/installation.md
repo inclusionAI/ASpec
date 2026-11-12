@@ -1,7 +1,8 @@
 # Installation
 
 Use Linux x86-64, Python >=3.11 and an isolated virtual environment. Training requires NVIDIA
-GPUs, a CUDA-compatible driver and a CUDA development toolkit with `nvcc`.
+GPUs and a CUDA 13-compatible driver. The Target package supplies its matching CUDA compiler;
+the host still needs the C++20 compiler and native libraries listed below.
 See [native prerequisites](installation-advanced.md#requirements) for the compiler, glibc and RDMA
 library requirements, or use the [container](containers.md).
 

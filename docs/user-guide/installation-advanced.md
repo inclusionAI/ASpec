@@ -30,7 +30,7 @@ CPU planning does not imply CPU training support.
 
 On Python 3.13, `outlines-core==0.1.26`, inherited through the pinned SGLang/Outlines dependency,
 may require a source build. Install a Rust toolchain (`rustc` and `cargo`) on `PATH` when no
-matching wheel is available; uv builds the extension during setup. Setup does not install host
+matching wheel is available; pip builds the extension during setup. Setup does not install host
 toolchains. The runtime lane pins `nvidia-cudnn-frontend==1.31.0` to retain CUTLASS DSL 4.7.1
 compatibility; frontend 1.32 requires CUTLASS >=4.8.
 
