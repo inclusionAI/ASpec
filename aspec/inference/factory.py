@@ -23,7 +23,10 @@
 import secrets
 
 import ray
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+from ray.util.scheduling_strategies import (
+    NodeAffinitySchedulingStrategy,
+    PlacementGroupSchedulingStrategy,
+)
 
 from aspec.utils.env import get_aspec_env_vars
 from aspec.utils.logging import logger
@@ -244,48 +247,42 @@ def _prepare_sgl_engines(
 
     from aspec.inference.service_client import TargetServiceClient
 
-    pg_obj, reordered_bundle_indices, reordered_gpu_ids = pg
-
     SglRayActor = ray.remote(TargetServiceClient)
     env_vars = get_aspec_env_vars(args)
     runtime_env = {"env_vars": env_vars}
     service = getattr(args, "target_service", None) or {}
     address = service.get("address", "http://127.0.0.1:30000")
     addresses = service.get("addresses") or {}
-    node_addresses = {}
-    if addresses:
-        from ray.util.placement_group import placement_group_table
+    node_ips = getattr(args, "inference_node_ips", None) or []
+    shared_node = None
+    if getattr(args, "aspec_shared_source", False):
+        reader_nodes = {owner["node_ip"] for owner in args.aspec_read_owners}
+        if len(reader_nodes) != 1:
+            raise ValueError("Shared Target readers must be on one physical node")
+        shared_node = next(iter(reader_nodes))
 
-        table = placement_group_table(pg_obj)
-        nodes = {node["NodeID"]: node["NodeManagerAddress"] for node in ray.nodes() if node["Alive"]}
-        node_addresses = {int(bundle): addresses.get(nodes[node], address)
-                          for bundle, node in table["bundles_to_node_id"].items()
-                          if int(bundle) in reordered_bundle_indices}
+    proxy_options = {"num_cpus": 0.2, "num_gpus": 0, "runtime_env": runtime_env}
+    if getattr(args, "cluster_mode", "single_node") == "static_multi_node":
+        # Keep control available on the coordinator when a Target node is lost.
+        proxy_options["scheduling_strategy"] = NodeAffinitySchedulingStrategy(
+            node_id=ray.get_runtime_context().get_node_id(), soft=False,
+        )
 
     # Step 1: Create all engine actors (without calling init yet)
     engines = []
     for i in range(num_engines):
         node_rank = i % nnodes if nnodes > 1 else 0
 
-        bundle_offset = i * gpus_per_engine
-        base_gpu_id = int(reordered_gpu_ids[bundle_offset])
-
-        scheduling_strategy = PlacementGroupSchedulingStrategy(
-            placement_group=pg_obj,
-            placement_group_capture_child_tasks=True,
-            placement_group_bundle_index=reordered_bundle_indices[bundle_offset],
+        node_index = i % nnodes if nnodes > 1 else (
+            i * gpus_per_engine // getattr(args, "inference_num_gpus_per_node", num_gpus_total)
         )
+        node_ip = node_ips[node_index] if node_ips else shared_node
 
-        engine = SglRayActor.options(
-            num_cpus=0.2,
-            num_gpus=0.2,
-            scheduling_strategy=scheduling_strategy,
-            runtime_env=runtime_env,
-        ).remote(
-            address=node_addresses.get(reordered_bundle_indices[bundle_offset], address),
+        engine = SglRayActor.options(**proxy_options).remote(
+            address=addresses.get(node_ip, address),
             args=args,
             rank=i,
-            base_gpu_id=base_gpu_id,
+            node_ip=node_ip,
             num_gpus_per_engine=gpus_per_engine,
             node_rank=node_rank,
             engine_group=engine_group,

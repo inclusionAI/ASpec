@@ -14,17 +14,10 @@ from pathlib import Path
 
 class TargetActor:
     def __init__(self, *args, **kwargs):
-        from aspec.commands.doctor import inspect_environment
         from aspec.inference.target_runtime import code_identity
 
-        expected = kwargs.pop("expected_runtime")
         self.runtime_identity = code_identity()
-        if self.runtime_identity != expected:
-            raise RuntimeError(f"Draft/Target ASpec code differs: {expected} != {self.runtime_identity}")
-
-        result = inspect_environment(target=True)
-        if not result["ok"]:
-            raise RuntimeError("Target environment is not ready: " + "; ".join(result["errors"]))
+        self.gpu_ids = kwargs.pop("gpu_ids")
         from aspec.inference.engine.sgl_engine import SglEngine
 
         self.engine = SglEngine(*args, **kwargs)
@@ -34,12 +27,6 @@ class TargetActor:
 
     async def generate(self, *args, **kwargs):
         return await self.engine.generate(*args, **kwargs)
-
-    def generate_with_decode(self, *args, **kwargs):
-        return self.engine.generate_with_decode(*args, **kwargs)
-
-    def update_weights_from_disk(self, *args, **kwargs):
-        return self.engine.update_weights_from_disk(*args, **kwargs)
 
     def get_node_ip(self):
         return self.engine.get_node_ip()
@@ -63,6 +50,7 @@ class TargetActor:
             "source_file_count": backend["file_count"], "missing_files": backend["missing_files"],
         }
         result = self.engine.get_status()
+        result["engine_gpu_ids"] = self.gpu_ids
         result["created"] = psutil.Process().create_time()
         result["runtime"] = {
             **self.runtime_identity,

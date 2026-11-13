@@ -38,9 +38,9 @@ maintenance tools. `setup.py` collects resources from their canonical source loc
 
 In the release repository, configure a GitHub environment named `pypi`:
 
-- Add the environment secret `PYPI_API_TOKEN` with a PyPI token authorized for all three distributions.
-  Creating the project on its first upload requires an account-wide token; afterward, use a
-  project-scoped token.
+- Add the environment secret `PYPI_API_TOKEN` with an account-wide PyPI token whose account can
+  publish all three distributions. This workflow uploads them together; a token scoped to one
+  project cannot authorize the other two.
 - Allow deployments from `v*` tags.
 - Add required reviewers if releases need approval before upload.
 

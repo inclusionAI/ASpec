@@ -14,10 +14,28 @@
 
 """Prepare this venv's native libraries before executing a fresh process."""
 import hashlib
+import importlib.metadata
 import os
 import sys
 import sysconfig
 from pathlib import Path
+
+
+def is_target_environment():
+    marker = Path(sys.prefix) / ".aspec-role"
+    if marker.is_file() and marker.read_text().strip() == "target":
+        return True
+    try:
+        importlib.metadata.version("ling-aspec-target")
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def require_draft_environment():
+    if is_target_environment():
+        raise SystemExit("Run training from the Draft venv (pip install ling-aspec); "
+                         "this interpreter belongs to Target")
 
 
 def _toolkit_view(toolkit, env):

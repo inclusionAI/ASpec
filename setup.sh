@@ -57,5 +57,5 @@ cd "$repo_root"
 bash tools/install.sh "${options[@]}"
 printf '\nSetup complete. Activate with:\n  source %q\n' "$venv/bin/activate"
 if [[ $role == draft ]]; then
-  printf 'Prepare Target separately: bash setup.sh --target\nThen set ASPEC_TARGET_PYTHON to its bin/python before training.\n'
+  printf 'Prepare Target separately: bash setup.sh --target\nActivate its environment and start aspec target on the allocated Target GPUs.\nStart training from the Draft environment on its allocated GPUs.\n'
 fi

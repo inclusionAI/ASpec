@@ -17,12 +17,13 @@ from urllib.parse import urlsplit
 
 from aspec.inference.service_protocol import request
 from aspec.runtime_control import termination_signal_handlers
+from aspec.utils.misc import visible_gpu_ids
 
 logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def managed_target(args):
+def managed_target(args, *, draft_gpu_count=None):
     settings = getattr(args, "target_service", None) or {}
     if settings.get("mode", "external") != "managed-local":
         yield
@@ -36,6 +37,17 @@ def managed_target(args):
         pass
     else:
         raise RuntimeError("managed-local refuses to replace an existing Target service")
+    devices = visible_gpu_ids()
+    draft_count = draft_gpu_count or args.training_num_nodes * args.training_num_gpus_per_node
+    target_count = args.inference_num_gpus
+    if len(devices) != draft_count + target_count:
+        raise ValueError("managed-local requires CUDA_VISIBLE_DEVICES to select exactly the Draft and Target GPUs")
+    if getattr(args, "placement_strategy", "training_first") == "inference_first":
+        target_devices, draft_devices = devices[:target_count], devices[target_count:]
+    else:
+        draft_devices, target_devices = devices[:draft_count], devices[draft_count:]
+    environment = dict(os.environ)
+    environment["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, target_devices))
     root = Path(args.output_dir)
     root.mkdir(parents=True, exist_ok=True)
     config = root / "target-service.json"
@@ -45,8 +57,9 @@ def managed_target(args):
     log_path = root / "target-service.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True, env=dict(os.environ))
+                                   start_new_session=True, env=environment)
         ready = False
+        prior_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
         try:
             deadline = time.monotonic() + float(getattr(args, "sglang_init_timeout", 300))
             while time.monotonic() < deadline:
@@ -64,8 +77,13 @@ def managed_target(args):
                     time.sleep(0.25)
             if not ready:
                 raise TimeoutError(f"Target readiness timed out; see {log_path}")
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, draft_devices))
             yield
         finally:
+            if prior_devices is None:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = prior_devices
             if process.poll() is None:
                 process.send_signal(signal.SIGTERM)
                 with termination_signal_handlers(defer=True):

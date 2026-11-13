@@ -60,11 +60,12 @@ pip install ling-aspec
 ```bash
 pip install ling-aspec-target
 aspec patch-sglang
-aspec target
+CUDA_VISIBLE_DEVICES=0 aspec target
 ```
 
 随后在 Draft 环境启动训练；Target 服务保持运行。默认连接 `http://127.0.0.1:30000`，远程 Target 通过
 `inference.target_service.address` 配置地址。两个命令各自使用当前环境。
+两个角色分别选择分配给自己的 GPU；此例中 Target 使用 GPU 0，Draft 使用 GPU 1。
 
 环境要求、源码安装和本地 wheel 安装见[安装指南](docs/user-guide/installation.md)，
 也可使用[容器](docs/user-guide/containers.md)。可选执行 `aspec doctor` 检查环境。
@@ -74,9 +75,9 @@ aspec target
 使用两张 NVLink 互联的 GPU：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
+CUDA_VISIBLE_DEVICES=1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
 # 或选择 Qwen3-8B：
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
+CUDA_VISIBLE_DEVICES=1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
 ```
 
 两个入口都使用内置原始对话和各自的 tokenizer/template，完成 8 步训练、精确恢复和 native 导出加载。

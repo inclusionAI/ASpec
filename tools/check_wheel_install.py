@@ -67,7 +67,7 @@ assert Path(spec.origin).is_relative_to(prefix)
 print(json.dumps({'sglang':str(Path(spec.origin).parent),'identity':identity}))
 """]))
         run([cli, "--help"], contains="patch-sglang")
-        for command in ("doctor", "patch-sglang", "recipes", "quickstart", "export",
+        for command in ("doctor", "target", "patch-sglang", "recipes", "quickstart", "export",
                         "stitch-mtp", "evaluate", "prepare-data", "prepare-target-data",
                         "select-answers", "convert-data"):
             run([cli, command, "--help"], contains="usage:")

@@ -8,23 +8,32 @@ import uuid
 import ray
 
 from aspec.inference.service_protocol import PROTOCOL, engine_arguments, request
-from aspec.inference.target_runtime import code_identity
+from aspec.inference.target_runtime import release_version
 
 
 class TargetServiceClient:
-    def __init__(self, *, address, args, rank, base_gpu_id, num_gpus_per_engine,
-                 node_rank=0, engine_group=0):
+    def __init__(self, *, address, args, rank, num_gpus_per_engine,
+                 node_ip=None, node_rank=0, engine_group=0):
         self.address = address
         self.key = uuid.uuid4().hex
         self.timeout = float(getattr(args, "sglang_init_timeout", 1200)) + 60
         self._closed = threading.Event()
-        identity = code_identity()
         info = request(address, "/v1/info", timeout=30)
-        if info["protocol"] != PROTOCOL or info["identity"] != identity:
-            raise RuntimeError("Target service has different ASpec code or protocol")
+        if info["version"] != release_version():
+            raise RuntimeError("Target service has a different ASpec release version")
+        if node_ip and info["node_ip"] != node_ip:
+            raise RuntimeError("Target service is not on the planned node")
+        self._fail_stop_node = None
+        if (getattr(args, "cluster_mode", "single_node") == "static_multi_node"
+                and getattr(args, "mooncake_feature_affinity", "any") == "node_local_required"):
+            node = next((n for n in ray.nodes()
+                         if n.get("Alive") and n["NodeManagerAddress"] == info["node_ip"]), None)
+            if node is None:
+                raise RuntimeError("Target node is missing from the planned Draft cluster")
+            self._fail_stop_node = node["NodeID"]
         request(address, "/v1/engines", {
-            "key": self.key, "identity": identity, "arguments": engine_arguments(args),
-            "rank": rank, "base_gpu_id": base_gpu_id,
+            "key": self.key, "version": release_version(), "arguments": engine_arguments(args),
+            "rank": rank, "node_ip": node_ip,
             "num_gpus_per_engine": num_gpus_per_engine, "node_rank": node_rank,
             "engine_group": engine_group,
         }, timeout=self.timeout)
@@ -44,20 +53,14 @@ class TargetServiceClient:
             "key": self.key, "method": method, "args": args, "kwargs": kwargs,
         }, timeout=self.timeout)
 
-    def init(self, **kwargs):
-        return self._call("init", **kwargs)
+    async def init(self, **kwargs):
+        return await asyncio.to_thread(self._call, "init", **kwargs)
 
     async def generate(self, *args, **kwargs):
         # ObjectRefs are resolved inside Draft's Ray job, never serialized to Target.
         if isinstance(kwargs.get("input_ids_ref"), ray.ObjectRef):
             kwargs["input_ids_ref"] = await kwargs["input_ids_ref"]
         return await asyncio.to_thread(self._call, "generate", *args, **kwargs)
-
-    def generate_with_decode(self, *args, **kwargs):
-        return self._call("generate_with_decode", *args, **kwargs)
-
-    def update_weights_from_disk(self, *args, **kwargs):
-        return self._call("update_weights_from_disk", *args, **kwargs)
 
     def get_node_ip(self):
         return self._call("get_node_ip")
@@ -85,7 +88,19 @@ class TargetServiceClient:
     def health_check(self, **kwargs):
         return self._call("health_check", **kwargs)
 
-    async def shutdown(self):
-        result = await asyncio.to_thread(self._call, "shutdown")
+    async def shutdown(self, *, force=False):
+        kwargs = {"force": True} if force else {}
+        try:
+            result = await asyncio.to_thread(self._call, "shutdown", **kwargs)
+        except OSError:
+            if not force or self._fail_stop_node is None:
+                raise
+            node = next((n for n in ray.nodes() if n["NodeID"] == self._fail_stop_node), None)
+            if node is None or node.get("Alive"):
+                raise
+            # Only the declared node-local fail-stop domain may be retired;
+            # source process exit on an unreachable node remains unobserved.
+            result = {"state": "node_local_domain_lost", "node_id": self._fail_stop_node,
+                      "physical_memory_unobserved": True}
         self._closed.set()
         return result

@@ -11,13 +11,32 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
-PROTOCOL = "aspec.target-service/v1"
+PROTOCOL = "aspec.target-service/v2"
 MAX_BODY = 64 * 1024 * 1024
 METHODS = frozenset({
-    "init", "generate", "generate_with_decode", "update_weights_from_disk",
+    "init", "generate",
     "get_node_ip", "find_free_port", "get_status", "get_mooncake_config",
     "get_feature_contract_status", "prepare_feature_contract_status", "health_check", "shutdown",
 })
+
+# Only settings consumed by SglEngine and its source/transport contracts belong
+# to this interface. Optimizers, datasets, logging credentials and driver
+# objects remain in Draft. Unknown Draft settings do not change this protocol.
+TARGET_ARGUMENTS = frozenset("""
+target_model_path trust_remote_code aux_hidden_states_layers store_last_hidden_states native_context_length
+draft_algorithm mooncake_hidden_dim
+sglang_mem_fraction_static sglang_pp_size sglang_nnodes sglang_tp_size
+sglang_extra_args sglang_allow_context_length_override sglang_enable_multimodal
+sglang_dist_init_addr sglang_dist_timeout
+target_prefill_memory_optimized max_seq_length max_concurrent_batches inference_batch_size
+attention_backend sp_ring_size sp_ulysses_size ttt_length draft_context_parallel_size
+draft_context_shard_alignment mooncake_gpu_ring_slots mooncake_source_gpu_ring_slots
+mooncake_feature_affinity mooncake_protocol
+mooncake_allow_host_fallback mooncake_data_plane mooncake_get_retry_max_wait_seconds
+aspec_feature_contract aspec_context_contract aspec_run_id aspec_attempt_id
+aspec_read_owners aspec_shared_source aspec_shared_consumer_contracts
+timeline_enabled timeline_output_dir timeline_run_id timeline_flush_every output_dir cluster_mode
+""".split())
 
 
 def validate_address(value):
@@ -100,14 +119,4 @@ def request(address, path, payload=None, *, timeout=1200):
 
 
 def engine_arguments(args):
-    # Driver-only Python model/config objects are deliberately not sent to Target.
-    result = {}
-    for key, value in vars(args).items():
-        if key.startswith("_") or key == "draft_model_config_obj":
-            continue
-        try:
-            result[key] = encode(value)
-        except TypeError:
-            # Unknown objects cannot become an implicit cross-environment API.
-            raise TypeError(f"Non-data runtime argument at Target boundary: {key}") from None
-    return result
+    return {key: encode(value) for key, value in vars(args).items() if key in TARGET_ARGUMENTS}

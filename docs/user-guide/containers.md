@@ -23,7 +23,10 @@ docker run --rm -it --gpus '"device=0,1"' --shm-size=16g \
   -v "$PWD/container-cache:/cache" -v "$PWD/container-outputs:/outputs" \
   -e ASPEC_CACHE_HOME=/cache aspec:local
 # Inside the container, choose either model:
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart ling-tiny --output /outputs/ling-tiny-001
+# First start Target in another terminal:
+# source /opt/aspec-target/bin/activate
+# CUDA_VISIBLE_DEVICES=0 aspec target
+CUDA_VISIBLE_DEVICES=1 aspec quickstart ling-tiny --output /outputs/ling-tiny-001
 # Or use qwen3-8b with a different fresh output.
 ```
 

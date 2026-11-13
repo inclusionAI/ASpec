@@ -41,6 +41,7 @@ from omegaconf import OmegaConf
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from aspec import AutoDraftModelConfig
+from aspec._environment import require_draft_environment
 from aspec.config.train_config import _save_config_snapshot, load_config
 from aspec.config.utils import generate_draft_model_config
 from aspec.controller import (
@@ -206,6 +207,9 @@ def _prepare_config() -> tuple[argparse.Namespace, ExecutionPlan]:
         parser.error("--report-format requires --report")
     if args.preflight_only and (args.dry_run or args.print_config_only):
         parser.error("--preflight-only cannot be combined with --dry-run or --print-config-only")
+
+    if not (args.dry_run or args.print_config_only):
+        require_draft_environment()
 
     config = load_config(
         config_path=args.config,
@@ -532,8 +536,11 @@ def main() -> None:
 def _main() -> None:
     args, plan = _prepare_config()
     from aspec.inference.managed import managed_target
+    from aspec.multi_draft import MultiDraftPlan
 
-    with managed_target(args):
+    draft_gpu_count = (sum(child.to_runtime_args().world_size for child in plan.plans.values())
+                       if isinstance(plan, MultiDraftPlan) else None)
+    with managed_target(args, draft_gpu_count=draft_gpu_count):
         _run_prepared(args, plan)
 
 

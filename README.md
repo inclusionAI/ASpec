@@ -66,12 +66,13 @@ the SGLang integration and apply its patch:
 ```bash
 pip install ling-aspec-target
 aspec patch-sglang
-aspec target
+CUDA_VISIBLE_DEVICES=0 aspec target
 ```
 
 Keep the Target service running, then start training in the Draft environment below.
 The default connection is `http://127.0.0.1:30000`; set `inference.target_service.address`
 for a remote Target. Each command uses its own environment.
+Select the allocated GPUs separately for each role; this example uses GPU 0 for Target and GPU 1 for Draft.
 
 See the [installation guide](docs/user-guide/installation.md) for prerequisites, source installation
 and release wheels, or use the [container setup](docs/user-guide/containers.md).
@@ -82,9 +83,9 @@ Optionally run `aspec doctor` to check the environment.
 With two NVLink-connected GPUs:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
+CUDA_VISIBLE_DEVICES=1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
 # Or choose Qwen3-8B:
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
+CUDA_VISIBLE_DEVICES=1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
 ```
 
 Both profiles use bundled raw conversations, their own tokenizer/template and an eight-step

@@ -26,7 +26,9 @@ These decisions describe the maintained implementation and its public behavior.
   no metadata overrides are accepted. `aspec patch-sglang` only patches files. `aspec target` and
   `aspec train` start in their own environments and connect through a versioned JSON control
   protocol; feature tensors retain Mooncake transport. Target's private Ray runtime orchestrates
-  its source processes; the Draft Plan retains the physical GPU reservations. Optional single-node
+  its source processes and leases its own CUDA-visible GPUs; Draft's Ray reserves only training GPUs.
+  Compatibility requires the same release and control protocol; source hashes and Python versions
+  are Evidence rather than handshake gates. Optional single-node
   managed-local supervision starts the same service, with an explicit Target interpreter only for
   that supervisor. Both forms retain exact resume. This boundary is inspired by SpecForge
   f8cc3dc external/managed-local capture; its newer SGLang plugin is not copied.

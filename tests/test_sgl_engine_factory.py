@@ -189,14 +189,13 @@ class TestSglEngineTopology:
         assert len(result) == 1
 
     def test_single_node_gpu_ids(self):
-        """base_gpu_id should be bundle_offset = i * gpus_per_engine."""
+        """A remote service owns allocation; Draft needs no inference PG."""
         args = _make_args(inference_num_gpus=8, inference_num_gpus_per_engine=2)
-        pg = _make_pg(8)
-
-        _, engines, *_ = self._call(args, pg)
+        _, engines, *_ = self._call(args, None)
 
         for i, e in enumerate(engines):
-            assert e._constructor_kwargs["base_gpu_id"] == i * 2
+            assert "base_gpu_id" not in e._constructor_kwargs
+            assert e._constructor_kwargs["num_gpus_per_engine"] == 2
 
     def test_single_node_no_dist_init_addr(self):
         """Single-node engines should NOT receive dist_init_addr."""

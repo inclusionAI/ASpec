@@ -60,7 +60,8 @@ class RayActor:
         import psutil
 
         return {"node_ip": self.get_node_ip(), "pid": os.getpid(),
-                "created": psutil.Process().create_time()}
+                "created": psutil.Process().create_time(),
+                "assigned_gpu_ids": [int(gpu) for gpu in ray.get_gpu_ids()]}
 
     @staticmethod
     def get_node_ip() -> str:

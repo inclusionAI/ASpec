@@ -559,6 +559,30 @@ def create_placement_groups(args, roles: set[str] | None = None):
 
     _ensure_ray_initialized()
 
+    if getattr(args, "inference_engine_type", None) == "sgl":
+        # Target owns its own CUDA-visible pool. A control proxy has no GPU
+        # reservation in Draft's Ray cluster, including for remote services.
+        _validate_custom_strategy_usage(args)
+        _validate_custom_placement_constraints(args)
+        result = {"training": None, "inference": None}
+        if "training" not in roles:
+            return result
+        count = args.training_num_nodes * args.training_num_gpus_per_node
+        _wait_for_gpu_resources(count)
+        if getattr(args, "placement_strategy", "training_first") == "custom":
+            constraints = _normalize_node_constraints(args, "training", required=True)
+            bundles, selectors, node_groups = _build_custom_bundles(
+                "training", constraints, count, args.training_num_gpus_per_node,
+            )
+            result["training"] = _create_placement_group(
+                count, strategy="PACK", name="training_pg", bundles=bundles,
+                bundle_label_selector=_merge_bundle_label_selectors(selectors),
+                node_group_indices=node_groups,
+            )
+        else:
+            result["training"] = _create_placement_group(count, strategy="PACK", name="training_pg")
+        return result
+
     if len(roles) == 1:
         if getattr(
             args, "placement_strategy", "training_first"

@@ -13,8 +13,9 @@ Both role packages depend on the same version of `ling-aspec-runtime`, which own
 `aspec doctor` selects the installed role; `--target` explicitly checks the Target setup.
 Start `aspec target` in Target and `aspec train --config ...` in Draft. The control service uses
 `inference.target_service.address`; metadata and token requests cross this interface, while feature
-tensors retain Mooncake transport. Use services on trusted cluster networks. `--gpus 0,1,...`
-restricts the service's allowed physical GPU IDs; it does not remap device ordinals.
+tensors retain Mooncake transport. Use services on trusted cluster networks.
+Select each role's allocated GPUs with `CUDA_VISIBLE_DEVICES` before starting it.
+Target leases GPUs from its own visible pool; Draft's Ray reserves only training GPUs.
 For static multi-node runs, start a service on each Target node and set
 `inference.target_service.addresses` as a map from planned node IP to service URL.
 

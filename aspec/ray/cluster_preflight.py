@@ -315,13 +315,14 @@ def _collect_local_inventory(
     target_runtime = None
     if target_address:
         from aspec.inference.service_protocol import request
-        from aspec.inference.target_runtime import code_identity
+        from aspec.inference.target_runtime import release_version
 
         info = request(target_address, "/v1/info", timeout=30)
         target_runtime = info["runtime"]
-        expected = code_identity()
-        if info["identity"] != expected:
-            raise ClusterPreflightError("Target and Draft ASpec code identity differs")
+        if info["version"] != release_version():
+            raise ClusterPreflightError("Target and Draft ASpec release versions differ")
+        if info["node_ip"] != ray.util.get_node_ip_address():
+            raise ClusterPreflightError("Target service is not on the planned node")
     return {
         "node_id": ray.get_runtime_context().get_node_id(),
         "node_ip": ray.util.get_node_ip_address(),

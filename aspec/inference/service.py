@@ -26,12 +26,14 @@ from aspec.inference.service_protocol import (
     MAX_BODY,
     METHODS,
     PROTOCOL,
+    TARGET_ARGUMENTS,
     decode,
     encode,
     validate_address,
 )
-from aspec.inference.target_runtime import code_identity, inventory
+from aspec.inference.target_runtime import inventory, release_version
 from aspec.utils.env import get_aspec_env_vars
+from aspec.utils.misc import get_current_node_ip, visible_gpu_ids
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +61,9 @@ def readers_exited(owners, local_ip):
 class TargetService:
     def __init__(self, *, model=None, devices=None, runtime=None):
         self.runtime = runtime if runtime is not None else inventory()
-        self.identity = code_identity()
         self.model = model
-        self.devices = None if devices is None else frozenset(devices)
+        self.devices = tuple(visible_gpu_ids() if devices is None else devices)
+        self.node_ip = get_current_node_ip()
         self.server_id = uuid.uuid4().hex
         self.lock = threading.RLock()
         self.engines = {}
@@ -70,10 +72,11 @@ class TargetService:
 
     def info(self):
         with self.lock:
-            return {"protocol": PROTOCOL, "identity": self.identity, "runtime": self.runtime,
+            return {"protocol": PROTOCOL, "version": release_version(),
+                    "runtime": self.runtime, "node_ip": self.node_ip,
                     "pid": os.getpid(),
                     "server_id": self.server_id, "model": self.model,
-                    "devices": sorted(self.devices) if self.devices is not None else None,
+                    "devices": list(self.devices),
                     "draining": self.draining,
                     "engines": {key: {k: item[k] for k in ("state", "session", "gpus")}
                                 for key, item in self.engines.items()}}
@@ -81,45 +84,54 @@ class TargetService:
     def create(self, value):
         from aspec.inference.engine.target_actor import TargetActor
 
-        if value["identity"] != self.identity:
-            raise ValueError("Draft/Target ASpec code identity differs")
-        args = Namespace(**decode(value["arguments"]))
+        if value["version"] != release_version():
+            raise ValueError("Draft/Target ASpec release versions differ")
+        if value.get("node_ip") and value["node_ip"] != self.node_ip:
+            raise ValueError("Target service is not on the planned node")
+        arguments = decode(value["arguments"])
+        if set(arguments) - TARGET_ARGUMENTS:
+            raise ValueError("Unknown Target configuration fields")
+        args = Namespace(**arguments)
         if self.model and args.target_model_path != self.model:
             raise ValueError("Target model differs from the service configuration")
         session = getattr(args, "aspec_attempt_id", None)
         run_id = getattr(args, "aspec_run_id", None)
         if not isinstance(session, str) or not session or not isinstance(run_id, str) or not run_id:
             raise ValueError("Target requires explicit run and attempt identities")
-        base, count = value["base_gpu_id"], value["num_gpus_per_engine"]
-        if type(base) is not int or type(count) is not int or base < 0 or count <= 0:
+        count = value["num_gpus_per_engine"]
+        if type(count) is not int or count <= 0:
             raise ValueError("Invalid Target GPU allocation")
-        gpus = list(range(base, base + count))
         key = value["key"]
         with self.lock:
             if self.draining:
                 raise RuntimeError("Target service is draining")
             if key in self.engines:
                 raise ValueError("Target engine identity already exists; creation is not replayed")
-            if self.devices is not None and not set(gpus).issubset(self.devices):
-                raise ValueError("Target allocation is outside the service GPU set")
-            if any(gpu in self.claims for gpu in gpus):
-                raise RuntimeError("Target GPU already belongs to another engine/session")
+            # Allocate only from this service's CUDA-visible devices. Same-host
+            # reader placements also fence Draft GPUs when visibility overlaps.
+            readers = getattr(args, "aspec_read_owners", None) or ()
+            unavailable = set(self.claims)
+            for owner in readers:
+                if owner.get("node_ip") == self.node_ip:
+                    unavailable.update(owner.get("assigned_gpu_ids") or ())
+            gpus = next((list(self.devices[start:start + count])
+                         for start in range(len(self.devices) - count + 1)
+                         if not unavailable.intersection(self.devices[start:start + count])), None)
+            if gpus is None:
+                raise RuntimeError("Insufficient free Target GPUs; select disjoint Target/Draft CUDA_VISIBLE_DEVICES")
             for old_key in list(self.engines):
                 if len(self.engines) < 128:
                     break
                 if self.engines[old_key]["state"] == "closed":
                     del self.engines[old_key]
-            # Draft's placement group reserves these physical GPUs. This private
-            # Ray instance only orchestrates Target processes; it owns no second
-            # GPU allocator and cannot schedule an overlapping training worker.
             environment = get_aspec_env_vars(args)
             environment.update(session_environment(args))
             actor = ray.remote(TargetActor).options(
                 num_cpus=0.2, num_gpus=0, runtime_env={"env_vars": environment},
-            ).remote(expected_runtime=self.identity, args=args, rank=value["rank"],
-                     base_gpu_id=base, num_gpus_per_engine=count,
+            ).remote(args=args, rank=value["rank"], gpu_ids=gpus,
+                     base_gpu_id=gpus[0], num_gpus_per_engine=count,
                      node_rank=value["node_rank"], engine_group=value["engine_group"])
-            self.engines[key] = {"actor": actor, "state": "created", "session": session,
+            self.engines[key] = {"actor": actor, "state": "creating", "session": session,
                                  "gpus": gpus, "heartbeat": time.monotonic(),
                                  "owners": getattr(args, "aspec_read_owners", None),
                                  "status": {}, "features": {}, "active": 1, "processes": {}}
@@ -128,6 +140,9 @@ class TargetService:
             status = ray.get(actor.get_status.remote(), timeout=120)
             with self.lock:
                 self.engines[key]["status"] = status
+                self.engines[key]["heartbeat"] = time.monotonic()
+                if self.engines[key]["state"] == "creating":
+                    self.engines[key]["state"] = "created"
                 if status.get("pid") and status.get("created"):
                     self.engines[key]["processes"][status["pid"]] = status["created"]
         except BaseException:
@@ -142,12 +157,12 @@ class TargetService:
         finally:
             with self.lock:
                 self.engines[key]["active"] -= 1
-        return {"key": key}
+        return {"key": key, "gpu_ids": gpus}
 
     def heartbeat(self, key):
         with self.lock:
             item = self.engines[key]
-            if item["state"] in ("retained", "closing"):
+            if item["state"] in ("retained", "terminating"):
                 raise RuntimeError("Target session has stopped admitting work")
             item["heartbeat"] = time.monotonic()
         return None
@@ -155,6 +170,14 @@ class TargetService:
     def call(self, key, method, args, kwargs):
         if method not in METHODS:
             raise ValueError("Unknown Target control method")
+        if method == "shutdown":
+            force = kwargs.pop("force", False)
+            if type(force) is not bool:
+                raise ValueError("Target shutdown force must be boolean")
+            if force:
+                if args or kwargs:
+                    raise ValueError("Unknown forced Target shutdown arguments")
+                return self._force_shutdown(key)
         with self.lock:
             item = self.engines[key]
             if item["state"] == "closed":
@@ -165,7 +188,7 @@ class TargetService:
                 if method in ("get_feature_contract_status", "prepare_feature_contract_status"):
                     return item["features"]
                 raise RuntimeError("Target engine is closed")
-            if item["state"] in ("retained", "closing") and method != "shutdown":
+            if item["state"] in ("creating", "retained", "closing", "terminating") and method != "shutdown":
                 raise RuntimeError("Target engine is retained pending safe cleanup")
             if method == "shutdown":
                 if item["active"]:
@@ -184,9 +207,9 @@ class TargetService:
                     item["status"] = result
                 if method in ("get_feature_contract_status", "prepare_feature_contract_status"):
                     item["features"] = result
-                if method == "init":
+                if method == "init" and item["state"] == "created":
                     item["state"] = "ready"
-                if method == "shutdown":
+                if method == "shutdown" and item["state"] == "closing":
                     ray.kill(item["actor"], no_restart=True)
                     item["state"] = "closed"
                     for gpu in item["gpus"]:
@@ -196,11 +219,46 @@ class TargetService:
         except BaseException:
             if method == "shutdown":
                 with self.lock:
-                    item["state"] = "retained"
+                    if item["state"] == "closing":
+                        item["state"] = "retained"
             raise
         finally:
             with self.lock:
                 item["active"] -= 1
+                item["heartbeat"] = time.monotonic()
+
+    def _force_shutdown(self, key):
+        """The caller has fenced readers; acknowledge only observed source exit."""
+        with self.lock:
+            item = self.engines[key]
+            if item["state"] == "closed":
+                return None
+            if item["state"] == "terminating":
+                raise RuntimeError("Target shutdown is already in progress")
+            if not item["processes"]:
+                item["state"] = "retained"
+                raise RuntimeError("Target source process identities are unknown")
+            observe_process_tree(item["processes"])
+            processes = dict(item["processes"])
+            item["state"] = "terminating"
+            item["active"] += 1
+        try:
+            ray.kill(item["actor"], no_restart=True)
+            stop_owned_processes(processes)
+            with self.lock:
+                item["state"] = "closed"
+                item["terminal_reason"] = "readers_fenced_sources_exited"
+                for gpu in item["gpus"]:
+                    self.claims.pop(gpu, None)
+        except BaseException:
+            with self.lock:
+                item["state"] = "retained"
+            raise
+        finally:
+            with self.lock:
+                item["active"] -= 1
+                item["heartbeat"] = time.monotonic()
+        return None
 
     def reap_disconnected(self, *, expiry=30):
         """Fail closed on lost control; reclaim only after observed reader exit."""
@@ -214,28 +272,14 @@ class TargetService:
                 if item["state"] != "closed":
                     observe_process_tree(item["processes"])
             candidates = [(key, item) for key, item in self.engines.items()
-                          if item["state"] not in ("closed", "closing")
-                          and item["active"] == 0
+                          if item["state"] not in ("creating", "closed", "terminating")
                           and time.monotonic() - item["heartbeat"] > expiry]
             for _, item in candidates:
                 item["state"] = "retained"
         for key, item in candidates:
             if readers_exited(item["owners"], get_current_node_ip()):
                 logger.warning("Fenced disconnected session %s; cancelling Target %s", item["session"], key)
-                try:
-                    self.call(key, "shutdown", [], {})
-                except ray.exceptions.RayActorError:
-                    # The read fence is established above. Observe exact source
-                    # process identities before retiring a dead actor's lease.
-                    if not item["processes"]:
-                        raise
-                    stop_owned_processes(item["processes"])
-                    with self.lock:
-                        item["state"] = "closed"
-                        item["terminal_reason"] = "actor_failed_readers_fenced_sources_exited"
-                        for gpu in item["gpus"]:
-                            self.claims.pop(gpu, None)
-                    logger.warning("Retired failed Target %s after observed source exit", key)
+                self._force_shutdown(key)
 
     def idle(self):
         with self.lock:
@@ -273,24 +317,35 @@ def stop_owned_processes(identities):
     """Called only after the read fence; never discover or stop unrelated PIDs."""
     import psutil
 
-    processes = []
-    for pid, created in identities.items():
-        try:
-            process = psutil.Process(pid)
-            if process.create_time() == created:
-                processes.append(process)
-                process.terminate()
-        except psutil.NoSuchProcess:
-            pass
-    _, alive = psutil.wait_procs(processes, timeout=5)
-    for process in alive:
-        try:
-            if process.create_time() == identities[process.pid]:
-                process.kill()
-        except psutil.NoSuchProcess:
-            pass
-    _, alive = psutil.wait_procs(alive, timeout=5)
-    if alive:
+    def alive():
+        processes = []
+        for pid, created in identities.items():
+            try:
+                process = psutil.Process(pid)
+                if (process.create_time() == created
+                        and process.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)):
+                    processes.append(process)
+            except psutil.NoSuchProcess:
+                pass
+        return processes
+
+    # These processes belong to Ray/SGLang, not this service's child-reaping
+    # API. Observe exit directly, including containers without usable pidfds.
+    for terminate in (True, False):
+        for process in alive():
+            try:
+                if terminate:
+                    process.terminate()
+                else:
+                    process.kill()
+            except psutil.NoSuchProcess:
+                pass
+        deadline = time.monotonic() + 5
+        while alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not alive():
+            return
+    if alive():
         raise RuntimeError("Owned Target source process exit remains unverified")
 
 
@@ -347,13 +402,14 @@ def main():
     parser = argparse.ArgumentParser(description="Run Target in this environment; Draft connects by address.")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--address", help="Listening http://host:port; defaults to the config or localhost:30000")
-    parser.add_argument("--gpus", help="Allowed physical GPU IDs, comma separated")
     args = parser.parse_args()
     config = OmegaConf.load(args.config) if args.config else OmegaConf.create({})
     address = validate_address(args.address or OmegaConf.select(
         config, "inference.target_service.address", default="http://127.0.0.1:30000"))
     model = OmegaConf.select(config, "model.target_model_path")
-    devices = [int(gpu) for gpu in args.gpus.split(",")] if args.gpus else None
+    devices = visible_gpu_ids()
+    if not devices:
+        parser.error("Select allocated Target GPUs with CUDA_VISIBLE_DEVICES")
     runtime = inventory()  # Check this environment and patch before starting processes.
     service = TargetService(model=model, devices=devices, runtime=runtime)
     parsed = urlsplit(address)
@@ -378,7 +434,8 @@ def main():
         worker.start()
         print(json.dumps({"state": "ready", "address": address, "protocol": PROTOCOL,
                           "python": runtime["python"], "pid": os.getpid()}), flush=True)
-        while not stop.wait(1) or not service.idle():
+        while not stop.is_set() or not service.idle():
+            time.sleep(1)
             service.reap_disconnected()
         server.shutdown()
         worker.join()

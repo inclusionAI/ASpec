@@ -13,11 +13,9 @@
 # limitations under the License.
 
 """Workflow shortcuts and native-library bootstrap for the public CLI."""
-import importlib.metadata
 import sys
-from pathlib import Path
 
-from aspec._environment import execute
+from aspec._environment import execute, is_target_environment
 
 
 def main():
@@ -49,18 +47,8 @@ def main():
         module = modules[arguments.pop(0)]
     else:
         module = "aspec.train_entry"
-    marker = Path(sys.prefix) / ".aspec-role"
-    target_role = marker.is_file() and marker.read_text().strip() == "target"
-    try:
-        importlib.metadata.version("ling-aspec-target")
-        target_role = True
-    except importlib.metadata.PackageNotFoundError:
-        pass
     help_requested = arguments in (["--help"], ["-h"])
-    if not help_requested and module in {"aspec.train_entry", "aspec.commands.quickstart"} and target_role:
-        raise SystemExit("Run training from the Draft venv (pip install ling-aspec); "
-                         "this interpreter belongs to Target")
-    if module == "aspec.inference.service" and not target_role and not help_requested:
+    if module == "aspec.inference.service" and not help_requested and not is_target_environment():
         raise SystemExit("Start aspec target in the Target environment (pip install ling-aspec-target)")
     try:
         execute([sys.executable, "-m", module, *arguments])

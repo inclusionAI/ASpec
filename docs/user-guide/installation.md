@@ -26,7 +26,7 @@ python -m venv .venv-target
 source .venv-target/bin/activate
 pip install ling-aspec-target
 aspec patch-sglang
-aspec target
+CUDA_VISIBLE_DEVICES=0 aspec target
 ```
 
 Target dependencies follow SGLang's requirements; Draft acceleration packages stay in the Draft
@@ -35,12 +35,13 @@ venv. The patch command only changes the supported SGLang source files, never de
 Keep this service running. In the Draft environment, start training:
 
 ```bash
-aspec train --config /path/to/run.yaml
+CUDA_VISIBLE_DEVICES=1 aspec train --config /path/to/run.yaml
 ```
 
 The default Target address is `http://127.0.0.1:30000`. Set `inference.target_service.address`
 for a remote service, or pass `--target-address` to Quickstart. Use the same ASpec release
-and Python minor version in both environments. No interpreter path is exchanged.
+in both environments. Each role allocates its own GPUs; select disjoint GPU sets for a same-host run.
+The example uses one GPU per role; adjust both selections to match your config.
 `aspec target --config /path/to/run.yaml` reads its address and Target model from the same config.
 The service remains available after a training session ends; each session releases its own workers.
 
@@ -55,8 +56,8 @@ unsupported SGLang version are rejected. `--check` never installs dependencies o
 
 ## Check the environment
 
-Optionally run `aspec doctor` to check the training environment, or `aspec doctor --target` to
-also require the Target runtime and patch. Add `--gpu` to check CUDA and native libraries on an
+Optionally run `aspec doctor` in Draft, or `aspec doctor --target` in Target to
+check its runtime and patch. Add `--gpu` to check CUDA and native libraries on an
 allocated GPU. These checks do not run training.
 
 ## First run
@@ -64,9 +65,9 @@ allocated GPU. These checks do not run training.
 Quickstart requires two NVLink-connected GPUs:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
+CUDA_VISIBLE_DEVICES=1 aspec quickstart ling-tiny --output outputs/ling-tiny-001
 # Or:
-CUDA_VISIBLE_DEVICES=0,1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
+CUDA_VISIBLE_DEVICES=1 aspec quickstart qwen3-8b --output outputs/qwen3-8b-001
 ```
 
 Add `--target /absolute/path/to/model` to use a local checkpoint.
@@ -82,7 +83,7 @@ source .venv/bin/activate
 ```
 
 Setup installs the Draft environment. Run `bash setup.sh --target` to prepare `.venv-target`,
-then activate it and run `aspec target`. Each setup runs the appropriate doctor. Contributors can use
+then activate it and start Target on its allocated GPUs as above. Each setup runs the appropriate doctor. Contributors can use
 `bash setup.sh --dev`. Run `bash setup.sh --help` for environment and interpreter options.
 
 ## Install a release wheel
@@ -111,3 +112,5 @@ Target environment location; independent startup only needs a service address. B
 the same Target interface and support checkpoint restoration. Logs go to `target-service.log`
 inside the run directory. Existing services are never adopted or stopped by the supervisor.
 Quickstart also accepts `--managed-target /absolute/path/to/target-venv/bin/python`.
+For managed-local, select the combined Draft and Target GPUs; the supervisor splits them
+according to the configured counts and placement order.

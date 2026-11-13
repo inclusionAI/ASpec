@@ -8,6 +8,11 @@ import sys
 from pathlib import Path
 
 
+def release_version():
+    """Public compatibility identity; neither Python nor source bytes are wire types."""
+    return importlib.metadata.version("ling-aspec-runtime")
+
+
 def code_identity():
     package = Path(__file__).resolve().parents[1]
     digest = hashlib.sha256()
@@ -16,11 +21,7 @@ def code_identity():
             digest.update(path.relative_to(package).as_posix().encode())
             digest.update(b"\0")
             digest.update(path.read_bytes())
-    try:
-        version = importlib.metadata.version("ling-aspec-runtime")
-    except importlib.metadata.PackageNotFoundError:
-        version = None
-    return {"version": version, "code_sha256": digest.hexdigest(),
+    return {"version": release_version(), "code_sha256": digest.hexdigest(),
             "python_minor": list(sys.version_info[:2])}
 
 
