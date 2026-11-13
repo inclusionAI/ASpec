@@ -49,6 +49,8 @@ def validate_address(value):
     if (parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password
             or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
         raise ValueError("Target address must be an http://host:port origin")
+    if ":" in parsed.hostname:
+        raise ValueError("Target address does not support IPv6 literals; use an IPv4 address or hostname")
     if parsed.port is None:
         raise ValueError("Target address must include a port")
     return value.rstrip("/")

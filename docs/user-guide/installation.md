@@ -39,8 +39,9 @@ CUDA_VISIBLE_DEVICES=1 aspec train --config /path/to/run.yaml
 ```
 
 The default Target address is `http://127.0.0.1:30000`. Set `inference.target_service.address`
-for a remote service, or pass `--target-address` to Quickstart. Use the same ASpec release
-in both environments. Each role allocates its own GPUs; select disjoint GPU sets for a same-host run.
+for a remote service, or pass `--target-address` to Quickstart. Use an IPv4 address or a hostname
+that resolves to IPv4. Use the same ASpec release in both environments.
+Each role allocates its own GPUs; select disjoint GPU sets for a same-host run.
 The example uses one GPU per role; adjust both selections to match your config.
 `aspec target --config /path/to/run.yaml` reads its address and Target model from the same config.
 The service remains available after a training session ends; each session releases its own workers.

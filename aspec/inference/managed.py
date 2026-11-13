@@ -29,8 +29,8 @@ def managed_target(args, *, draft_gpu_count=None):
         yield
         return
     address = settings["address"]
-    if urlsplit(address).hostname not in ("localhost", "127.0.0.1", "::1"):
-        raise ValueError("managed-local Target must listen on loopback")
+    if urlsplit(address).hostname not in ("localhost", "127.0.0.1"):
+        raise ValueError("managed-local Target must listen on IPv4 loopback (127.0.0.1 or localhost)")
     try:
         request(address, "/v1/info", timeout=2)
     except OSError:

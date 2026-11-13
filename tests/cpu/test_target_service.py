@@ -80,6 +80,18 @@ def test_invalid_target_address_is_rejected(address):
         validate_address(address)
 
 
+@pytest.mark.parametrize("host", ["[::1]", "[2001:db8::1]"])
+def test_target_rejects_ipv6_literals(host):
+    with pytest.raises(ValueError, match="IPv6"):
+        validate_address(f"http://{host}:30000")
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "target.example"])
+def test_target_accepts_ipv4_and_hostnames(host):
+    address = f"http://{host}:30000"
+    assert validate_address(address) == address
+
+
 def test_no_driver_objects_cross_control_boundary():
     args = Namespace(target_model_path="qwen", draft_model_config_obj=object(),
                      wandb_key="private", learning_rate=0.1, _mooncake_master_actor=object())
@@ -579,7 +591,20 @@ def test_managed_local_keeps_resume_configuration(tmp_path):
     assert loaded.training.load_path == str(tmp_path / "checkpoint")
 
 
-def test_managed_supervisor_never_stops_an_existing_service(monkeypatch, tmp_path):
+def test_managed_supervisor_rejects_ipv6_before_probing(monkeypatch):
+    from aspec.inference import managed
+
+    probe = MagicMock()
+    monkeypatch.setattr(managed, "request", probe)
+    args = Namespace(target_service={"mode": "managed-local", "address": "http://[::1]:30000"})
+    with pytest.raises(ValueError, match="loopback"):
+        with managed.managed_target(args):
+            pytest.fail("accepted IPv6 loopback")
+    probe.assert_not_called()
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_managed_supervisor_never_stops_an_existing_service(monkeypatch, host):
     from aspec.inference import managed
 
     monkeypatch.setattr(managed, "request", lambda *_a, **_k: {})
@@ -587,7 +612,7 @@ def test_managed_supervisor_never_stops_an_existing_service(monkeypatch, tmp_pat
     monkeypatch.setattr(managed.subprocess, "Popen", popen)
     with pytest.raises(RuntimeError, match="existing Target"):
         with managed.managed_target(Namespace(target_service={"mode": "managed-local",
-                                                              "address": "http://127.0.0.1:30000"})):
+                                                              "address": f"http://{host}:30000"})):
             pytest.fail("existing service was adopted")
     popen.assert_not_called()
 
