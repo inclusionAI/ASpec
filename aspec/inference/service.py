@@ -30,6 +30,7 @@ from aspec.inference.service_protocol import (
     decode,
     encode,
     validate_address,
+    validate_target_tp,
 )
 from aspec.inference.target_runtime import inventory, release_version
 from aspec.utils.env import get_aspec_env_vars
@@ -92,6 +93,7 @@ class TargetService:
         if set(arguments) - TARGET_ARGUMENTS:
             raise ValueError("Unknown Target configuration fields")
         args = Namespace(**arguments)
+        validate_target_tp(getattr(args, "sglang_nnodes", 1), value["node_rank"])
         if self.model and args.target_model_path != self.model:
             raise ValueError("Target model differs from the service configuration")
         session = getattr(args, "aspec_attempt_id", None)
@@ -275,27 +277,32 @@ class TargetService:
         return None
 
     def reap_disconnected(self, *, expiry=30):
-        """Fail closed on lost control; reclaim only after observed reader exit."""
-        from aspec.utils.misc import get_current_node_ip
-
+        """Reclaim unused or reader-fenced sources after disconnect or during drain."""
         with self.lock:
-            # Record descendants while their parent is still alive. A backend
-            # scheduler can kill its actor on initialization failure; later
-            # cleanup must identify only this service's own remaining children.
-            for item in self.engines.values():
-                if item["state"] != "closed":
-                    observe_process_tree(item["processes"])
-            candidates = [(key, item) for key, item in self.engines.items()
-                          if item["state"] not in ("creating", "closed", "terminating")
-                          and time.monotonic() - item["heartbeat"] > expiry]
-            for _, item in candidates:
-                item["state"] = "retained"
-        for key, item in candidates:
-            if not item["generation_admitted"] or readers_exited(item["owners"], get_current_node_ip()):
-                try:
-                    self._force_shutdown(key)
-                except Exception:
-                    logger.exception("Could not reclaim disconnected Target %s; retaining its lease", key)
+            candidates = []
+            for key, item in self.engines.items():
+                if item["state"] == "closed":
+                    continue
+                observe_process_tree(item["processes"])
+                if item["state"] in ("creating", "terminating"):
+                    continue
+                expired = time.monotonic() - item["heartbeat"] > expiry
+                if expired:
+                    # Stop new admissions as soon as the caller disconnects.
+                    item["state"] = "retained"
+                elif not self.draining or item["state"] == "closing":
+                    continue
+                # A live client may still finish shutdown while its readers exit.
+                # Once safe, stop admission so polling cannot prolong the drain.
+                if not item["generation_admitted"] or readers_exited(item["owners"], self.node_ip):
+                    item["state"] = "retained"
+                    if expired or not item["active"]:
+                        candidates.append(key)
+        for key in candidates:
+            try:
+                self._force_shutdown(key)
+            except Exception:
+                logger.exception("Could not reclaim Target %s; retaining its lease", key)
 
     def idle(self):
         with self.lock:

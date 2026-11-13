@@ -227,3 +227,12 @@ def test_partial_target_preparation_rolls_back_every_created_facade():
         engine.shutdown.remote.assert_called_once_with(force=True)
     assert ray.kill.call_args_list == [call(first, no_restart=True), call(second, no_restart=True)]
     assert actor.options.call_args.kwargs["scheduling_strategy"].node_id == "ab" * 28
+
+
+def test_cross_node_target_tp_is_rejected_before_creating_facades():
+    from aspec.inference.factory import _prepare_sgl_engines
+
+    with patch("aspec.inference.factory.ray") as ray:
+        with pytest.raises(ValueError, match="node-local"):
+            _prepare_sgl_engines(Namespace(sglang_nnodes=2), None)
+        ray.remote.assert_not_called()

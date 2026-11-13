@@ -390,6 +390,10 @@ def _validate_cluster_config(config: DictConfig) -> None:
         raise ValueError(
             "mooncake.feature_affinity must be 'any' or 'node_local_required'"
         )
+    if config.inference.inference_engine_type == "sgl" or mode == "static_multi_node":
+        from aspec.inference.service_protocol import validate_target_tp
+
+        validate_target_tp(config.inference.sglang.nnodes)
     if mode == "single_node":
         if feature_affinity == "node_local_required":
             raise ValueError(
@@ -462,11 +466,6 @@ def _validate_cluster_config(config: DictConfig) -> None:
     if len(set(role_ips["training"]) | set(role_ips["inference"])) < 2:
         raise ValueError("static_multi_node requires at least two distinct node IPs")
 
-    if config.inference.sglang.nnodes != 1:
-        raise ValueError(
-            "static_multi_node first release keeps every Target TP group node-local; "
-            "inference.sglang.nnodes must be 1"
-        )
     if (
         config.inference.inference_num_gpus_per_engine
         > config.inference.inference_num_gpus_per_node

@@ -729,3 +729,60 @@ def test_sigterm_during_managed_readiness_stops_only_owned_target(monkeypatch, t
     process.send_signal.assert_called_once_with(signal.SIGTERM)
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "4,6"
     assert signal.getsignal(signal.SIGTERM) == previous
+
+
+def test_draining_reclaims_idle_sessions_despite_continuing_heartbeats(service, monkeypatch):
+    from aspec.inference import service as module
+
+    clock = 0
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock)
+    exited = False
+    monkeypatch.setattr(module, "readers_exited", lambda *_: exited)
+    service.create(creation(service, "unused"))
+    service.create(creation(service, "used"))
+    service.call("used", "generate", [], {})
+    service.draining = True
+
+    for clock in range(5, 51, 5):
+        service.heartbeat("used")
+        service.call("used", "get_status", [], {})
+        if clock == 5:
+            service.heartbeat("unused")
+        service.reap_disconnected()
+        assert service.engines["unused"]["state"] == "closed"
+        assert service.claims == {1: "used"}
+
+    exited = True
+    service.heartbeat("used")
+    service.reap_disconnected()
+    assert service.idle()
+
+
+def test_drain_finishes_an_accepted_call_and_stops_new_polls(service, monkeypatch):
+    from aspec.inference import service as module
+
+    service.create(creation(service))
+
+    def finish_status(result, **_):
+        service.draining = True
+        service.heartbeat("engine")
+        service.reap_disconnected()
+        assert service.claims == {0: "engine"}
+        with pytest.raises(RuntimeError, match="retained"):
+            service.call("engine", "get_status", [], {})
+        return result
+
+    monkeypatch.setattr(module.ray, "get", finish_status)
+    service.call("engine", "get_status", [], {})
+    service.reap_disconnected()
+    assert service.idle()
+
+
+@pytest.mark.parametrize("nnodes,node_rank", [(2, 0), (1, 1)])
+def test_cross_node_tp_is_rejected_before_target_allocation(service, nnodes, node_rank):
+    value = creation(service)
+    value["arguments"]["sglang_nnodes"] = nnodes
+    value["node_rank"] = node_rank
+    with pytest.raises(ValueError, match="node-local"):
+        service.create(value)
+    assert not service.engines and service.idle()

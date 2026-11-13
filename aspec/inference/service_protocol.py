@@ -39,6 +39,11 @@ timeline_enabled timeline_output_dir timeline_run_id timeline_flush_every output
 """.split())
 
 
+def validate_target_tp(nnodes, node_rank=0):
+    if nnodes != 1 or node_rank != 0:
+        raise ValueError("Target TP groups must be node-local (inference.sglang.nnodes=1, node_rank=0)")
+
+
 def validate_address(value):
     parsed = urlsplit(value)
     if (parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password
