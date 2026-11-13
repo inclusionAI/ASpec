@@ -208,7 +208,10 @@ def main():
                 "tests/cpu/test_training_resume_rng.py",
                 "tests/cpu/test_evaluation_contract.py",
                 "tests/test_ling_moe.py",
-                "tests/test_multi_draft_plan.py",
+                "tests/cpu/test_multi_draft_plan.py",
+                "tests/cpu/test_multi_draft_runtime.py",
+                "tests/cpu/test_shared_source.py",
+                "tests/cpu/test_inference_manager_lifecycle.py",
                 "tests/test_multinode_tcp_reference.py",
             ]
         )

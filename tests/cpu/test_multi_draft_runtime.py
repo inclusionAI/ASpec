@@ -43,23 +43,19 @@ def test_failed_fence_does_not_withdraw_reader(monkeypatch):
     hub.retire.remote.assert_not_called()
 
 
-def test_fence_probe_uses_live_node_not_stale_record_for_same_ip(monkeypatch):
-    group, probe_actor = Mock(), Mock()
-    group._actor_handlers = [Mock()]
-    monkeypatch.setattr(multi_draft, "_OwnerFenceProbe", probe_actor)
-    monkeypatch.setattr(
-        multi_draft.ray,
-        "nodes",
-        lambda: [
-            {"NodeID": "0" * 56, "NodeManagerAddress": "host", "Alive": False},
-            {"NodeID": "1" * 56, "NodeManagerAddress": "host", "Alive": True},
-        ],
-    )
-    monkeypatch.setattr(multi_draft.ray, "get", Mock(return_value=True))
+def test_fence_waits_for_every_initialized_node_identity(monkeypatch):
+    group = Mock()
+    group._actor_handlers = [Mock(), Mock()]
+    statuses = [
+        {"node_id": "a", "node_ip": "host-a", "pid": 1},
+        {"node_id": "b", "node_ip": "host-b", "pid": 2},
+    ]
     monkeypatch.setattr(multi_draft.ray, "kill", Mock())
-    multi_draft._fence_group(group, [{"node_ip": "host", "pid": 1}])
-    placement = probe_actor.options.call_args.kwargs["scheduling_strategy"]
-    assert placement.node_id == "1" * 56
+    wait = Mock(return_value={"state": "verified"})
+    monkeypatch.setattr(multi_draft, "wait_for_owner_exit", wait)
+    multi_draft._fence_group(group, statuses)
+    wait.assert_called_once_with(statuses, timeout=30)
+    assert multi_draft.ray.kill.call_count == 2
 
 
 def _session(
@@ -280,7 +276,7 @@ def test_tracking_close_failure_is_not_misclassified_as_unsafe_source_fence(monk
 
 def test_unsafe_fence_withholds_source_teardown_and_placement_release(monkeypatch, tmp_path):
     args, plan, recorders, engine = _session(monkeypatch, tmp_path, fence_error=True)
-    with pytest.raises(TimeoutError, match="owner alive"):
+    with pytest.raises(multi_draft.SourceTeardownBlockedError):
         multi_draft.run_multi_draft(args, plan)
     engine.shutdown.remote.assert_not_called()
     multi_draft.ray.util.remove_placement_group.assert_not_called()
@@ -346,7 +342,7 @@ def test_cp_lifecycle_harness_keeps_picklable_parent_and_resume_list(monkeypatch
         pass
 
     parent = recipe_gpu_smoke.AuditedTrainerActor
-    config = Path(__file__).parents[1] / "configs/examples/qwen3_8b_multi_algorithm_feature_views.yaml"
+    config = Path(__file__).parents[2] / "configs/examples/qwen3_8b_multi_algorithm_feature_views.yaml"
     monkeypatch.setattr(sys, "argv", [
         "lifecycle", "--config", str(config), "--output", str(tmp_path / "new"),
         "--resume-from", str(tmp_path / "old"), "--gpus", "8",
@@ -391,3 +387,83 @@ def test_failed_sibling_keeps_union_producer_and_independent_consumer_contract(m
     assert evidence["state"] == "completed_with_failed_experiments"
     assert evidence["cleanup_errors"] == []
     recorders["a"].fail.assert_not_called()
+
+
+def test_shared_cli_retains_ray_driver_when_remote_owner_exit_is_unverified(monkeypatch):
+    from contextlib import nullcontext
+
+    args = SimpleNamespace()
+    plan = multi_draft.MultiDraftPlan({}, {}, 42)
+    blocked = multi_draft.SourceTeardownBlockedError([
+        {'node_id': 'lost', 'node_ip': '10.0.0.2', 'pid': 123},
+    ])
+    monkeypatch.setattr(train_entry, '_prepare_config', lambda: (args, plan))
+    monkeypatch.setattr(train_entry, 'termination_signal_handlers', nullcontext)
+    monkeypatch.setattr(train_entry, 'ensure_ray_initialized', lambda: None)
+    monkeypatch.setattr(train_entry, 'install_termination_signal_handler', lambda: None)
+    monkeypatch.setattr(multi_draft, 'run_multi_draft', Mock(side_effect=blocked))
+    shutdown = Mock()
+    monkeypatch.setattr(train_entry.ray, 'shutdown', shutdown)
+    monkeypatch.setattr(train_entry.ray, 'is_initialized', lambda: True)
+    with pytest.raises(multi_draft.SourceTeardownBlockedError):
+        train_entry._main()
+    shutdown.assert_not_called()
+
+
+@pytest.mark.parametrize("first_name", ["a", "shared_source"])
+def test_shared_preflight_writes_child_and_aggregate_results(monkeypatch, tmp_path, first_name):
+    args = SimpleNamespace(cluster_mode='static_multi_node', output_dir=str(tmp_path), width=3)
+    children = {
+        name: SimpleNamespace(output_dir=str(tmp_path / name), width=width)
+        for name, width in ((first_name, 1), ('b', 2))
+    }
+    plan = SimpleNamespace(plan_id='plan', plans={
+        name: SimpleNamespace(to_runtime_args=lambda child=child: child)
+        for name, child in children.items()
+    })
+    from aspec.ray import node_local_files
+
+    close = Mock()
+    monkeypatch.setattr(node_local_files, 'close_stores', close)
+    monkeypatch.setattr(train_entry, '_prepare_run_directory', lambda path: None)
+    probe = Mock(side_effect=lambda child: {'state': 'validated', 'width': child.width})
+    monkeypatch.setattr(multi_draft, 'run_cluster_preflight', probe)
+    report = multi_draft.preflight_multi_draft(args, plan)
+    assert probe.call_count == 3
+    assert report['experiments'] == {
+        first_name: {'state': 'validated', 'width': 1},
+        'b': {'state': 'validated', 'width': 2},
+    }
+    assert report['shared_source'] == {'state': 'validated', 'width': 3}
+    assert len({call.args[0].aspec_run_id for call in probe.call_args_list}) == 1
+    assert close.call_count == 3
+    assert json.loads((tmp_path / 'cluster-preflight.json').read_text()) == report
+
+
+@pytest.mark.parametrize("failure", ["preflight", "cleanup"])
+def test_shared_preflight_attempts_every_store_cleanup(monkeypatch, tmp_path, failure):
+    from aspec.ray import node_local_files
+
+    args = SimpleNamespace(cluster_mode="static_multi_node", output_dir=str(tmp_path))
+    children = {
+        name: SimpleNamespace(output_dir=str(tmp_path / name)) for name in ("a", "b")
+    }
+    plan = SimpleNamespace(plan_id="plan", plans={
+        name: SimpleNamespace(to_runtime_args=lambda child=child: child)
+        for name, child in children.items()
+    })
+    monkeypatch.setattr(train_entry, "_prepare_run_directory", lambda path: None)
+    probe = Mock(return_value={"state": "validated"})
+    close = Mock()
+    if failure == "preflight":
+        probe.side_effect = ValueError("preflight failed")
+    else:
+        close.side_effect = [RuntimeError("cleanup failed"), None, None]
+    monkeypatch.setattr(multi_draft, "run_cluster_preflight", probe)
+    monkeypatch.setattr(node_local_files, "close_stores", close)
+    with pytest.raises((ValueError, RuntimeError), match=f"{failure} failed"):
+        multi_draft.preflight_multi_draft(args, plan)
+    assert {call.args[0].output_dir for call in close.call_args_list} == {
+        str(tmp_path), str(tmp_path / "a"), str(tmp_path / "b"),
+    }
+    assert close.call_count == 3

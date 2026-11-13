@@ -26,7 +26,7 @@ from aspec.multi_draft import (
 
 
 def _config():
-    root = Path(__file__).parents[1]
+    root = Path(__file__).parents[2]
     base = OmegaConf.load(root / "configs/recipes/qwen3_8b_dspark.yaml")
     base.dataset.train_data_path = str(root / "examples/data/sample_conversations.jsonl")
     base.model.target_model_path = "Qwen/Qwen3-8B"
@@ -228,7 +228,7 @@ def test_shared_context_semantics_are_validated_before_gpu_allocation():
 def test_shared_source_preserves_first_draft_attention_backend(tmp_path, attention_backend):
     import json
 
-    root = Path(__file__).parents[1]
+    root = Path(__file__).parents[2]
     raw = json.loads((root / "aspec/config/dflash2_draft_config.json").read_text())
     raw["is_causal"] = True
     draft = tmp_path / "causal.json"
@@ -288,3 +288,70 @@ def test_common_cp_config_validates_the_single_physical_source_before_compilatio
     loaded.experiments = []
     with pytest.raises(ValueError, match="source.*ring"):
         load_config(base_config=loaded, save_snapshot=False)
+
+
+def _multinode_config():
+    root = Path(__file__).parents[2]
+    base = OmegaConf.load(root / 'configs/recipes/qwen3_8b_4k_multinode_node_local_nvlink.yaml')
+    base.training.training_node_ips = ['10.0.0.1', '10.0.0.2']
+    base.inference.inference_node_ips = ['10.0.0.1', '10.0.0.2']
+    base.inference.inference_batch_size = 1
+    base.model.target_model_path = '/tmp/aspec-test/Qwen3-8B'
+    base.experiments = [
+        {'name': 'a', 'training': {'training_num_gpus_per_node': 1}},
+        {'name': 'b', 'training': {'training_num_gpus_per_node': 2}},
+    ]
+    return load_config(base_config=base, save_snapshot=False)
+
+
+def test_shared_multinode_plan_reserves_all_drafts_on_each_node():
+    plan = compile_multi_draft_plan(_multinode_config())
+    args = plan.to_runtime_args()
+    assert args.training_num_nodes == 2
+    assert args.training_num_gpus_per_node == 3
+    assert args.world_size == 6
+    assert plan.to_dict()['resources']['draft_gpus'] == {'a': 2, 'b': 4}
+    domains = plan.source_plan.policy.resources['locality_domains']
+    assert [d['training_world_ranks'] for d in domains] == [[0, 1, 2], [3, 4, 5]]
+    assert args.load_path is None
+
+
+def test_child_allocation_preserves_node_major_rank_order():
+    from types import SimpleNamespace
+
+    from aspec.multi_draft import experiment_gpu_allocation
+
+    children = {
+        'a': SimpleNamespace(training_num_nodes=2, training_num_gpus_per_node=1, world_size=2),
+        'b': SimpleNamespace(training_num_nodes=2, training_num_gpus_per_node=2, world_size=4),
+    }
+    reservation = ('pg', [10, 11, 12, 20, 21, 22], [0, 1, 2, 0, 1, 2])
+    assert experiment_gpu_allocation(reservation, children, 'a') == ('pg', [10, 20], [0, 0])
+    assert experiment_gpu_allocation(reservation, children, 'b') == ('pg', [11, 12, 21, 22], [1, 2, 1, 2])
+
+
+@pytest.mark.parametrize('packing', [True, False])
+def test_shared_multinode_requires_single_sample_target_requests(packing):
+    config = _multinode_config()
+    config.training.dflash_packing = packing
+    config.inference.inference_batch_size = 2
+    with pytest.raises(NotImplementedError, match='inference_batch_size=1'):
+        compile_multi_draft_plan(config)
+
+
+def test_shared_multinode_supports_independent_packing():
+    config = _multinode_config()
+    config.experiments[1].training.dflash_packing = True
+    plan = compile_multi_draft_plan(config)
+    assert plan.plans['b'].to_runtime_args().dflash_packing is True
+    assert plan.plans['a'].to_runtime_args().dflash_packing is False
+
+
+@pytest.mark.parametrize('multinode', [False, True])
+@pytest.mark.parametrize('packing', [False, True])
+def test_shared_source_rejects_finite_document_budget(multinode, packing):
+    config = _multinode_config() if multinode else _config()
+    config.training.dflash_packing = packing
+    config.training.source_work_budget = 8192
+    with pytest.raises(NotImplementedError, match='source_work_budget'):
+        compile_multi_draft_plan(config)

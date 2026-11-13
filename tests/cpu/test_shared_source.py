@@ -15,6 +15,7 @@
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
+from queue import Queue
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -135,6 +136,10 @@ class _Controller:
 
     def get_ready_pool_size(self):
         return len(self.outputs)
+
+    def get_ready_pool_size_by_node(self):
+        return {node: sum(output.metadata.get("source_node_ip") == node for output in self.sample_pool)
+                for node in getattr(self.args, "training_node_ips", [])}
 
 
 def test_shared_eval_fanout_does_not_spend_training_demand(monkeypatch):
@@ -665,3 +670,195 @@ def test_packed_horizon_is_rows_not_a_fixed_sample_budget(monkeypatch):
     hub.retire("packed", owners_fenced=True)
     assert hub.remaining["packed"] == 0
     assert hub.get_prompts(1) == []
+
+
+def test_shared_multinode_admission_reserves_each_child_tail_on_every_node(monkeypatch):
+    monkeypatch.setattr(shared_source, 'TrainingControllerState', _Controller)
+    args = SimpleNamespace(dp_size=2, num_train_steps=2, global_batch_size=2,
+                           training_node_ips=['a', 'b'], mooncake_feature_affinity='node_local_required')
+    shorter = copy(args)
+    shorter.num_train_steps = 1
+    hub = shared_source.SharedSourceState(args, {'long': args, 'short': shorter})
+    hub.load_dataset(args)
+    for name in ('long', 'short'):
+        hub.invoke(name, 'submit_training_dataset', (), {})
+    entries = hub.get_prompts(10)
+    assert len(entries) == 4
+    assert [e.metadata['shared_source_node'] for e in entries] == ['a', 'b', 'a', 'b']
+    assert [hub._audiences[e.metadata[EXECUTION_ID_KEY]] for e in entries] == [
+        ('long', 'short'), ('long', 'short'), ('long',), ('long',),
+    ]
+    assert hub.remaining == {'long': 0, 'short': 0}
+    assert hub._remaining_by_node == {'long': {'a': 0, 'b': 0}, 'short': {'a': 0, 'b': 0}}
+    assert hub.source.args.mooncake_feature_affinity == 'any'
+
+
+def test_shared_node_credits_include_unpublished_outputs_per_slowest_reader(monkeypatch):
+    monkeypatch.setattr(shared_source, 'TrainingControllerState', _Controller)
+    args = SimpleNamespace(dp_size=2, num_train_steps=2, global_batch_size=2,
+                           training_node_ips=['a', 'b'], mooncake_feature_affinity='node_local_required')
+    hub = shared_source.SharedSourceState(args, {'fast': args, 'slow': args})
+    hub.experiments['fast'].get_ready_pool_size_by_node = lambda: {'a': 0, 'b': 2}
+    hub.experiments['slow'].get_ready_pool_size_by_node = lambda: {'a': 3, 'b': 0}
+    hub._completed['pending'] = SimpleNamespace(metadata={'source_node_ip': 'b'})
+    hub._audiences['pending'] = ('fast', 'slow')
+    assert hub.get_ready_pool_size_by_node() == {'a': 3, 'b': 3}
+
+
+def test_disjoint_node_tail_demands_preserve_each_readers_next_work(monkeypatch):
+    monkeypatch.setattr(shared_source, 'TrainingControllerState', _Controller)
+    args = SimpleNamespace(dp_size=2, num_train_steps=1, global_batch_size=2,
+                           training_node_ips=['a', 'b'], mooncake_feature_affinity='node_local_required')
+    hub = shared_source.SharedSourceState(args, {'left': args, 'right': args})
+    hub.load_dataset(args)
+    for name in hub.experiments:
+        hub.invoke(name, 'submit_training_dataset', (), {})
+    # The two independent restored readers need the same next document on
+    # different nodes. Neither may silently skip it to fill its local tail.
+    hub.remaining = {'left': 1, 'right': 1}
+    hub._remaining_by_node = {'left': {'a': 1, 'b': 0}, 'right': {'a': 0, 'b': 1}}
+    first, = hub.get_prompts(1)
+    second, = hub.get_prompts(1)
+    assert first.metadata['aspec_work_id'] == second.metadata['aspec_work_id']
+    assert first.metadata[EXECUTION_ID_KEY] != second.metadata[EXECUTION_ID_KEY]
+    assert hub._audiences[first.metadata[EXECUTION_ID_KEY]] == ('left',)
+    assert hub._audiences[second.metadata[EXECUTION_ID_KEY]] == ('right',)
+    assert hub.remaining == {'left': 0, 'right': 0}
+
+
+def _packed_multinode_hub(monkeypatch, *, plain=False):
+    monkeypatch.setattr(shared_source, 'TrainingControllerState', _Controller)
+    args = SimpleNamespace(dp_size=2, num_train_steps=2, global_batch_size=2,
+                           dflash_packing=True, max_sample_pool_size=4,
+                           training_node_ips=['a', 'b'], mooncake_feature_affinity='node_local_required')
+    other = copy(args)
+    other.dflash_packing = not plain
+    hub = shared_source.SharedSourceState(args, {'left': args, 'right': other})
+    hub.load_dataset(args)
+    for name in hub.experiments:
+        hub.invoke(name, 'submit_training_dataset', (), {})
+    return hub
+
+
+@pytest.mark.parametrize('plain', [False, True])
+def test_packed_multinode_reserves_prefetch_credit_and_resumes_supply(monkeypatch, plain):
+    hub = _packed_multinode_hub(monkeypatch, plain=plain)
+    assert hub._remaining_by_node['left'] == {'a': None, 'b': None}
+    entries = hub.get_prompts(100)
+    assert len(entries) == 4
+    assert hub.get_prompts(1) == []
+    assert len(hub.source.prompt_buffer) == 0
+    assert hub.source._dataset_epoch == 0  # No logical work lost while blocked.
+    controls = Mock()
+    monkeypatch.setattr(shared_source, 'source_control', controls)
+    outputs = []
+    for index, entry in enumerate(entries):
+        output = _output(entry, index)
+        output.metadata.update(feature_affinity='node_local_required',
+                               source_node_ip=entry.metadata['shared_source_node'])
+        outputs.append(output)
+    hub.push_inference_results(outputs[::-1])
+    assert hub.get_prompts(1) == []
+    for child in hub.experiments.values():
+        child.sample_pool.clear()
+    new = hub.get_prompts(100)
+    assert len(new) == 4
+    assert hub.remaining['left'] is None
+    if plain:
+        assert all(hub._audiences[entry.metadata[EXECUTION_ID_KEY]] == ('left',) for entry in new)
+
+
+def test_packed_multinode_splits_crossed_reader_pressure_with_scoped_credit(monkeypatch):
+    hub = _packed_multinode_hub(monkeypatch)
+    hub.experiments['left'].get_ready_pool_size_by_node = lambda: {'a': 2, 'b': 0}
+    hub.experiments['right'].get_ready_pool_size_by_node = lambda: {'a': 0, 'b': 2}
+    first, second = hub.get_prompts(2)
+    assert first.metadata['aspec_work_id'] == second.metadata['aspec_work_id']
+    assert first.metadata[EXECUTION_ID_KEY] != second.metadata[EXECUTION_ID_KEY]
+    assert hub.get_ready_pool_size_by_node() == {'a': 2, 'b': 2}
+    for entry in (first, second):
+        identity, node = entry.metadata[EXECUTION_ID_KEY], entry.metadata['shared_source_node']
+        assert hub.get_ready_pool_size_by_node([identity])[node] == 0
+    assert len(hub.get_prompts(100)) == 2  # Includes the already reserved credits.
+    assert hub.get_prompts(1) == []
+    with pytest.raises(ValueError, match='unknown shared source admission'):
+        hub.get_ready_pool_size_by_node(['unknown'])
+
+
+def test_shared_multinode_output_cannot_rewrite_its_admitted_node(monkeypatch):
+    hub = _packed_multinode_hub(monkeypatch)
+    entry, = hub.get_prompts(1)
+    output = _output(entry, 0)
+    other_node = 'b' if entry.metadata['shared_source_node'] == 'a' else 'a'
+    output.metadata.update(feature_affinity='node_local_required',
+                           source_node_ip=other_node, shared_source_node=other_node)
+    with pytest.raises(RuntimeError, match='admitted source-node placement'):
+        hub.push_inference_results([output])
+
+
+@pytest.mark.parametrize('cancel', [True, False])
+def test_packed_multinode_stops_node_demand_on_cancel_or_retirement(monkeypatch, cancel):
+    hub = _packed_multinode_hub(monkeypatch)
+    hub.get_prompts(2)
+    if cancel:
+        hub.request_cancel('left')
+    else:
+        hub.retire('left', owners_fenced=True)
+    assert hub.remaining['left'] == 0
+    assert hub.status()['remaining_source_demand_by_node']['left'] == {'a': 0, 'b': 0}
+    assert hub.remaining['right'] is None
+
+
+def test_shared_packing_checkpoint_replays_an_uncommitted_earlier_epoch(monkeypatch):
+    hub = _packed_multinode_hub(monkeypatch)
+    hub._committed_epoch['left'] = 3
+    hub._epochs['left'] = {'old-tail': 2, 'later': 3}
+    assert hub.invoke('left', 'get_checkpoint_work_state', (), {})['dataset_epoch'] == 2
+    del hub._epochs['left']['old-tail']
+    assert hub.invoke('left', 'get_checkpoint_work_state', (), {})['dataset_epoch'] == 3
+
+
+@pytest.mark.parametrize('plain', [False, True])
+def test_shared_outputs_use_independent_real_node_local_packing_controllers(monkeypatch, plain):
+    from aspec.controller import training_controller
+
+    real_controller = shared_source.TrainingControllerState
+    hub = _packed_multinode_hub(monkeypatch, plain=plain)
+    monkeypatch.setattr(training_controller, 'Queue', Queue)
+    monkeypatch.setattr(shared_source, 'source_control', Mock())
+    hub._node_watermarks = {'a': 4, 'b': 4}
+    for name, old in list(hub.experiments.items()):
+        args = copy(old.args)
+        args.training_num_gpus_per_node = 1
+        args.max_seq_length, args.dflash_block_size = 32, 2
+        args.packing_min_samples_per_dispatch = 4
+        hub.experiments[name] = real_controller(args, 2, with_eval_queues=False)
+    entries = hub.get_prompts(8)
+    outputs = []
+    for index, entry in enumerate(entries):
+        output = _output(entry, index)
+        output.tensor_shapes = {'input_ids': (1, 7), 'hidden_states': (1, 7, 3)}
+        output.packed_loss_mask = '0,7'
+        output.metadata.update(feature_affinity='node_local_required',
+                               source_node_ip=entry.metadata['shared_source_node'])
+        outputs.append(output)
+    hub.push_inference_results(outputs[::-1])
+    selected = {}
+    for name, child in hub.experiments.items():
+        assert hub.invoke(name, 'try_dispatch_batch', (), {'optimizer_step': 0, 'microstep': 0})
+        selected[name] = []
+        for node, queue in zip(('a', 'b'), child.train_queues, strict=True):
+            row = []
+            while not queue.empty():
+                sample = queue.get_nowait()
+                assert sample.metadata['source_node_ip'] == sample.metadata['assigned_draft_node_ip'] == node
+                row.append(sample)
+            assert len(row) == (1 if name == 'right' and plain else 4)
+            if child.packing_enabled:
+                assert [sample.last_in_row for sample in row] == [False, False, False, True]
+                assert len({sample.row_id for sample in row}) == 1
+            selected[name].extend(sample.metadata[EXECUTION_ID_KEY] for sample in row)
+        assert len(selected[name]) == len(set(selected[name]))
+        assert child.get_scheduler_evidence()['cross_node_dispatch_samples'] == 0
+    if not plain:
+        assert set(selected['left']) == set(selected['right'])

@@ -18,29 +18,24 @@ from unittest.mock import MagicMock
 import pytest
 
 
-def test_multi_draft_probe_is_closed_if_trainer_kill_fails(monkeypatch):
+def test_multi_draft_kill_failure_keeps_reader_registered(monkeypatch):
     from aspec import multi_draft as module
 
-    actor, probe = object(), object()
-    creator = MagicMock()
-    creator.options.return_value.remote.return_value = probe
-    monkeypatch.setattr(module, "_OwnerFenceProbe", creator)
-    monkeypatch.setattr(
-        module.ray,
-        "nodes",
-        lambda: [{"Alive": True, "NodeID": "1" * 56, "NodeManagerAddress": "ip"}],
-    )
-    killed = []
-
-    def kill(target, **kw):
-        killed.append(target)
-        if target is actor:
-            raise RuntimeError("kill dispatch failed")
-
+    actor = object()
+    kill = MagicMock(side_effect=RuntimeError("kill dispatch failed"))
+    wait = MagicMock()
+    hub = SimpleNamespace(retire=SimpleNamespace(remote=MagicMock()))
     monkeypatch.setattr(module.ray, "kill", kill)
+    monkeypatch.setattr(module, "wait_for_owner_exit", wait)
     with pytest.raises(RuntimeError, match="kill dispatch failed"):
-        module._fence_group(SimpleNamespace(_actor_handlers=[actor]), [{"node_ip": "ip", "pid": 1}])
-    assert probe in killed
+        module._finish_experiment(
+            SimpleNamespace(_actor_handlers=[actor]),
+            [{"node_id": "1" * 56, "node_ip": "ip", "pid": 1}],
+            hub, "draft", graceful=False,
+        )
+    kill.assert_called_once_with(actor, no_restart=True)
+    wait.assert_not_called()
+    hub.retire.remote.assert_not_called()
 
 
 def test_materializer_startup_failure_enters_cleanup(monkeypatch, tmp_path):

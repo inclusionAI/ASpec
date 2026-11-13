@@ -7,7 +7,7 @@ current combinations and limits.
 - Preserve training objectives, document boundaries, gradients and frozen Target bindings across
   optimized backends. Use numerical comparisons before interpreting performance.
 - Extend reliability beyond whole worker-process loss to additional concrete failure mechanisms;
-  keep shared multi-node execution and elastic membership explicit roadmap items.
+  extend shared multi-node workload coverage and keep elastic membership an explicit roadmap item.
 - Keep checkpoint recovery, native assets and downstream formats faithful as algorithms evolve.
 - Compare normal complete workflows using [benchmark methodology](../benchmarks/methodology.md).
   Maintain reusable [validation tools](../contributing/validation.md) without making historical

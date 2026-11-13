@@ -16,7 +16,8 @@ The authoritative details and limitations are in [supported paths](docs/support.
 - [x] Sequence packing, context parallelism and independent Drafts sharing compatible Target data.
 - [x] Primary SGLang + Qwen3/Ling path on single-node multi-GPU systems.
 - [x] Bounded static multi-node, single-Draft execution.
-- [ ] Multi-node multi-Draft training: share compatible Target features across independent Draft
+- [x] Static multi-node multi-Draft training with independent packing:
+  share compatible Target features across independent Draft
   experiments, preserving per-Draft progress and checkpoint recovery without requiring a shared filesystem.
 - [ ] Elastic membership and broader failure recovery.
 

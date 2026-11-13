@@ -15,7 +15,7 @@ python -m tools.check_docs
 python -m ruff check aspec tests tools
 ```
 
-`contracts` checks all 14 configs/13 workflows, resource budgets and training defaults, negative
+`contracts` checks all 15 configs/14 workflows, resource budgets and training defaults, negative
 acceptance cases, and existing algorithm/packing/CP/sharing/multi-node contracts. Model names, data
 paths and node IPs in CPU tests are fixtures, never real GPU inputs. No models are downloaded by this
 command. CPU contracts do not establish GPU kernel parity or available capacity.
@@ -151,6 +151,17 @@ The launcher attaches to the explicit address, preflights each node, and disconn
 exit; it does not stop the cluster. Input replicas are hashed, checkpoint shards are explicitly
 collected, and resume state is explicitly distributed. This test needs **two compatible nodes,
 eight GPUs each**; it cannot be replaced by single-node file-exchange tests.
+
+For two independent Drafts sharing the Target, use the same cluster and replicated inputs:
+
+```bash
+bash tools/run_in_env.sh python -m tools.recipes accept multinode-shared \
+  --steps 64 --output /data/aspec/acceptance/multinode-shared-001
+```
+
+The launcher checks each Draft's training, checkpoint recovery and native export separately.
+The [shared training guide](../user-guide/sharing.md#start-two-drafts-and-resume-from-different-checkpoints)
+also shows how to resume experiments from different optimizer steps.
 
 ## Whole worker-node loss and recovery
 

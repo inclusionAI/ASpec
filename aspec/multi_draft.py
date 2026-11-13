@@ -23,6 +23,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,13 +39,14 @@ from aspec.controller.shared_source import ExperimentController, SharedSourceCon
 from aspec.evidence import RunEvidenceRecorder
 from aspec.inference.factory import prepare_inference_engines
 from aspec.planning import ExecutionPlan, compile_execution_plan, save_execution_plan
-from aspec.ray.owner_fence import _OwnerFenceProbe
+from aspec.ray.cluster_preflight import run_cluster_preflight
+from aspec.ray.owner_fence import SourceTeardownBlockedError, wait_for_owner_exit
 from aspec.ray.placement_group import allocate_train_group, create_placement_groups
 from aspec.reporting import _is_safe_experiment_name
 from aspec.training.trainer_actor import TrainerActor
 from aspec.transfer.mooncake.utils import launch_mooncake_master
 from aspec.utils.env import get_aspec_env_vars
-from aspec.utils.logging import ExperimentTracking, logger
+from aspec.utils.logging import ExperimentTracking
 
 
 @dataclass
@@ -141,16 +143,21 @@ def compile_multi_draft_plan(config) -> MultiDraftPlan:
         if args.report_to not in {"none", "tensorboard", "wandb"}:
             raise ValueError("logging.report_to must be none, tensorboard or wandb")
         unsupported = {
-            "multi-node": args.cluster_mode != "single_node" or args.training_num_nodes != 1,
             "colocated GPU roles": args.colocate,
             "legacy sequence parallel": args.attention_backend == "usp",
             "decode": args.train_with_decode,
             "service profiling": bool(getattr(args, "topology_producer_profile_samples", 0)),
+            "finite source_work_budget": args.source_work_budget is not None,
             "Store data plane": args.mooncake_data_plane != "transfer_engine",
         }
         rejected = [key for key, value in unsupported.items() if value]
         if rejected:
             raise NotImplementedError(f"shared Target training does not support: {rejected}")
+        if args.cluster_mode == "static_multi_node":
+            if args.mooncake_feature_affinity != "node_local_required":
+                raise ValueError("shared multi-node training requires node_local_required feature affinity")
+            if args.inference_batch_size != 1:
+                raise NotImplementedError("shared multi-node training requires inference_batch_size=1")
         if child.training.max_seq_length != config.training.max_seq_length:
             raise ValueError("shared experiments require compatible source sequence lengths")
         for key in ("placement_strategy", "training_node_ips", "training_node_selectors"):
@@ -174,13 +181,20 @@ def compile_multi_draft_plan(config) -> MultiDraftPlan:
     features = shared_feature_union(plan.workload.features for plan in plans.values())
     heterogeneous = len({p.workload.features["contract_id"] for p in plans.values()}) > 1
     source_plan = None
-    if heterogeneous or any(plan.to_runtime_args().draft_context_parallel_size > 1 for plan in plans.values()):
+    multi_node = config.cluster.mode == "static_multi_node"
+    if multi_node or heterogeneous or any(plan.to_runtime_args().draft_context_parallel_size > 1 for plan in plans.values()):
         source_config = load_config(base_config=OmegaConf.merge(
             next(iter(configs.values())),
-            {"training": {"draft_context_parallel_size": 1, "training_num_gpus_per_node": 1}},
+            {"training": {
+                "draft_context_parallel_size": 1,
+                "training_num_gpus_per_node": (
+                    sum(child.training.training_num_gpus_per_node for child in configs.values())
+                    if multi_node else 1
+                ),
+                "load_path": None,
+            }},
         ), save_snapshot=False)
-        # This plan describes producer staging, not a phantom CP1 trainer
-        # with the first experiment\'s GPU count and DP dispatch demand.
+        # Size producer staging for the union of consumer layouts and GPU allocations.
         source_plan = compile_execution_plan(source_config, source_feature_contract=features)
     source_context = (source_plan or next(iter(plans.values()))).to_runtime_args().aspec_context_contract
     for child in plans.values():
@@ -188,6 +202,25 @@ def compile_multi_draft_plan(config) -> MultiDraftPlan:
         if any(context[key] != source_context[key] for key in context if key != "training_sharding"):
             raise ValueError("shared experiments require compatible source context contracts")
     return MultiDraftPlan(configs, plans, int(source_seed), source_plan)
+
+
+def experiment_gpu_allocation(training_pg, experiment_args, name):
+    """Select a child's node-major ranks from the shared node-major reservation."""
+    pg, bundles, gpu_ids = training_pg
+    children = list(experiment_args)
+    nodes = int(getattr(experiment_args[name], "training_num_nodes", 1))
+    widths = {
+        key: int(getattr(value, "training_num_gpus_per_node", value.world_size))
+        for key, value in experiment_args.items()
+    }
+    stride = sum(widths.values())
+    offset = sum(widths[key] for key in children[:children.index(name)])
+    indexes = [
+        node * stride + offset + rank
+        for node in range(nodes)
+        for rank in range(widths[name])
+    ]
+    return pg, [bundles[i] for i in indexes], [gpu_ids[i] for i in indexes]
 
 
 class _ConsumerObservations:
@@ -321,36 +354,11 @@ def experiment_contract(contract, name):
 
 
 def _fence_group(group, statuses, timeout=30):
-    # Single-node scope: the probe is pinned to the trainer's actual node, not
-    # the driver's placement or a hostname copied from a configuration.
-    from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
-
-    node_ip = statuses[0]["node_ip"]
-    node_id = next(
-        node["NodeID"]
-        for node in ray.nodes()
-        if node["Alive"] and node["NodeManagerAddress"] == node_ip
-    )
-    probe = _OwnerFenceProbe.options(
-        scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=node_id, soft=False)
-    ).remote()
-    deadline = time.monotonic() + timeout
-    try:
-        for actor in group._actor_handlers:
-            ray.kill(actor, no_restart=True)
-        while (remaining := deadline - time.monotonic()) > 0:
-            if ray.get(
-                probe.exited.remote([item["pid"] for item in statuses]),
-                timeout=min(5, remaining),
-            ):
-                return
-            time.sleep(0.05)
-        raise TimeoutError("experiment read owners did not exit; source withdrawal is unsafe")
-    finally:
-        try:
-            ray.kill(probe, no_restart=True)
-        except Exception:
-            logger.exception("Failed to close experiment owner probe")
+    for actor in group._actor_handlers:
+        ray.kill(actor, no_restart=True)
+    # Every node is probed using the initialized actor's immutable node identity.
+    # With shared readers, an unobserved remote exit keeps source ownership live.
+    return wait_for_owner_exit(statuses, timeout=timeout)
 
 
 def _finish_experiment(group, statuses, hub, name, *, graceful):
@@ -364,6 +372,35 @@ def _finish_experiment(group, statuses, hub, name, *, graceful):
     _fence_group(group, statuses)
     ray.get(hub.retire.remote(name, owners_fenced=True), timeout=30)
     return close_error
+
+
+def preflight_multi_draft(args, plan):
+    """Validate every child and the total reservation before starting models."""
+    from aspec.ray.node_local_files import close_stores
+    from aspec.train_entry import _prepare_run_directory
+
+    if args.cluster_mode != "static_multi_node":
+        raise ValueError("shared --preflight-only requires static_multi_node")
+    run_id = f"uuid:{uuid.uuid4()}"
+    attempt_id = f"uuid:{uuid.uuid4()}"
+    experiments = {name: child.to_runtime_args() for name, child in plan.plans.items()}
+    source = copy.copy(args)
+    report = {"schema_version": "aspec.multi-draft-preflight/v1", "plan_id": plan.plan_id,
+              "state": "validated", "experiments": {}}
+    with ExitStack() as cleanup:
+        for child in [*experiments.values(), source]:
+            child.aspec_run_id, child.aspec_attempt_id = run_id, attempt_id
+            cleanup.callback(close_stores, child)
+        for name, child in experiments.items():
+            _prepare_run_directory(child.output_dir)
+            report["experiments"][name] = run_cluster_preflight(child)
+        report["shared_source"] = run_cluster_preflight(source)
+        destination = Path(args.output_dir) / "cluster-preflight.json"
+        temporary = destination.with_suffix(".tmp")
+        temporary.write_text(json.dumps(report, indent=2) + "\n")
+        os.replace(temporary, destination)
+        print(json.dumps(report, indent=2))
+        return report
 
 
 def run_multi_draft(args, plan: MultiDraftPlan):
@@ -430,26 +467,32 @@ def run_multi_draft(args, plan: MultiDraftPlan):
             _prepare_run_directory(child.output_dir)
             _save_config_snapshot(plan.configs[name])
             save_execution_plan(child_plan, Path(child.output_dir) / "plan.json")
-            child.draft_model_config_obj = _get_draft_model_config(child)
-            _validate_and_configure_dflash(child, child.draft_model_config_obj)
-            experiment_args[name] = child
             recorders[name] = RunEvidenceRecorder(
                 child_plan, child.output_dir, run_id=run_id, attempt_id=attempt_id
             )
+            experiment_args[name] = child
+            preflight = run_cluster_preflight(child)
+            if preflight is not None:
+                recorders[name].record_cluster_preflight(preflight)
+                session.setdefault("cluster_preflight", {})[name] = preflight
+            child.draft_model_config_obj = _get_draft_model_config(child)
+            _validate_and_configure_dflash(child, child.draft_model_config_obj)
 
-        # One immutable full-layout source; each experiment chooses CP views.
-        # No duplicate Target forward or full-feature destination copy.
+        # Capture full-layout features; each experiment reads its own CP view.
         if any(getattr(child, "draft_context_parallel_size", 1) > 1 for child in experiment_args.values()):
             source_args.draft_context_parallel_size = 1
             source_args.sp_size = 1
         source_args.training_num_gpus_per_node = sum(
-            child.world_size for child in experiment_args.values()
+            int(getattr(child, "training_num_gpus_per_node", child.world_size))
+            for child in experiment_args.values()
         )
-        source_args.world_size = source_args.training_num_gpus_per_node
+        source_args.world_size = sum(child.world_size for child in experiment_args.values())
+        if getattr(source_args, "cluster_mode", "single_node") == "static_multi_node":
+            session["source_cluster_preflight"] = run_cluster_preflight(source_args)
         source_args.num_train_steps = None  # demand comes from the per-experiment budgets
         source_args.aspec_shared_source = True
         hub = SharedSourceController.options(
-            runtime_env={"env_vars": get_aspec_env_vars()},
+            runtime_env={"env_vars": get_aspec_env_vars(source_args)},
             name=f"shared-source-{run_id.removeprefix('uuid:')}",
             namespace="aspec",
         ).remote(source_args, experiment_args)
@@ -464,30 +507,29 @@ def run_multi_draft(args, plan: MultiDraftPlan):
         for child in experiment_args.values():
             auto_calculate_training_steps(child, dataset_size)
         pgs = create_placement_groups(source_args)
-        session["gpu_node_id"] = require_single_gpu_node(pgs)
+        if getattr(source_args, "cluster_mode", "single_node") == "single_node":
+            session["gpu_node_id"] = require_single_gpu_node(pgs)
         launch_mooncake_master(source_args)
         mooncake = build_mooncake_config(source_args)
         source_args.draft_model_config_obj = next(
             iter(experiment_args.values())
         ).draft_model_config_obj
         _validate_and_configure_dflash(source_args, source_args.draft_model_config_obj)
-        training_pg, bundles, gpu_ids = pgs["training"]
-        offset = 0
+
         init_refs = {}
         for name, child in experiment_args.items():
             width = child.world_size
             allocation_in_progress = True
             group = allocate_train_group(
                 child,
-                1,
-                width,
-                (training_pg, bundles[offset : offset + width], gpu_ids[offset : offset + width]),
+                int(getattr(child, "training_num_nodes", 1)),
+                int(getattr(child, "training_num_gpus_per_node", width)),
+                experiment_gpu_allocation(pgs["training"], experiment_args, name),
                 TrainerActor,
             )
             groups[name] = group
             allocation_in_progress = False
             actor_statuses[name] = group.get_status()
-            offset += width
             destination = copy.deepcopy(mooncake)
             destination.gpu_buffer_size = build_mooncake_config(child).gpu_buffer_size
             destination_configs[name] = destination
@@ -557,12 +599,17 @@ def run_multi_draft(args, plan: MultiDraftPlan):
         if not running_names:
             raise RuntimeError("all Draft experiments failed to initialize")
         manager = AsyncInferenceManager.options(
-            runtime_env={"env_vars": get_aspec_env_vars()}
+            runtime_env={"env_vars": get_aspec_env_vars(source_args)}
         ).remote(
             source_args,
             hub,
             inference_engines=engines,
             max_concurrent_batches=source_args.max_concurrent_batches,
+            inference_engine_nodes=(
+                [status["node_ip"] for status in producer_placements]
+                if getattr(source_args, "cluster_mode", "single_node") == "static_multi_node"
+                else None
+            ),
         )
         manager_future = manager.run.remote()
         training_started = True  # Eval capture can already publish registered source readers.
@@ -806,6 +853,10 @@ def run_multi_draft(args, plan: MultiDraftPlan):
             if hub is not None:
                 cleanup(lambda: ray.get(hub.close_queues.remote(), timeout=10))
                 cleanup(lambda: ray.kill(hub, no_restart=True))
+            from aspec.ray.node_local_files import close_stores
+
+            for child in [source_args, *experiment_args.values()]:
+                cleanup(lambda child=child: close_stores(child))
             unique_pgs = {item[0].id: item[0] for item in pgs.values()}
             for pg in unique_pgs.values():
                 cleanup(lambda pg=pg: ray.util.remove_placement_group(pg))
@@ -822,6 +873,11 @@ def run_multi_draft(args, plan: MultiDraftPlan):
         session["budget_gpu_hours"] = allocated_gpus * session["wall_seconds"] / 3600
         try:
             persist_session()
+            if training_started and not owners_fenced:
+                raise SourceTeardownBlockedError([
+                    status for name, statuses in actor_statuses.items()
+                    if name not in fenced_groups for status in statuses
+                ])
         finally:
             for key, value in previous_environment.items():
                 if value is None:

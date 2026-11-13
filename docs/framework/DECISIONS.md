@@ -32,8 +32,9 @@ These decisions describe the maintained implementation and its public behavior.
   ASpec-managed artifacts. Exact resume uses a new run directory and a complete checkpoint.
   Unrelated files do not force rejection; implicit overwrite is unsupported.
 - **Sharing and clusters.** Compatible Target capture can serve independently progressing Drafts.
-  Shared mode is single-node. Multi-node single-Draft mode uses static homogeneous membership,
-  node-local model parallelism and fail-stop attempt recovery; node-local feature affinity is a
+  Shared mode supports single-node and static multi-node execution with independent packing.
+  Multi-node Target requests capture one original document at a time. Multi-node execution uses static
+  homogeneous membership, node-local model parallelism and checkpoint-based restart; node-local feature affinity is a
   required capability, with no remote feature substitution.
 - **Algorithms and assets.** EAGLE3/4, DFlash2 and native MTP retain their own objectives and
   state identities. CSA/QSA/DSA stages use explicit weights-only transitions. DSA uses per-query raw-token
@@ -52,9 +53,10 @@ These decisions describe the maintained implementation and its public behavior.
 Public behavior changes require corresponding guide/config updates and executable verification.
 
 - **Training recipes.** Maintain the [recipe catalog](../user-guide/recipes.md), including
-  Ling tiny/flash 3.0/flash 3.1, Native MTP, EAGLE3/4, one Qwen3.8-27B long-context CP2 lane and one
-  two-node node-local lane. Separate full training defaults, bounded validation overrides and
-  supplementary examples. Validate training, recovery and asset behavior when changing a recipe.
+  Ling tiny/flash 3.0/flash 3.1, Native MTP, EAGLE3/4, one Qwen3.8-27B long-context CP2 lane and
+  two-node node-local lanes for single and multiple Drafts. Separate full training defaults,
+  bounded validation overrides and supplementary examples. Validate training, recovery and asset
+  behavior when changing a recipe.
 
 - **Multi-node portability.** The release recipe requires no shared filesystem. `cluster.storage_mode=node_local`
   checks input replicas and exchanges checkpoint shards explicitly; `shared` retains the older optional

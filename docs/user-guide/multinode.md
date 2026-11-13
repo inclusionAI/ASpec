@@ -3,7 +3,8 @@
 The node-local recipe uses **independent local storage**, not a cross-node shared filesystem. It places
 4 Target + 4 Draft GPUs on each of two compatible eight-GPU nodes. Features remain on their production
 node over NVLink; Draft gradients synchronize across nodes. Use a dedicated Ray cluster on a trusted
-private network. Shared multi-Draft execution remains single-node.
+private network. For independent Draft experiments sharing Target features, use the
+[multi-Draft recipe](sharing.md#static-multi-node-sharing).
 Unused-output disposal follows the same locality rule: the runtime selects a consumer on the
 producer's node and rejects missing or unmatched placement metadata.
 
