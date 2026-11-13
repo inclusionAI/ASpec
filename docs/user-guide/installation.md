@@ -112,5 +112,5 @@ Target environment location; independent startup only needs a service address. B
 the same Target interface and support checkpoint restoration. Logs go to `target-service.log`
 inside the run directory. Existing services are never adopted or stopped by the supervisor.
 Quickstart also accepts `--managed-target /absolute/path/to/target-venv/bin/python`.
-For managed-local, select the combined Draft and Target GPUs; the supervisor splits them
-according to the configured counts and placement order.
+For managed-local, use a single-node Draft Ray runtime and select the combined Draft
+and Target GPUs. The supervisor splits them according to the configured counts and placement order.

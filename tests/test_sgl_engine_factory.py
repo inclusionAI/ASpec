@@ -132,6 +132,7 @@ class TestSglEngineTopology:
             patch("aspec.inference.factory.get_aspec_env_vars", return_value={}),
             patch("aspec.inference.factory._alive_worker_engines", []) as alive_workers,
         ):
+            mock_ray.get_runtime_context.return_value.get_node_id.return_value = "ab" * 28
             mock_ray.remote.side_effect = mock_ray_remote
             next_port = 10000
 

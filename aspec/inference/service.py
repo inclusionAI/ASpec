@@ -134,17 +134,21 @@ class TargetService:
             self.engines[key] = {"actor": actor, "state": "creating", "session": session,
                                  "gpus": gpus, "heartbeat": time.monotonic(),
                                  "owners": getattr(args, "aspec_read_owners", None),
-                                 "status": {}, "features": {}, "active": 1, "processes": {}}
+                                 "status": {}, "features": {}, "active": 1, "processes": {},
+                                 "generation_admitted": False}
             self.claims.update({gpu: key for gpu in gpus})
         try:
             status = ray.get(actor.get_status.remote(), timeout=120)
+            pid = status["pid"]
+            if os.getpgid(pid) != pid:
+                raise RuntimeError("Target worker requires its own Ray process group")
             with self.lock:
+                self.engines[key]["pgid"] = pid
+                self.engines[key]["processes"][pid] = status["created"]
                 self.engines[key]["status"] = status
                 self.engines[key]["heartbeat"] = time.monotonic()
                 if self.engines[key]["state"] == "creating":
                     self.engines[key]["state"] = "created"
-                if status.get("pid") and status.get("created"):
-                    self.engines[key]["processes"][status["pid"]] = status["created"]
         except BaseException:
             # SglEngine's constructor loads no model or source buffers. Failure
             # here precedes init/publication, so this creation can be rolled back.
@@ -188,8 +192,14 @@ class TargetService:
                 if method in ("get_feature_contract_status", "prepare_feature_contract_status"):
                     return item["features"]
                 raise RuntimeError("Target engine is closed")
-            if item["state"] in ("creating", "retained", "closing", "terminating") and method != "shutdown":
+            if item["state"] in ("creating", "retained", "closing", "terminating"):
                 raise RuntimeError("Target engine is retained pending safe cleanup")
+            if self.draining and method in ("init", "generate"):
+                raise RuntimeError("Target service is draining")
+            if method == "generate":
+                # From admission onward a descriptor may have reached a reader,
+                # even if the caller never received its reply.
+                item["generation_admitted"] = True
             if method == "shutdown":
                 if item["active"]:
                     raise RuntimeError("Target still has active calls; drain before shutdown")
@@ -216,11 +226,13 @@ class TargetService:
                         self.claims.pop(gpu)
                     logger.info("Target session %s engine %s closed", item["session"], key)
             return result
-        except BaseException:
-            if method == "shutdown":
-                with self.lock:
-                    if item["state"] == "closing":
-                        item["state"] = "retained"
+        except BaseException as error:
+            with self.lock:
+                # Timing out a ray.get leaves the submitted operation in flight.
+                if ((isinstance(error, ray.exceptions.GetTimeoutError)
+                     and item["state"] in ("created", "ready", "closing"))
+                        or (method == "shutdown" and item["state"] == "closing")):
+                    item["state"] = "retained"
             raise
         finally:
             with self.lock:
@@ -245,9 +257,11 @@ class TargetService:
         try:
             ray.kill(item["actor"], no_restart=True)
             stop_owned_processes(processes)
+            wait_for_process_group_exit(item["pgid"])
             with self.lock:
                 item["state"] = "closed"
-                item["terminal_reason"] = "readers_fenced_sources_exited"
+                item["terminal_reason"] = ("readers_fenced_sources_exited" if item["generation_admitted"]
+                                           else "unused_sources_exited")
                 for gpu in item["gpus"]:
                     self.claims.pop(gpu, None)
         except BaseException:
@@ -277,9 +291,11 @@ class TargetService:
             for _, item in candidates:
                 item["state"] = "retained"
         for key, item in candidates:
-            if readers_exited(item["owners"], get_current_node_ip()):
-                logger.warning("Fenced disconnected session %s; cancelling Target %s", item["session"], key)
-                self._force_shutdown(key)
+            if not item["generation_admitted"] or readers_exited(item["owners"], get_current_node_ip()):
+                try:
+                    self._force_shutdown(key)
+                except Exception:
+                    logger.exception("Could not reclaim disconnected Target %s; retaining its lease", key)
 
     def idle(self):
         with self.lock:
@@ -347,6 +363,19 @@ def stop_owned_processes(identities):
             return
     if alive():
         raise RuntimeError("Owned Target source process exit remains unverified")
+
+
+def wait_for_process_group_exit(pgid):
+    """Ray kills the worker group on exit, including scheduler children forked during teardown."""
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            os.killpg(pgid, 0)  # Probe only. PID reuse can delay release, never signal another job.
+        except ProcessLookupError:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Target worker process group exit remains unverified")
+        time.sleep(0.05)
 
 
 def http_server(service, host, port):

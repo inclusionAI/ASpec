@@ -206,3 +206,24 @@ def test_target_address_is_recorded_in_plan_without_opposing_interpreter(monkeyp
     inference = plan.to_dict()["policy"]["resources"]["inference"]
     assert "python_executable" not in inference
     assert inference["target_service"]["mode"] == "external"
+
+
+def test_partial_target_preparation_rolls_back_every_created_facade():
+    from unittest.mock import MagicMock, call
+
+    from aspec.inference.factory import _prepare_sgl_engines
+
+    args = Namespace(inference_num_gpus=2, inference_num_gpus_per_engine=1)
+    first, second = MagicMock(), MagicMock()
+    with patch("aspec.inference.factory.ray") as ray:
+        ray.get_runtime_context.return_value.get_node_id.return_value = "ab" * 28
+        actor = ray.remote.return_value
+        actor.options.return_value.remote.side_effect = [first, second]
+        ray.get.side_effect = [30001, RuntimeError("port probe failed"), None, None]
+        with pytest.raises(RuntimeError, match="port probe failed"):
+            _prepare_sgl_engines(args, None)
+    for engine in (first, second):
+        engine.init.remote.assert_not_called()
+        engine.shutdown.remote.assert_called_once_with(force=True)
+    assert ray.kill.call_args_list == [call(first, no_restart=True), call(second, no_restart=True)]
+    assert actor.options.call_args.kwargs["scheduling_strategy"].node_id == "ab" * 28

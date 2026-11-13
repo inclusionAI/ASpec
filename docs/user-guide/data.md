@@ -3,9 +3,6 @@
 Target generation, training rows and decode prefixes have different boundaries. Bundled synthetic
 data is a smoke fixture, not a quality recipe.
 
-Run `aspec prepare-target-data` in the Target environment.
-Other local preprocessing commands run in Draft.
-
 ## Conversations
 
 One JSON object per JSONL line:
@@ -27,11 +24,16 @@ The Qwen3-8B quality recipe generates answers from the actual Target, saving exa
 IDs, generated IDs, supervision and a resumable manifest. Original assistant answers are not input.
 
 ```bash
+# Draft environment
 aspec prepare-data --output-dir data/raw
+
+# Target environment
 aspec prepare-target-data --target /path/to/Qwen3-8B \
   --train-data data/raw/open_perfectblend_train_65536.jsonl \
   --eval-data data/raw/open_perfectblend_eval_1024.jsonl \
   --output-dir data/target-generated --dp 8
+
+# Draft environment
 aspec convert-data \
   data/target-generated/train.jsonl data/target-generated/train.parquet --batch-rows 256
 aspec convert-data \

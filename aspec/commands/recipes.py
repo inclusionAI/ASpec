@@ -409,9 +409,8 @@ def run_acceptance(recipe, entry, output, steps, *, inputs, prepared_config=None
                     if recipe == "shared-target":
                         from omegaconf import OmegaConf
 
-                        experiments = OmegaConf.to_container(
-                            OmegaConf.load(ROOT / config).experiments, resolve=True
-                        )
+                        first = OmegaConf.load(stage / "first" / "config.yaml")
+                        experiments = OmegaConf.to_container(first.experiments, resolve=True)
                         for experiment in experiments:
                             experiment.setdefault("training", {})["load_path"] = str(
                                 stage / "first" / experiment["name"] / "checkpoints"

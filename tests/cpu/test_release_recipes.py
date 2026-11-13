@@ -390,3 +390,32 @@ def test_resume_audit_compares_saved_scheduler_state(tmp_path, monkeypatch, sche
         message = "LR scheduler" if not scheduler_matches else "Checkpoint state/RNG"
         with pytest.raises(ValueError, match=message):
             recipes.audit_run(resumed, 8, resumed=True, expected_ranks=1)
+
+
+def test_shared_acceptance_resumes_effective_experiments(tmp_path, monkeypatch):
+    from aspec.commands import recipes as command
+
+    experiments = [{"name": "renamed_a", "training": {"lr": 0.007}}, {"name": "renamed_b"}]
+    override = "experiments=" + json.dumps(experiments)
+    runs = []
+
+    def execute(argv, _log):
+        if "aspec.commands._recipe_smoke" not in argv:
+            return
+        run = argv[argv.index("--output") + 1]
+        config = OmegaConf.merge(OmegaConf.load(argv[argv.index("--config") + 1]),
+                                 OmegaConf.from_dotlist(argv[argv.index("--gpus") + 2:]))
+        run.mkdir()
+        OmegaConf.save(config, run / "config.yaml")
+        runs.append(OmegaConf.to_container(config.experiments))
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+    monkeypatch.setattr(command, "execute", execute)
+    monkeypatch.setattr(command, "audit_run", lambda *_a, **_kw: [])
+    output = tmp_path / "run"
+    command.run_acceptance("shared-target", command.catalog()["shared-target"], output, 4,
+                           inputs={}, overrides=[override])
+    assert runs[0] == experiments
+    for original, resumed in zip(experiments, runs[1], strict=True):
+        checkpoint = output / "stage-1/first" / original["name"] / "checkpoints"
+        assert resumed == {**original, "training": {**original.get("training", {}), "load_path": str(checkpoint)}}

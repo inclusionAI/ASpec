@@ -123,7 +123,8 @@ def service(monkeypatch):
     import aspec.inference.service as module
 
     handle = MagicMock()
-    handle.get_status.remote.return_value = {"initialized": True}
+    handle.get_status.remote.return_value = {"initialized": True, "pid": 999999999, "created": 1.0}
+    monkeypatch.setattr(module.os, "getpgid", lambda pid: pid)
     handle.shutdown.remote.return_value = None
     actor = MagicMock()
     actor.options.return_value.remote.return_value = handle
@@ -271,6 +272,7 @@ def test_shared_source_view_flags_follow_the_consumer_contract_ids(second, views
 
 def test_disconnect_retains_unverified_reader_storage(service, monkeypatch):
     service.create(creation(service))
+    service.call("engine", "generate", [], {})
     service.engines["engine"]["processes"] = {999999999: 1.0}
     service.reap_disconnected(expiry=-1)
     assert service.engines["engine"]["state"] == "retained"
@@ -286,6 +288,7 @@ def test_failed_source_actor_is_retired_only_after_reader_fence(service, monkeyp
     import ray
 
     service.create(creation(service))
+    service.call("engine", "generate", [], {})
     item = service.engines["engine"]
     item["processes"] = {999999999: 1.0}
     service.test_handle.shutdown.remote.side_effect = ray.exceptions.RayActorError("actor exited")
@@ -307,6 +310,7 @@ def test_disconnected_fenced_source_bypasses_a_stalled_native_drain(service, mon
     import ray
 
     service.create(creation(service))
+    service.call("engine", "generate", [], {})
     item = service.engines["engine"]
     item["processes"] = {999999999: 1.0}
     service.test_handle.shutdown.remote.side_effect = ray.exceptions.GetTimeoutError("native drain")
@@ -321,6 +325,7 @@ def test_disconnected_fenced_source_bypasses_a_stalled_native_drain(service, mon
 
 def test_disconnected_fenced_source_is_retired_with_an_active_generation(service, monkeypatch):
     service.create(creation(service))
+    service.call("engine", "generate", [], {})
     item = service.engines["engine"]
     item.update(processes={999999999: 1.0}, active=1, state="ready")
     monkeypatch.setattr("aspec.inference.service.readers_exited", lambda *_: False)
@@ -388,6 +393,7 @@ def test_fenced_force_shutdown_stops_owned_processes_without_a_native_drain(serv
     import aspec.inference.service as module
 
     service.create(creation(service))
+    service.call("engine", "generate", [], {})
     item = service.engines["engine"]
     item.update(processes={999999999: 1.0}, active=1)
     observe, stop = MagicMock(), MagicMock()
@@ -412,6 +418,8 @@ def test_force_shutdown_retains_lease_until_source_exit_is_observed(service, mon
         item["processes"] = {999999999: 1.0}
         monkeypatch.setattr("aspec.inference.service.stop_owned_processes",
                             MagicMock(side_effect=RuntimeError("source alive")))
+    else:
+        item["processes"].clear()
     with pytest.raises(RuntimeError, match="source alive|identities are unknown"):
         service.call("engine", "shutdown", [], {"force": True})
     assert item["state"] == "retained" and service.claims
@@ -550,7 +558,7 @@ def test_real_http_control_roundtrip_and_unknown_method(service, method):
         assert request(address, "/v1/info")["runtime"] == service.runtime
         request(address, "/v1/engines", creation(service))
         assert request(address, "/v1/call", {"key": "engine", "method": "get_status",
-                                             "args": [], "kwargs": {}}) == {"initialized": True}
+                                             "args": [], "kwargs": {}}) == service.test_handle.get_status.remote.return_value
         with pytest.raises(RuntimeError, match="Unknown Target control method"):
             request(address, "/v1/call", {"key": "engine", "method": method,
                                           "args": [], "kwargs": {}})
@@ -603,3 +611,121 @@ def test_managed_supervisor_splits_gpu_visibility_and_restores_parent(monkeypatc
         assert popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "5"
         process.poll.return_value = 0
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "4,5"
+
+
+@pytest.mark.parametrize("method", ["init", "generate"])
+def test_draining_service_rejects_new_work_and_accepts_cleanup(service, method):
+    service.create(creation(service))
+    service.draining = True
+    with pytest.raises(RuntimeError, match="draining"):
+        service.call("engine", method, [], {})
+    getattr(service.test_handle, method).remote.assert_not_called()
+    service.call("engine", "get_status", [], {})
+    service.call("engine", "shutdown", [], {})
+    assert service.idle()
+
+
+def test_generation_timeout_requires_fenced_shutdown(service, monkeypatch):
+    from aspec.inference import service as module
+
+    service.create(creation(service))
+    monkeypatch.setattr(module.ray, "get", MagicMock(side_effect=module.ray.exceptions.GetTimeoutError()))
+    with pytest.raises(module.ray.exceptions.GetTimeoutError):
+        service.call("engine", "generate", [], {})
+    with pytest.raises(RuntimeError, match="retained"):
+        service.call("engine", "shutdown", [], {})
+    service.reap_disconnected(expiry=-1)
+    assert not service.idle()
+    service.test_handle.shutdown.remote.assert_not_called()
+    service.call("engine", "shutdown", [], {"force": True})
+    assert service.idle()
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+def test_disconnected_startup_without_generation_releases_remote_readers_lease(service, initialized):
+    value = creation(service)
+    value["arguments"]["aspec_read_owners"] = [{"node_ip": "remote"}]
+    service.create(value)
+    if initialized:
+        service.call("engine", "init", [], {})
+    service.reap_disconnected(expiry=-1)
+    assert service.idle()
+    assert service.engines["engine"]["terminal_reason"] == "unused_sources_exited"
+
+
+def test_force_retains_claim_until_late_worker_group_member_exits(service, monkeypatch):
+    from aspec.inference import service as module
+
+    service.create(creation(service))
+    probe = MagicMock()
+    monkeypatch.setattr(module.os, "killpg", probe)
+    monkeypatch.setattr(module.time, "monotonic", iter(range(0, 1000, 11)).__next__)
+    with pytest.raises(RuntimeError, match="process group exit"):
+        service.call("engine", "shutdown", [], {"force": True})
+    assert service.claims == {0: "engine"} and service.engines["engine"]["state"] == "retained"
+    probe.assert_called_once_with(999999999, 0)
+    probe.side_effect = ProcessLookupError()
+    service.call("engine", "shutdown", [], {"force": True})
+    assert service.idle()
+
+
+def test_control_status_does_not_block_other_facade_requests(monkeypatch):
+    import asyncio
+
+    from aspec.inference import service_client
+
+    started, release = threading.Event(), threading.Event()
+
+    def request(_address, _path, payload, **_):
+        if payload["method"] == "get_status":
+            started.set()
+            assert release.wait(5)
+            return {}
+        return True
+
+    monkeypatch.setattr(service_client, "request", request)
+    client = service_client.TargetServiceClient.__new__(service_client.TargetServiceClient)
+    client.address, client.key, client.timeout = "http://target:30000", "key", 5
+
+    async def run():
+        status = asyncio.create_task(client.get_status())
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            assert await asyncio.wait_for(client.health_check(), timeout=2)
+            assert not status.done()
+        finally:
+            release.set()
+            await status
+
+    asyncio.run(run())
+
+
+def test_sigterm_during_managed_readiness_stops_only_owned_target(monkeypatch, tmp_path):
+    import signal
+
+    from aspec import train_entry
+    from aspec.inference import managed
+    from aspec.runtime_control import TerminationRequested
+
+    args = Namespace(target_service={"mode": "managed-local", "address": "http://127.0.0.1:30000",
+                                     "python_executable": "/target/bin/python"},
+                     output_dir=str(tmp_path), target_model_path="qwen",
+                     training_num_nodes=1, training_num_gpus_per_node=1, inference_num_gpus=1)
+    process = MagicMock()
+    process.poll.return_value = None
+    process.send_signal.side_effect = lambda sig: setattr(process.poll, "return_value", -sig)
+    monkeypatch.setattr(train_entry, "_prepare_config", lambda: (args, object()))
+    monkeypatch.setattr(managed.subprocess, "Popen", lambda *_a, **_kw: process)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,6")
+    def request(*_args, **_kwargs):
+        if not process.poll.called:
+            raise OSError("no existing service")
+        signal.raise_signal(signal.SIGTERM)
+
+    monkeypatch.setattr(managed, "request", request)
+    previous = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(TerminationRequested):
+        train_entry.main()
+    process.send_signal.assert_called_once_with(signal.SIGTERM)
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "4,6"
+    assert signal.getsignal(signal.SIGTERM) == previous

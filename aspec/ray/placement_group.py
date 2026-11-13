@@ -560,6 +560,11 @@ def create_placement_groups(args, roles: set[str] | None = None):
     _ensure_ray_initialized()
 
     if getattr(args, "inference_engine_type", None) == "sgl":
+        managed_local = (getattr(args, "target_service", None) or {}).get("mode") == "managed-local"
+        if managed_local:
+            live_nodes = [node for node in ray.nodes() if node.get("Alive")]
+            if len(live_nodes) != 1 or live_nodes[0]["NodeID"] != ray.get_runtime_context().get_node_id():
+                raise ValueError("managed-local requires Draft Ray on the coordinator node only")
         # Target owns its own CUDA-visible pool. A control proxy has no GPU
         # reservation in Draft's Ray cluster, including for remote services.
         _validate_custom_strategy_usage(args)
@@ -581,6 +586,13 @@ def create_placement_groups(args, roles: set[str] | None = None):
             )
         else:
             result["training"] = _create_placement_group(count, strategy="PACK", name="training_pg")
+        if managed_local:
+            from aspec.utils.misc import visible_gpu_ids
+
+            allocated = {int(gpu) for gpu in result["training"][2]}
+            if allocated != set(visible_gpu_ids()):
+                ray.util.remove_placement_group(result["training"][0])
+                raise ValueError("Draft Ray GPU allocation differs from the managed-local GPU split")
         return result
 
     if len(roles) == 1:

@@ -48,50 +48,50 @@ class TargetServiceClient:
                 # Calls fail visibly; a heartbeat never retries a generation request.
                 pass
 
-    def _call(self, method, *args, **kwargs):
-        return request(self.address, "/v1/call", {
+    async def _call(self, method, *args, **kwargs):
+        return await asyncio.to_thread(request, self.address, "/v1/call", {
             "key": self.key, "method": method, "args": args, "kwargs": kwargs,
         }, timeout=self.timeout)
 
     async def init(self, **kwargs):
-        return await asyncio.to_thread(self._call, "init", **kwargs)
+        return await self._call("init", **kwargs)
 
     async def generate(self, *args, **kwargs):
         # ObjectRefs are resolved inside Draft's Ray job, never serialized to Target.
         if isinstance(kwargs.get("input_ids_ref"), ray.ObjectRef):
             kwargs["input_ids_ref"] = await kwargs["input_ids_ref"]
-        return await asyncio.to_thread(self._call, "generate", *args, **kwargs)
+        return await self._call("generate", *args, **kwargs)
 
-    def get_node_ip(self):
-        return self._call("get_node_ip")
+    async def get_node_ip(self):
+        return await self._call("get_node_ip")
 
-    def find_free_port(self, *args, **kwargs):
-        return self._call("find_free_port", *args, **kwargs)
+    async def find_free_port(self, *args, **kwargs):
+        return await self._call("find_free_port", *args, **kwargs)
 
-    def get_status(self):
-        status = self._call("get_status")
+    async def get_status(self):
+        status = await self._call("get_status")
         status["target_service"] = {"address": self.address, "protocol": PROTOCOL}
         return status
 
-    def get_mooncake_config(self):
+    async def get_mooncake_config(self):
         from aspec.config.mooncake_config import MooncakeConfig
 
-        value = self._call("get_mooncake_config")
+        value = await self._call("get_mooncake_config")
         return MooncakeConfig(**value) if value else None
 
-    def get_feature_contract_status(self):
-        return self._call("get_feature_contract_status")
+    async def get_feature_contract_status(self):
+        return await self._call("get_feature_contract_status")
 
     async def prepare_feature_contract_status(self):
-        return await asyncio.to_thread(self._call, "prepare_feature_contract_status")
+        return await self._call("prepare_feature_contract_status")
 
-    def health_check(self, **kwargs):
-        return self._call("health_check", **kwargs)
+    async def health_check(self, **kwargs):
+        return await self._call("health_check", **kwargs)
 
     async def shutdown(self, *, force=False):
         kwargs = {"force": True} if force else {}
         try:
-            result = await asyncio.to_thread(self._call, "shutdown", **kwargs)
+            result = await self._call("shutdown", **kwargs)
         except OSError:
             if not force or self._fail_stop_node is None:
                 raise

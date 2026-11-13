@@ -386,3 +386,31 @@ def test_placement_ready_and_probe_share_a_bounded_budget():
     assert len(waits) == 2 and waits[1] <= waits[0]
     kill.assert_called_once_with(probe, no_restart=True)
     remove.assert_not_called()
+
+
+@pytest.mark.parametrize("nodes,assigned,expected_error", [
+    (["here", "other"], [4, 6], "coordinator node only"),
+    (["here"], [0, 1], "GPU split"),
+    (["here"], [6, 4], None),
+])
+def test_managed_target_checks_actual_draft_allocation(monkeypatch, nodes, assigned, expected_error):
+    args = _make_args(inference_engine_type="sgl", target_service={"mode": "managed-local"})
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,6")
+    reservation = (object(), [0, 1], assigned)
+    with (
+        patch.object(placement, "_ensure_ray_initialized"),
+        patch.object(placement, "_wait_for_gpu_resources"),
+        patch.object(placement, "_create_placement_group", return_value=reservation) as reserve,
+        patch.object(placement, "ray") as ray,
+    ):
+        ray.nodes.return_value = [{"NodeID": node, "Alive": True} for node in nodes]
+        ray.get_runtime_context.return_value.get_node_id.return_value = "here"
+        if expected_error:
+            with pytest.raises(ValueError, match=expected_error):
+                create_placement_groups(args)
+        else:
+            assert create_placement_groups(args)["training"] == reservation
+        if len(nodes) > 1:
+            reserve.assert_not_called()
+        elif expected_error:
+            ray.util.remove_placement_group.assert_called_once_with(reservation[0])

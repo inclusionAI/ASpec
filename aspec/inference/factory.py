@@ -261,81 +261,88 @@ def _prepare_sgl_engines(
             raise ValueError("Shared Target readers must be on one physical node")
         shared_node = next(iter(reader_nodes))
 
-    proxy_options = {"num_cpus": 0.2, "num_gpus": 0, "runtime_env": runtime_env}
-    if getattr(args, "cluster_mode", "single_node") == "static_multi_node":
-        # Keep control available on the coordinator when a Target node is lost.
-        proxy_options["scheduling_strategy"] = NodeAffinitySchedulingStrategy(
+    proxy_options = {
+        "num_cpus": 0.2, "num_gpus": 0, "runtime_env": runtime_env,
+        # Loopback addresses refer to the coordinator. Keeping the facade here
+        # also preserves control when a remote Target node is lost.
+        "scheduling_strategy": NodeAffinitySchedulingStrategy(
             node_id=ray.get_runtime_context().get_node_id(), soft=False,
-        )
+        ),
+    }
 
     # Step 1: Create all engine actors (without calling init yet)
     engines = []
-    for i in range(num_engines):
-        node_rank = i % nnodes if nnodes > 1 else 0
+    try:
+        for i in range(num_engines):
+            node_rank = i % nnodes if nnodes > 1 else 0
 
-        node_index = i % nnodes if nnodes > 1 else (
-            i * gpus_per_engine // getattr(args, "inference_num_gpus_per_node", num_gpus_total)
-        )
-        node_ip = node_ips[node_index] if node_ips else shared_node
-
-        engine = SglRayActor.options(**proxy_options).remote(
-            address=addresses.get(node_ip, address),
-            args=args,
-            rank=i,
-            node_ip=node_ip,
-            num_gpus_per_engine=gpus_per_engine,
-            node_rank=node_rank,
-            engine_group=engine_group,
-        )
-        engines.append(engine)
-
-    # Step 2: Auto-negotiate dist_init_addr for each multi-node replica
-    # Uses RayActor.get_node_ip() and .find_free_port() on the node_rank=0 engine
-    dist_init_addrs: dict[int, str] = {}
-    if nnodes > 1:
-        configured_addr = getattr(args, "sglang_dist_init_addr", None)
-        for replica_idx in range(num_replicas):
-            if configured_addr and num_replicas == 1:
-                dist_init_addrs[replica_idx] = configured_addr
-                logger.info(
-                    f"Replica {replica_idx}: using configured dist_init_addr: {configured_addr}"
-                )
-            else:
-                head_engine = engines[replica_idx * nnodes]
-                ip, port = ray.get(
-                    [head_engine.get_node_ip.remote(), head_engine.find_free_port.remote()],
-                    timeout=120,
-                )
-                addr = f"{ip}:{port}"
-                dist_init_addrs[replica_idx] = addr
-                logger.info(f"Replica {replica_idx}: auto-negotiated dist_init_addr: {addr}")
-
-    # Each engine needs two consecutive ports. Spread independent sessions over
-    # the port space instead of all probing 10000 before slow backend startup.
-    # Sequential probes keep this session's engines distinct. This is a free
-    # port probe, not a reservation: a later external bind still fails closed.
-    pre_allocated_ports: dict[int, int] = {}
-    next_start = 10000 + secrets.randbelow(40000)
-    for i in range(num_engines):
-        port = ray.get(
-            engines[i].find_free_port.remote(start_port=next_start, consecutive=2),
-            timeout=120,
-        )
-        pre_allocated_ports[i] = port
-        next_start = port + 2
-        logger.info(f"Engine {i}: pre-allocated ports {port}, {port + 1}")
-
-    # Step 3: Fire init() on all engines (non-blocking)
-    init_handles = []
-    for i, engine in enumerate(engines):
-        replica_idx = i // nnodes if nnodes > 1 else i
-        init_handles.append(
-            engine.init.remote(
-                mooncake_config=mooncake_config,
-                dist_init_addr=dist_init_addrs.get(replica_idx),
-                pre_allocated_port=pre_allocated_ports.get(i),
+            node_index = i % nnodes if nnodes > 1 else (
+                i * gpus_per_engine // getattr(args, "inference_num_gpus_per_node", num_gpus_total)
             )
-        )
+            node_ip = node_ips[node_index] if node_ips else shared_node
+
+            engine = SglRayActor.options(**proxy_options).remote(
+                address=addresses.get(node_ip, address),
+                args=args,
+                rank=i,
+                node_ip=node_ip,
+                num_gpus_per_engine=gpus_per_engine,
+                node_rank=node_rank,
+                engine_group=engine_group,
+            )
+            engines.append(engine)
+
+        # Step 2: Auto-negotiate dist_init_addr for each multi-node replica
+        # Uses RayActor.get_node_ip() and .find_free_port() on the node_rank=0 engine
+        dist_init_addrs: dict[int, str] = {}
+        if nnodes > 1:
+            configured_addr = getattr(args, "sglang_dist_init_addr", None)
+            for replica_idx in range(num_replicas):
+                if configured_addr and num_replicas == 1:
+                    dist_init_addrs[replica_idx] = configured_addr
+                    logger.info(
+                        f"Replica {replica_idx}: using configured dist_init_addr: {configured_addr}"
+                    )
+                else:
+                    head_engine = engines[replica_idx * nnodes]
+                    ip, port = ray.get(
+                        [head_engine.get_node_ip.remote(), head_engine.find_free_port.remote()],
+                        timeout=120,
+                    )
+                    addr = f"{ip}:{port}"
+                    dist_init_addrs[replica_idx] = addr
+                    logger.info(f"Replica {replica_idx}: auto-negotiated dist_init_addr: {addr}")
+
+        # Each engine needs two consecutive ports. Spread independent sessions over
+        # the port space instead of all probing 10000 before slow backend startup.
+        # Sequential probes keep this session's engines distinct. This is a free
+        # port probe, not a reservation: a later external bind still fails closed.
+        pre_allocated_ports: dict[int, int] = {}
+        next_start = 10000 + secrets.randbelow(40000)
+        for i in range(num_engines):
+            port = ray.get(
+                engines[i].find_free_port.remote(start_port=next_start, consecutive=2),
+                timeout=120,
+            )
+            pre_allocated_ports[i] = port
+            next_start = port + 2
+            logger.info(f"Engine {i}: pre-allocated ports {port}, {port + 1}")
+
+        # Step 3: Fire init() on all engines (non-blocking)
+        init_handles = []
+        for i, engine in enumerate(engines):
+            replica_idx = i // nnodes if nnodes > 1 else i
+            init_handles.append(
+                engine.init.remote(
+                    mooncake_config=mooncake_config,
+                    dist_init_addr=dist_init_addrs.get(replica_idx),
+                    pre_allocated_port=pre_allocated_ports.get(i),
+                )
+            )
+
+    except BaseException:
+        rollback_unused_targets(engines)
+        raise
 
     # Separate head/worker engines for multi-node
     if nnodes > 1:
@@ -352,12 +359,32 @@ def _prepare_sgl_engines(
     return engines, init_handles
 
 
+def rollback_unused_targets(engines):
+    """No generation has been dispatched. Retire every acquired Target, including partial init."""
+    for engine in engines:
+        try:
+            ray.get(engine.shutdown.remote(force=True), timeout=30)
+        except Exception:
+            # A lost create/close response is covered by Target's expiry of sessions
+            # with no generation. Dropping the facade stops its heartbeat.
+            logger.exception("Target startup rollback was not acknowledged")
+        finally:
+            try:
+                ray.kill(engine, no_restart=True)
+            except Exception:
+                logger.exception("Could not retire Target control facade")
+
+
 def _init_sgl_engines(args, pg, mooncake_config=None, engine_group: int = 0) -> list:
     """Initialize SGLang engines with Ray placement groups (blocking)."""
     head_engines, init_handles = _prepare_sgl_engines(args, pg, mooncake_config, engine_group)
     nnodes = getattr(args, "sglang_nnodes", 1)
     init_timeout = getattr(args, "sglang_init_timeout", 300 if nnodes == 1 else 600)
-    _wait_for_init(init_handles, "Sgl", timeout=init_timeout)
+    try:
+        _wait_for_init(init_handles, "Sgl", timeout=init_timeout)
+    except BaseException:
+        rollback_unused_targets(head_engines)
+        raise
     return head_engines
 
 
