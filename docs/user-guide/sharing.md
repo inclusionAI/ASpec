@@ -81,13 +81,18 @@ committed frontiers. One child's progress never licenses skipping another child'
 
 ## Static multi-node sharing
 
-Prepare each node and start a task-owned cluster using [multi-node setup](multinode.md).
+Prepare each node's Draft and Target environments and start a task-owned cluster using
+[multi-node setup](multinode.md).
 The multi-Draft recipe uses the same portable model/data/output environment variables and
 independent local filesystems. Run it through the normal configuration entry point:
 
 ```bash
-aspec --config configs/recipes/qwen3_8b_4k_multinode_multi_draft_nvlink.yaml --dry-run
-aspec --config configs/recipes/qwen3_8b_4k_multinode_multi_draft_nvlink.yaml
+# Use the Target service URLs started on the two nodes; adjust the ports if needed.
+export ASPEC_TARGET_SERVICE_ADDRESSES="{\"${ASPEC_NODE_0_IP}\":\"http://${ASPEC_NODE_0_IP}:30000\",\"${ASPEC_NODE_1_IP}\":\"http://${ASPEC_NODE_1_IP}:30000\"}"
+aspec --config configs/recipes/qwen3_8b_4k_multinode_multi_draft_nvlink.yaml --dry-run \
+  inference.target_service.addresses="$ASPEC_TARGET_SERVICE_ADDRESSES"
+aspec --config configs/recipes/qwen3_8b_4k_multinode_multi_draft_nvlink.yaml \
+  inference.target_service.addresses="$ASPEC_TARGET_SERVICE_ADDRESSES"
 ```
 
 All experiments use the same ordered training nodes and Target allocation. Each experiment's
@@ -117,11 +122,12 @@ Keep the owned cluster running across both segments. Set the input environment f
 [multi-node configuration](multinode.md#configure-preflight-and-train), including
 `ASPEC_NODE_0_IP`, `ASPEC_NODE_1_IP`, `ASPEC_TARGET_MODEL`, `ASPEC_DRAFT_CONFIG`,
 `ASPEC_TRAIN_DATA`, `ASPEC_EVAL_DATA`, `ASPEC_CACHE_DIR` and an explicit `RAY_ADDRESS`.
+Keep `ASPEC_TARGET_SERVICE_ADDRESSES` set to the Target service mapping used above.
 Model, data and Draft JSON replicas use the same absolute logical paths on both nodes.
 Reserve eight GPUs per node: four Target GPUs, two for Draft A and two for Draft B.
 
 This walkthrough records TensorBoard curves. Install the optional
-[`tracking` dependency](training.md#tensorboard-and-wb) in each node's environment before starting Ray.
+[`tracking` dependency](training.md#tensorboard-and-wb) in each node's Draft environment before starting Ray.
 
 This example gives A an initial limit of 32 optimizer steps and B a limit of 33, with a full
 LR horizon of 64 from the beginning. The recipe's accumulation of 64 remains in effect:
@@ -137,10 +143,16 @@ Create a complete first-segment configuration without editing the recipe:
 ```bash
 export ASPEC_OUTPUT_DIR=/data/aspec/runs/compare-first
 python - <<'PY'
+import json
+import os
 from pathlib import Path
 from omegaconf import OmegaConf
 
 config = OmegaConf.load("configs/recipes/qwen3_8b_4k_multinode_multi_draft_nvlink.yaml")
+config.inference.target_service = {
+    "mode": "external",
+    "addresses": json.loads(os.environ["ASPEC_TARGET_SERVICE_ADDRESSES"]),
+}
 config.training.num_train_steps = 33
 config.training.lr_total_steps = 64
 config.training.continual_training = False
