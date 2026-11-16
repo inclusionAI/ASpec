@@ -238,6 +238,43 @@ def test_prompt_mask_and_padding_exclude_supervision():
         torch.testing.assert_close(losses[head], ref_losses[head], rtol=2e-5, atol=2e-6)
 
 
+def test_left_padded_rows_match_right_padded_documents():
+    model = make_model()
+    generator = torch.Generator().manual_seed(9)
+    real_length, pad = 6, 2
+    tokens = torch.arange(real_length)[None]
+    features = torch.randn(1, real_length, 16, generator=generator)
+    loss_mask = torch.ones(1, real_length + pad, dtype=torch.long)
+    right = dict(input_ids=torch.cat((tokens, torch.zeros(1, pad, dtype=torch.long)), dim=1),
+                 hidden_states=torch.cat(
+                     (features, torch.randn(1, pad, 16, generator=generator)), dim=1),
+                 attention_mask=torch.cat((torch.ones(1, real_length),
+                                           torch.zeros(1, pad)), dim=1).long(),
+                 loss_mask=loss_mask)
+    # Adversarial: padding positions stay marked supervised in loss_mask.
+    left = dict(input_ids=torch.cat((torch.zeros(1, pad, dtype=torch.long), tokens), dim=1),
+                hidden_states=torch.cat(
+                    (torch.randn(1, pad, 16, generator=generator), features), dim=1),
+                attention_mask=torch.cat((torch.zeros(1, pad),
+                                          torch.ones(1, real_length)), dim=1).long(),
+                loss_mask=loss_mask)
+    right_result = model(**right)
+    left_result = model(**left)
+    for head in range(model.num_heads):
+        assert int(right_result[3][head]) == max(0, real_length - (head + 2))
+        assert int(left_result[3][head]) == int(right_result[3][head])
+        torch.testing.assert_close(left_result[0][head], right_result[0][head],
+                                   rtol=0, atol=0)
+
+
+def test_non_contiguous_positions_fail_closed():
+    model = make_model()
+    inputs = make_inputs(batch=1)
+    inputs["attention_mask"][0, 4] = 0
+    with pytest.raises(ValueError):
+        model(**inputs)
+
+
 def test_rows_are_independent_documents():
     model = make_model()
     inputs = make_inputs()
@@ -319,6 +356,27 @@ def test_gradient_checkpointing_preserves_loss_and_gradients():
     _assert_parameter_gradients(plain, checked)
 
 
+def test_gradient_checkpointing_dispatches_on_the_flag(monkeypatch):
+    import aspec.models.medusa as medusa_module
+
+    original = medusa_module.checkpoint
+    calls = []
+
+    def counting_checkpoint(function, *args, **kwargs):
+        calls.append(function.__name__)
+        return original(function, *args, **kwargs)
+
+    monkeypatch.setattr(medusa_module, "checkpoint", counting_checkpoint)
+    plain = make_model(checkpointing=False)
+    plain.train()
+    plain(**make_inputs())
+    assert calls == []
+    checked = make_model(checkpointing=True)
+    checked.train()
+    checked(**make_inputs())
+    assert calls and set(calls) == {"loss_chunk"}
+
+
 def test_eval_mode_without_grad():
     model = make_model()
     model.eval()
@@ -334,6 +392,18 @@ def test_bfloat16_features_produce_finite_losses():
     inputs["hidden_states"] = inputs["hidden_states"].to(torch.bfloat16)
     losses, _, _, _, _ = model(**inputs)
     assert all(torch.isfinite(loss) for loss in losses)
+
+
+def test_bfloat16_counts_stay_exact_above_256_positions():
+    model = make_model().to(torch.bfloat16)
+    inputs = make_inputs(batch=1, length=299)
+    inputs["hidden_states"] = inputs["hidden_states"].to(torch.bfloat16)
+    losses, _, _, counts, _ = model(**inputs)
+    reference_losses, reference_counts, _ = reference_objective(model, inputs)
+    for head in range(model.num_heads):
+        assert int(counts[head]) == reference_counts[head] == 299 - (head + 2)
+        torch.testing.assert_close(losses[head].float(), reference_losses[head],
+                                   rtol=2e-2, atol=2e-2)
 
 
 def test_thd_execution_fails_closed():

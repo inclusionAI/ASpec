@@ -24,32 +24,40 @@ class MedusaModel(nn.Module):
     def forward(self, input_ids, hidden_states, loss_mask, attention_mask, thd_layout=None):
         if thd_layout is not None:
             raise NotImplementedError("Medusa currently supports padded CP1 execution only")
-        lengths = attention_mask.sum(-1).long().tolist()
         zero = sum(p.reshape(-1)[0] for p in self.parameters() if p.requires_grad) * 0.0
         sums = [zero for _ in range(self.num_heads)]
-        counts = [zero.detach() for _ in range(self.num_heads)]
+        # Exact token counts are dtype-independent; bf16 cannot represent every
+        # integer above 256.
+        counts = [torch.zeros((), dtype=torch.long, device=zero.device)
+                  for _ in range(self.num_heads)]
         correct = [zero.detach() for _ in range(self.num_heads)]
-        for row, length in enumerate(lengths):
+        for row in range(attention_mask.shape[0]):
+            valid_positions = attention_mask[row].bool().nonzero().flatten()
+            length = valid_positions.numel()
+            if 1 < length and int(valid_positions[-1]) - int(valid_positions[0]) + 1 != length:
+                raise ValueError("Medusa requires contiguous non-padding positions per row")
             features = hidden_states[row].detach()
             for head in range(self.num_heads):
                 # Reference offset: head i at position t is supervised by token t+2+i.
                 offset = head + 2
-                valid_length = max(0, length - offset)
-                if not valid_length:
+                if length <= offset:
                     continue
-                labels = input_ids[row, offset:offset + valid_length]
-                keep = loss_mask[row, offset:offset + valid_length].bool()
+                label_positions = valid_positions[offset:]
+                feature_positions = label_positions - offset
+                keep = loss_mask[row].index_select(0, label_positions).bool()
                 selected = keep.nonzero().flatten()
                 for indices in selected.split(128):
-                    targets = labels.index_select(0, indices)
-                    chunk_features = features.index_select(0, indices)
+                    targets = input_ids[row].index_select(
+                        0, label_positions.index_select(0, indices))
+                    chunk_features = features.index_select(
+                        0, feature_positions.index_select(0, indices))
 
                     def loss_chunk(chunk_features, targets, head=head):
                         logits = self.draft_model.medusa_head[head](chunk_features)
                         return (F.cross_entropy(logits.float(), targets, reduction="sum"),
                                 (logits.argmax(-1) == targets).float().sum())
 
-                    if self.training and torch.is_grad_enabled():
+                    if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
                         loss, hits = checkpoint(loss_chunk, chunk_features, targets,
                                                 use_reentrant=False)
                     else:
