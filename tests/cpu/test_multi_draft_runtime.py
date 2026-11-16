@@ -286,6 +286,48 @@ def test_unsafe_fence_withholds_source_teardown_and_placement_release(monkeypatc
     assert any("teardown was withheld" in error for error in evidence["cleanup_errors"])
 
 
+@pytest.mark.parametrize("fence_error", [False, True])
+@pytest.mark.parametrize("failure_type", [OSError, KeyboardInterrupt])
+def test_session_persistence_failure_preserves_the_cli_owner_fence(
+    monkeypatch, tmp_path, fence_error, failure_type
+):
+    from contextlib import nullcontext
+    from pathlib import Path
+
+    args, plan, _, engine = _session(monkeypatch, tmp_path, fence_error=fence_error)
+    failure = failure_type("session evidence write failed")
+    write_text = Path.write_text
+
+    def write(path, data, *args, **kwargs):
+        if path == tmp_path / "evidence.tmp" and "read_owners_fenced" in json.loads(data):
+            raise failure
+        return write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", write)
+    monkeypatch.setattr(train_entry, "_prepare_config", lambda: (args, plan))
+    monkeypatch.setattr(train_entry, "termination_signal_handlers", nullcontext)
+    monkeypatch.setattr(train_entry, "ensure_ray_initialized", lambda: None)
+    monkeypatch.setattr(train_entry, "install_termination_signal_handler", lambda: None)
+    monkeypatch.setattr(train_entry.ray, "is_initialized", lambda: True)
+    shutdown = Mock()
+    monkeypatch.setattr(train_entry.ray, "shutdown", shutdown)
+    # The CLI selects shared execution by its concrete Plan type.
+    monkeypatch.setattr(multi_draft, "MultiDraftPlan", type(plan))
+    expected = multi_draft.SourceTeardownBlockedError if fence_error else failure_type
+    with pytest.raises(BaseException) as caught:
+        train_entry._main()
+    assert isinstance(caught.value, expected)
+    if fence_error:
+        assert caught.value.__cause__ is failure
+        assert caught.value.owner_statuses
+        shutdown.assert_not_called()
+        engine.shutdown.remote.assert_not_called()
+    else:
+        assert caught.value is failure
+        shutdown.assert_called_once()
+        engine.shutdown.remote.assert_called_once()
+
+
 def test_independent_draft_initialization_failure_does_not_stop_healthy_draft(
     monkeypatch, tmp_path
 ):

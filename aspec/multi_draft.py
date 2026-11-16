@@ -174,6 +174,16 @@ def compile_multi_draft_plan(config) -> MultiDraftPlan:
                 raise ValueError(f"experiment {name} changes the shared Target binding: {key}")
         configs[name] = child
         plans[name] = compile_execution_plan(child, source_context_parallel_size=1)
+        if args.cluster_mode == "static_multi_node":
+            for domain in plans[name].policy.resources["locality_domains"]:
+                credit = domain["ready_watermark"]
+                required = domain["dispatch_samples_per_microstep"]
+                if 0 < credit < required:
+                    raise ValueError(
+                        f"experiment {name} ready watermark must cover its local dispatch: "
+                        f"node={domain['node_address']!r}, credits={credit}, required={required}; "
+                        "increase inference.max_sample_pool_size"
+                    )
     if not plans:
         raise ValueError("shared source requires at least one experiment")
     from aspec.feature_contract import shared_feature_union
@@ -871,13 +881,21 @@ def run_multi_draft(args, plan: MultiDraftPlan):
         # Fixed-budget experiment cost, including startup/cleanup; not a claim
         # about GPU utilization or the scheduler's actual billed reservation.
         session["budget_gpu_hours"] = allocated_gpus * session["wall_seconds"] / 3600
+        blocked_error = None
+        if training_started and not owners_fenced:
+            blocked_error = SourceTeardownBlockedError([
+                status for name, statuses in actor_statuses.items()
+                if name not in fenced_groups for status in statuses
+            ])
         try:
-            persist_session()
-            if training_started and not owners_fenced:
-                raise SourceTeardownBlockedError([
-                    status for name, statuses in actor_statuses.items()
-                    if name not in fenced_groups for status in statuses
-                ])
+            try:
+                persist_session()
+            except BaseException as persist_error:
+                if blocked_error is not None:
+                    raise blocked_error from persist_error
+                raise
+            if blocked_error is not None:
+                raise blocked_error
         finally:
             for key, value in previous_environment.items():
                 if value is None:

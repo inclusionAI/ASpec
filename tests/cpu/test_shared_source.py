@@ -862,3 +862,48 @@ def test_shared_outputs_use_independent_real_node_local_packing_controllers(monk
         assert child.get_scheduler_evidence()['cross_node_dispatch_samples'] == 0
     if not plain:
         assert set(selected['left']) == set(selected['right'])
+
+
+@pytest.mark.parametrize("packing,micro_batch_size", [(False, 1), (False, 2), (True, 1)])
+def test_shared_real_controllers_dispatch_at_minimum_node_credits(
+    monkeypatch, packing, micro_batch_size
+):
+    from aspec.controller import training_controller
+
+    real_controller = shared_source.TrainingControllerState
+    monkeypatch.setattr(shared_source, "TrainingControllerState", _Controller)
+    monkeypatch.setattr(training_controller, "Queue", Queue)
+    monkeypatch.setattr(shared_source, "source_control", Mock())
+    args = SimpleNamespace(
+        dp_size=4, num_train_steps=1, global_batch_size=4 * micro_batch_size,
+        per_dp_rank_batch_size=micro_batch_size, micro_batch_size=micro_batch_size,
+        dflash_packing=packing, max_sample_pool_size=4 * micro_batch_size,
+        training_node_ips=["a", "b"], training_num_gpus_per_node=2,
+        mooncake_feature_affinity="node_local_required", max_seq_length=32,
+        dflash_block_size=2,
+    )
+    hub = shared_source.SharedSourceState(args, {"left": args, "right": args})
+    hub.load_dataset(args)
+    for name in hub.experiments:
+        hub.invoke(name, "submit_training_dataset", (), {})
+    for name in hub.experiments:
+        hub.experiments[name] = real_controller(copy(args), 4, with_eval_queues=False)
+    entries = hub.get_prompts(100)
+    assert len(entries) == 4 * micro_batch_size
+    outputs = []
+    for index, entry in enumerate(entries):
+        output = _output(entry, index)
+        output.tensor_shapes = {"input_ids": (1, 7), "hidden_states": (1, 7, 3)}
+        output.packed_loss_mask = "0,7"
+        output.metadata.update(feature_affinity="node_local_required",
+                               source_node_ip=entry.metadata["shared_source_node"])
+        outputs.append(output)
+    hub.push_inference_results(outputs[::-1])
+    for name, child in hub.experiments.items():
+        assert child.get_ready_pool_size_by_node() == {
+            "a": 2 * micro_batch_size, "b": 2 * micro_batch_size,
+        }
+        assert hub.invoke(name, "try_dispatch_batch", (), {"optimizer_step": 0, "microstep": 0})
+        assert child.get_ready_pool_size() == 0
+        assert all(queue.qsize() == micro_batch_size for queue in child.train_queues)
+        assert child.get_scheduler_evidence()["cross_node_dispatch_samples"] == 0

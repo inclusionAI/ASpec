@@ -355,3 +355,43 @@ def test_shared_source_rejects_finite_document_budget(multinode, packing):
     config.training.source_work_budget = 8192
     with pytest.raises(NotImplementedError, match='source_work_budget'):
         compile_multi_draft_plan(config)
+
+
+@pytest.mark.parametrize("pool_size", [0, 2, 3, 4, 8])
+@pytest.mark.parametrize("micro_batch_size", [1, 2])
+@pytest.mark.parametrize("cp_size", [1, 2])
+def test_shared_unpacked_node_credits_cover_each_drafts_dispatch(
+    pool_size, micro_batch_size, cp_size
+):
+    config = _multinode_config()
+    config.inference.max_sample_pool_size = pool_size
+    config.training.micro_batch_size = micro_batch_size
+    config.mooncake.destination_gpu_ring_slots = micro_batch_size
+    for experiment in config.experiments:
+        experiment.training.training_num_gpus_per_node = 2
+        experiment.training.draft_context_parallel_size = cp_size
+    local_dispatch = 2 // cp_size * micro_batch_size
+    if pool_size and pool_size // 2 < local_dispatch:
+        with pytest.raises(ValueError, match="ready watermark.*local dispatch"):
+            compile_multi_draft_plan(config)
+    else:
+        plan = compile_multi_draft_plan(config)
+        assert all(child.to_runtime_args().dp_size == 4 // cp_size
+                   for child in plan.plans.values())
+
+
+@pytest.mark.parametrize("pool_size", [2, 3, 4])
+@pytest.mark.parametrize("cp_size", [1, 2])
+def test_shared_packed_node_credits_cover_one_document_per_dp_rank(pool_size, cp_size):
+    config = _multinode_config()
+    config.inference.max_sample_pool_size = pool_size
+    config.training.dflash_packing = True
+    for experiment in config.experiments:
+        experiment.training.training_num_gpus_per_node = 2
+        experiment.training.draft_context_parallel_size = cp_size
+    if pool_size // 2 < 2 // cp_size:
+        with pytest.raises(ValueError, match="ready watermark.*local dispatch"):
+            compile_multi_draft_plan(config)
+    else:
+        plan = compile_multi_draft_plan(config)
+        assert all(child.to_runtime_args().dflash_packing for child in plan.plans.values())

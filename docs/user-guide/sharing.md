@@ -100,6 +100,10 @@ from the same producer node, with document boundaries and local positions preser
 captures one original document per request (`inference_batch_size=1`); packing happens in each Draft’s
 controller. Supply follows each Draft’s remaining optimizer steps and node-local queue space.
 
+Each node's share of `inference.max_sample_pool_size` must hold a complete dispatch for each Draft:
+local DP ranks × `training.micro_batch_size` documents, or at least one document per local DP rank
+with packing. A zero limit leaves the ready pool unbounded.
+
 Multi-node sharing requires TransferEngine and `feature_affinity=node_local_required`.
 The normal launch preflights each child and the aggregate allocation. Use `--preflight-only`
 with a fresh output directory for a separate check.
@@ -115,6 +119,9 @@ Keep the owned cluster running across both segments. Set the input environment f
 `ASPEC_TRAIN_DATA`, `ASPEC_EVAL_DATA`, `ASPEC_CACHE_DIR` and an explicit `RAY_ADDRESS`.
 Model, data and Draft JSON replicas use the same absolute logical paths on both nodes.
 Reserve eight GPUs per node: four Target GPUs, two for Draft A and two for Draft B.
+
+This walkthrough records TensorBoard curves. Install the optional
+[`tracking` dependency](training.md#tensorboard-and-wb) in each node's environment before starting Ray.
 
 This example gives A an initial limit of 32 optimizer steps and B a limit of 33, with a full
 LR horizon of 64 from the beginning. The recipe's accumulation of 64 remains in effect:
