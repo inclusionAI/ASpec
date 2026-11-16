@@ -1,0 +1,1311 @@
+.dockerignore
+  s_045e309c7b4bfc::t_a43cb850ff6249 1-26
+.github/ISSUE_TEMPLATE/bug_report.yml
+  s_045e309c7b4bfc::t_1fb9b02737aff4 1-21
+.github/pull_request_template.md
+  s_045e309c7b4bfc::t_18763a08f0dab9 1-16
+.github/workflows/ci.yml
+  s_045e309c7b4bfc::t_31cb6852ee1167 1-125
+.gitignore
+  s_045e309c7b4bfc::t_a6452310b51ea6 1-23
+AGENTS.md
+  s_045e309c7b4bfc::t_a41d624b14909d 1-61
+CHANGELOG.md
+  s_045e309c7b4bfc::t_661c90fd0b85fd 1-37
+CITATION.cff
+  s_045e309c7b4bfc::t_5d98d392ecdf55 1-22
+CONTRIBUTING.md
+  s_045e309c7b4bfc::t_d843ee581a7c12 1-62
+Dockerfile
+  s_045e309c7b4bfc::t_4ae525fddae755 1-11
+LICENSE
+  s_045e309c7b4bfc::t_4d1d723afa51f7 1-201
+MANIFEST.in
+  s_045e309c7b4bfc::t_60b404df87ad87 1-25
+README.md
+  s_045e309c7b4bfc::t_a187cd56b952a4 1-145
+README_zh-CN.md
+  s_045e309c7b4bfc::t_322315148279ed 1-129
+ROADMAP.md
+  s_045e309c7b4bfc::t_9cdb212e3bdf6c 1-67
+SECURITY.md
+  s_045e309c7b4bfc::t_c8c82cdab8aacb 1-19
+aspec/__init__.py
+  s_045e309c7b4bfc::t_0590189df5d338 1-66
+aspec/_environment.py
+  s_045e309c7b4bfc::t_24ece0db62fa5a 1-72
+aspec/assets.py
+  s_045e309c7b4bfc::t_52be6a216d5ccc 1-59
+aspec/calibration.py
+  s_045e309c7b4bfc::t_81fa39b14a529c 1-629
+aspec/cli.py
+  s_045e309c7b4bfc::t_a9a0c2349d24eb 1-55
+aspec/commands/__init__.py
+  s_045e309c7b4bfc::t_8d63f8a0a69d2d 1-15
+aspec/commands/_checkpoint_audit.py
+  s_045e309c7b4bfc::t_d4e9d64dca118e 1-163
+aspec/commands/_recipe_capacity.py
+  s_045e309c7b4bfc::t_28f8063001bcf2 1-91
+aspec/commands/_recipe_smoke.py
+  s_045e309c7b4bfc::t_7fe040e737f698 1-202
+aspec/commands/convert_pretokenized_jsonl.py
+  s_045e309c7b4bfc::t_e694fe6d4ea679 1-236
+aspec/commands/convert_to_hf.py
+  s_045e309c7b4bfc::t_6380c2a993a656 1-529
+aspec/commands/doctor.py
+  s_045e309c7b4bfc::t_152f6953a33bd3 1-149
+aspec/commands/evaluate_draft.py
+  s_045e309c7b4bfc::t_82a564a6b362c4 1-240
+aspec/commands/prepare_quality_dataset.py
+  s_045e309c7b4bfc::t_2e14caebd0bf84 1-177
+aspec/commands/prepare_selected_answers.py
+  s_045e309c7b4bfc::t_0d5b4d225559b6 1-192
+aspec/commands/prepare_target_dataset.py
+  s_045e309c7b4bfc::t_7e68a70309da83 1-232
+aspec/commands/quickstart.py
+  s_045e309c7b4bfc::t_b3fd3b115bd246 1-107
+aspec/commands/recipes.py
+  s_045e309c7b4bfc::t_7f4f4afe6facf0 1-531
+aspec/commands/stitch_native_mtp.py
+  s_045e309c7b4bfc::t_c3bb483d7f739c 1-131
+aspec/compat/__init__.py
+  s_045e309c7b4bfc::t_382d8e47f9734f 1-15
+aspec/compat/fa4_cutlass.py
+  s_045e309c7b4bfc::t_54ce9355b538ae 1-159
+aspec/compat/patches/sglang-v0.5.21.patch
+  s_045e309c7b4bfc::t_bd2a9c091c28fc 1-689
+aspec/compat/sglang_patch.py
+  s_045e309c7b4bfc::t_c618a28fe51a6f 1-112
+aspec/config/__init__.py
+  s_045e309c7b4bfc::t_c2275f0817f7a9 1-27
+aspec/config/dflash2_draft_config.json
+  s_045e309c7b4bfc::t_3678a95a8f9a6f 1-33
+aspec/config/dflash2_qwen3_8b_swa_draft_config.json
+  s_045e309c7b4bfc::t_9c086d898ec5d0 1-41
+aspec/config/dflash_draft_config.json
+  s_045e309c7b4bfc::t_f8b567afd05652 1-19
+aspec/config/dflash_qwen3_8b_two_feature_draft_config.json
+  s_045e309c7b4bfc::t_cc1e6f4a3c2626 1-24
+aspec/config/draft_algorithm.py
+  s_045e309c7b4bfc::t_03fb2bc9a0a61b 1-76
+aspec/config/draft_attention.py
+  s_045e309c7b4bfc::t_333b856f7cac5c 1-467
+aspec/config/draft_execution.py
+  s_045e309c7b4bfc::t_01edaef11e8503 1-104
+aspec/config/draft_structure.py
+  s_045e309c7b4bfc::t_ccdb0d177e0720 1-101
+aspec/config/dspark_draft_config.json
+  s_045e309c7b4bfc::t_a4d2dc09e3d9e9 1-23
+aspec/config/dspark_ling31_flash_mla_moe_draft_config.json
+  s_045e309c7b4bfc::t_e02c7a725c2955 1-53
+aspec/config/dspark_ling3_flash_csa_dense_draft_config.json
+  s_045e309c7b4bfc::t_b93fb160576a5f 1-40
+aspec/config/dspark_ling3_flash_csa_indexer_draft_config.json
+  s_045e309c7b4bfc::t_c233bcced738c0 1-40
+aspec/config/dspark_ling3_flash_csa_sparse_draft_config.json
+  s_045e309c7b4bfc::t_b55d6b86e6817e 1-40
+aspec/config/dspark_ling3_flash_draft_config.json
+  s_045e309c7b4bfc::t_12c2868618eea8 1-33
+aspec/config/dspark_ling3_flash_moe_draft_config.json
+  s_045e309c7b4bfc::t_8d8d439ee595cd 1-66
+aspec/config/dspark_ling3_flash_moe_swa_draft_config.json
+  s_045e309c7b4bfc::t_162269729ecfd4 1-67
+aspec/config/dspark_ling3_flash_qsa_dense_draft_config.json
+  s_045e309c7b4bfc::t_f5beac5a885ea4 1-41
+aspec/config/dspark_ling3_flash_qsa_indexer_draft_config.json
+  s_045e309c7b4bfc::t_517e0b39322dc6 1-41
+aspec/config/dspark_ling3_flash_qsa_sparse_draft_config.json
+  s_045e309c7b4bfc::t_b1bee00354c4bd 1-41
+aspec/config/dspark_ling3_flash_qwen_moe_draft_config.json
+  s_045e309c7b4bfc::t_69a1026257ef31 1-31
+aspec/config/dspark_ling3_flash_swa_draft_config.json
+  s_045e309c7b4bfc::t_ffccf1b001a5af 1-34
+aspec/config/dspark_ling3_tiny_draft_config.json
+  s_045e309c7b4bfc::t_c1e2e43ac508ed 1-24
+aspec/config/dspark_qwen3_5_9b_draft_config.json
+  s_045e309c7b4bfc::t_76508ba3a64949 1-24
+aspec/config/dspark_qwen3_8_27b_draft_config.json
+  s_045e309c7b4bfc::t_b1eb18fef030aa 1-24
+aspec/config/dspark_qwen3_8b_dsa_dense_draft_config.json
+  s_045e309c7b4bfc::t_ad83e32d9e4809 1-34
+aspec/config/dspark_qwen3_8b_dsa_indexer_draft_config.json
+  s_045e309c7b4bfc::t_010b16406afe35 1-34
+aspec/config/dspark_qwen3_8b_dsa_sparse_draft_config.json
+  s_045e309c7b4bfc::t_532a869d5d06f0 1-34
+aspec/config/dspark_qwen3_8b_mla_draft_config.json
+  s_045e309c7b4bfc::t_9ffbb17e38d36e 1-40
+aspec/config/dspark_qwen3_8b_moe_draft_config.json
+  s_045e309c7b4bfc::t_933f3d02840355 1-37
+aspec/config/eagle3_qwen3_8b_draft_config.json
+  s_045e309c7b4bfc::t_12cafd2f9f5d2a 1-41
+aspec/config/eagle3_qwen3_8b_mla_draft_config.json
+  s_045e309c7b4bfc::t_d100eccd563b3a 1-49
+aspec/config/eagle3_qwen3_8b_pruned_draft_config.json
+  s_045e309c7b4bfc::t_9768010fc3fd2f 1-39
+aspec/config/eagle4.py
+  s_045e309c7b4bfc::t_57a3bf5d719fa4 1-174
+aspec/config/eagle4_qwen3_8b_candidate_config.json
+  s_045e309c7b4bfc::t_f6e0cff32cf2c3 1-54
+aspec/config/eagle4_qwen3_8b_draft_config.json
+  s_045e309c7b4bfc::t_7a8872e687a2df 1-54
+aspec/config/inference_config.py
+  s_045e309c7b4bfc::t_37e0a29d7005b3 1-222
+aspec/config/ling_structure.py
+  s_045e309c7b4bfc::t_d354bba7a625cf 1-87
+aspec/config/mooncake_config.py
+  s_045e309c7b4bfc::t_bf1f1eb2ccde7d 1-690
+aspec/config/qwen3_5_9b_mtp_draft_config.json
+  s_045e309c7b4bfc::t_bb2fd6a2bbcb04 1-81
+aspec/config/train_config.py
+  s_045e309c7b4bfc::t_79ae19a6663d79 1-1129
+aspec/config/utils.py
+  s_045e309c7b4bfc::t_da90028175a8dd 1-227
+aspec/controller/__init__.py
+  s_045e309c7b4bfc::t_1d18c82afc8c33 1-37
+aspec/controller/eval.py
+  s_045e309c7b4bfc::t_d9b6a3fe91dfa7 1-350
+aspec/controller/inference_manager.py
+  s_045e309c7b4bfc::t_3fec17bf736530 1-1324
+aspec/controller/loop.py
+  s_045e309c7b4bfc::t_591c5a2a948b78 1-2348
+aspec/controller/packing.py
+  s_045e309c7b4bfc::t_ac8f4287c68c0e 1-167
+aspec/controller/setup.py
+  s_045e309c7b4bfc::t_7232017b76e060 1-172
+aspec/controller/shared_source.py
+  s_045e309c7b4bfc::t_bb37bbb003968c 1-573
+aspec/controller/training_controller.py
+  s_045e309c7b4bfc::t_701ad0fb75da70 1-1921
+aspec/data/__init__.py
+  s_045e309c7b4bfc::t_1cb1e58f64f958 1-56
+aspec/data/dataset.py
+  s_045e309c7b4bfc::t_227323fc20a7f2 1-714
+aspec/data/parse.py
+  s_045e309c7b4bfc::t_01b11f9aecceba 1-716
+aspec/data/preprocessing.py
+  s_045e309c7b4bfc::t_9a7559f58c42c6 1-427
+aspec/data/renderers/__init__.py
+  s_045e309c7b4bfc::t_f91ad8614d6a6b 1-33
+aspec/data/renderers/base.py
+  s_045e309c7b4bfc::t_3ef43190c97870 1-70
+aspec/data/renderers/kimi_k3.py
+  s_045e309c7b4bfc::t_1d3947618d1c67 1-303
+aspec/data/renderers/registry.py
+  s_045e309c7b4bfc::t_ddaaf69a930f2e 1-57
+aspec/data/template.py
+  s_045e309c7b4bfc::t_81e242d44787c9 1-292
+aspec/data/utils.py
+  s_045e309c7b4bfc::t_641afa17513302 1-766
+aspec/draft_artifact.py
+  s_045e309c7b4bfc::t_7eaa83eff07e55 1-280
+aspec/evidence.py
+  s_045e309c7b4bfc::t_7c0feb8f232a1b 1-1624
+aspec/feature_contract.py
+  s_045e309c7b4bfc::t_08ceef202eff9e 1-403
+aspec/inference/__init__.py
+  s_045e309c7b4bfc::t_600a09fd2b811a 1-19
+aspec/inference/concurrency.py
+  s_045e309c7b4bfc::t_b74685ae3116d3 1-70
+aspec/inference/context.py
+  s_045e309c7b4bfc::t_ce54ee1ce74a3b 1-299
+aspec/inference/diagnostics.py
+  s_045e309c7b4bfc::t_e5cabb4763a010 1-61
+aspec/inference/engine/__init__.py
+  s_045e309c7b4bfc::t_10b5365e9cb48e 1-28
+aspec/inference/engine/base.py
+  s_045e309c7b4bfc::t_c373092a67726d 1-92
+aspec/inference/engine/offline_replay_engine.py
+  s_045e309c7b4bfc::t_c3f14c1573fada 1-240
+aspec/inference/engine/sgl_engine.py
+  s_045e309c7b4bfc::t_72ad3171ae56fe 1-1062
+aspec/inference/engine/sgl_engine_decode.py
+  s_045e309c7b4bfc::t_82e34907e7368d 1-424
+aspec/inference/factory.py
+  s_045e309c7b4bfc::t_6d14a3347c611f 1-722
+aspec/inference/sglang_v0521.py
+  s_045e309c7b4bfc::t_8f95f6ebe1c001 1-578
+aspec/inference/target_prefill.py
+  s_045e309c7b4bfc::t_3f0988e7d84727 1-326
+aspec/kernels/__init__.py
+  s_045e309c7b4bfc::t_634a3dc7753480 1-15
+aspec/kernels/cutedsl/__init__.py
+  s_045e309c7b4bfc::t_4977efdca060c3 1-15
+aspec/kernels/cutedsl/_primitives.py
+  s_045e309c7b4bfc::t_e281e5c32cc191 1-195
+aspec/kernels/cutedsl/cudnn_gqa/FENCE_AUDIT.md
+  s_045e309c7b4bfc::t_b66b69dc9f5ae8 1-114
+aspec/kernels/cutedsl/cudnn_gqa/README.md
+  s_045e309c7b4bfc::t_0d8d6a0da96319 1-114
+aspec/kernels/cutedsl/cudnn_gqa/__init__.py
+  s_045e309c7b4bfc::t_030e741820367c 1
+aspec/kernels/cutedsl/cudnn_gqa/backward.py
+  s_045e309c7b4bfc::t_b19aa100539521 1-3593
+aspec/kernels/cutedsl/cudnn_gqa/backward_sm90.py
+  s_045e309c7b4bfc::t_a945d07c35e92a 1-1465
+aspec/kernels/cutedsl/cudnn_gqa/helpers.py
+  s_045e309c7b4bfc::t_859d1ea7315837 1-100
+aspec/kernels/cutedsl/cudnn_gqa/postprocess.py
+  s_045e309c7b4bfc::t_68e2aa173c040a 1-581
+aspec/kernels/cutedsl/cudnn_gqa/preprocess.py
+  s_045e309c7b4bfc::t_bc4b430e5ace4f 1-333
+aspec/kernels/cutedsl/cudnn_gqa/upstream_sha256.json
+  s_045e309c7b4bfc::t_07deb04e0c5138 1-9
+aspec/kernels/cutedsl/dspark_qk_norm_rope.py
+  s_045e309c7b4bfc::t_30af5c4e59d49f 1-722
+aspec/kernels/cutedsl/dspark_qk_norm_rope_bwd.py
+  s_045e309c7b4bfc::t_7afc392b5dfaaf 1-1254
+aspec/locality.py
+  s_045e309c7b4bfc::t_e930bd7b08fe89 1-93
+aspec/models/__init__.py
+  s_045e309c7b4bfc::t_9a6d99f9b240d7 1-31
+aspec/models/dflash.py
+  s_045e309c7b4bfc::t_59fa7da6ac7bc4 1-1188
+aspec/models/dflash2.py
+  s_045e309c7b4bfc::t_2fe3acd177bafe 1-134
+aspec/models/draft/__init__.py
+  s_045e309c7b4bfc::t_b0d507eb1b521b 1-42
+aspec/models/draft/auto.py
+  s_045e309c7b4bfc::t_2bae9f070f4eda 1-121
+aspec/models/draft/base.py
+  s_045e309c7b4bfc::t_c6fcd930e93532 1-375
+aspec/models/draft/csa.py
+  s_045e309c7b4bfc::t_3f73c7d298b6fa 1-1984
+aspec/models/draft/deepseek_eagle.py
+  s_045e309c7b4bfc::t_ca7f4fbf6913f9 1-575
+aspec/models/draft/dflash.py
+  s_045e309c7b4bfc::t_de13bc6d3fb320 1-1473
+aspec/models/draft/dflash2.py
+  s_045e309c7b4bfc::t_9ab1e7b946ecd4 1-514
+aspec/models/draft/dsa.py
+  s_045e309c7b4bfc::t_b46fbc4b31ff83 1-451
+aspec/models/draft/dspark.py
+  s_045e309c7b4bfc::t_d52672cd38714e 1-484
+aspec/models/draft/eagle4.py
+  s_045e309c7b4bfc::t_b138908dbdb6d8 1-198
+aspec/models/draft/eagle4_moe.py
+  s_045e309c7b4bfc::t_6a4fdfd11600ac 1-213
+aspec/models/draft/keymap.py
+  s_045e309c7b4bfc::t_eee6efb883d688 1-68
+aspec/models/draft/ling_moe.py
+  s_045e309c7b4bfc::t_874c98bb9d3d0c 1-172
+aspec/models/draft/llama3_eagle.py
+  s_045e309c7b4bfc::t_877a7800316036 1-2484
+aspec/models/draft/moe.py
+  s_045e309c7b4bfc::t_c2e96c259410b2 1-93
+aspec/models/draft/mtp.py
+  s_045e309c7b4bfc::t_512344f79f3156 1-198
+aspec/models/draft/qsa.py
+  s_045e309c7b4bfc::t_2bb916e63a7527 1-1543
+aspec/models/dspark.py
+  s_045e309c7b4bfc::t_78b0761af2f945 1-608
+aspec/models/eagle3.py
+  s_045e309c7b4bfc::t_bd42356ef0d89e 1-727
+aspec/models/eagle4.py
+  s_045e309c7b4bfc::t_d394b7c1b0f58a 1-38
+aspec/models/mtp.py
+  s_045e309c7b4bfc::t_0aff546fc24cb6 1-136
+aspec/models/ops/__init__.py
+  s_045e309c7b4bfc::t_c1e9c2e68174c2 1-45
+aspec/models/ops/acceptance.py
+  s_045e309c7b4bfc::t_b39ad68982654f 1-37
+aspec/models/ops/anchors.py
+  s_045e309c7b4bfc::t_460e5f6145f5e0 1-266
+aspec/models/ops/compact_varlen.py
+  s_045e309c7b4bfc::t_68bd620fd48aaf 1-258
+aspec/models/ops/cudnn_flex_attention.py
+  s_045e309c7b4bfc::t_763d6c2d0a1ebb 1-526
+aspec/models/ops/cudnn_gqa_backward.py
+  s_045e309c7b4bfc::t_3d965618bc7d71 1-347
+aspec/models/ops/direct_cp.py
+  s_045e309c7b4bfc::t_61d5ea24b21cd3 1-1095
+aspec/models/ops/distributed_sparse.py
+  s_045e309c7b4bfc::t_89355b85326c47 1-273
+aspec/models/ops/dspark_qk_norm_rope.py
+  s_045e309c7b4bfc::t_df256d73d21443 1-419
+aspec/models/ops/eagle4_candidate.py
+  s_045e309c7b4bfc::t_cd4baadc8568fb 1-54
+aspec/models/ops/eagle_thd.py
+  s_045e309c7b4bfc::t_0fedacfb4c56d3 1-315
+aspec/models/ops/fa4_sparse.py
+  s_045e309c7b4bfc::t_c175566144f5d2 1-512
+aspec/models/ops/flex_attention.py
+  s_045e309c7b4bfc::t_15c5388361d5cd 1-494
+aspec/models/ops/gradient_scaling.py
+  s_045e309c7b4bfc::t_fcd63bc4aca380 1-48
+aspec/models/ops/loss.py
+  s_045e309c7b4bfc::t_52632881b51474 1-474
+aspec/models/ops/loss_mask.py
+  s_045e309c7b4bfc::t_3df8c49f28255c 1-115
+aspec/models/ops/output_blocks.py
+  s_045e309c7b4bfc::t_e1a0771cab69f4 1-111
+aspec/models/ops/thd_attention.py
+  s_045e309c7b4bfc::t_992d8ce4c585d9 1-220
+aspec/models/ops/thd_sparse_metadata.py
+  s_045e309c7b4bfc::t_6db98383040d05 1-186
+aspec/models/ops/tiled_l1.py
+  s_045e309c7b4bfc::t_23e6fe4db01924 1-209
+aspec/models/target/__init__.py
+  s_045e309c7b4bfc::t_13e0238f054752 1-34
+aspec/models/target/eagle3_target_model.py
+  s_045e309c7b4bfc::t_b0ceec3daac652 1-268
+aspec/models/target/target_utils.py
+  s_045e309c7b4bfc::t_f5b866204d7a63 1-365
+aspec/models/vocab.py
+  s_045e309c7b4bfc::t_eeeda966485597 1-45
+aspec/multi_draft.py
+  s_045e309c7b4bfc::t_8ccfe65d4ffc7b 1-835
+aspec/offline/__init__.py
+  s_045e309c7b4bfc::t_83bd29545d476e 1-15
+aspec/offline/dataset.py
+  s_045e309c7b4bfc::t_e7e062be62f393 1-318
+aspec/offline/generate.py
+  s_045e309c7b4bfc::t_0c168db607ba40 1-307
+aspec/offline/saving_actor.py
+  s_045e309c7b4bfc::t_255ca2f6e1babe 1-133
+aspec/planning.py
+  s_045e309c7b4bfc::t_f1980d2c4054d4 1-2244
+aspec/ray/__init__.py
+  s_045e309c7b4bfc::t_508bcac4ee14d5 1-19
+aspec/ray/cluster_preflight.py
+  s_045e309c7b4bfc::t_cf1419ffaacfb6 1-1277
+aspec/ray/node_local_files.py
+  s_045e309c7b4bfc::t_a3b7058844b6c8 1-249
+aspec/ray/owner_fence.py
+  s_045e309c7b4bfc::t_a645c398967b59 1-151
+aspec/ray/placement_group.py
+  s_045e309c7b4bfc::t_90de825c1a0275 1-674
+aspec/ray/ray_actor.py
+  s_045e309c7b4bfc::t_681da7d174f71a 1-106
+aspec/ray/train_group.py
+  s_045e309c7b4bfc::t_31c8fded277fb8 1-365
+aspec/reporting.py
+  s_045e309c7b4bfc::t_2191d935339ff3 1-377
+aspec/runtime_control.py
+  s_045e309c7b4bfc::t_4a1dabb350f861 1-81
+aspec/runtime_identity.py
+  s_045e309c7b4bfc::t_9b1776584f1d85 1-119
+aspec/topology.py
+  s_045e309c7b4bfc::t_bce3016e092fe7 1-800
+aspec/topology_runner.py
+  s_045e309c7b4bfc::t_bfc31dcc9263ff 1-1243
+aspec/train_entry.py
+  s_045e309c7b4bfc::t_dc5ffbb561841c 1-626
+aspec/training/__init__.py
+  s_045e309c7b4bfc::t_43cd28df767be4 1-21
+aspec/training/checkpoint.py
+  s_045e309c7b4bfc::t_e5ab4cb93a35f8 1-1096
+aspec/training/data_fetcher.py
+  s_045e309c7b4bfc::t_3a46d4c1763c69 1-1279
+aspec/training/dflash2_trainer.py
+  s_045e309c7b4bfc::t_35e755d69e7a8c 1-68
+aspec/training/dflash_trainer.py
+  s_045e309c7b4bfc::t_c1d61971af6048 1-902
+aspec/training/dspark_trainer.py
+  s_045e309c7b4bfc::t_20f72ae1257544 1-93
+aspec/training/eagle3_trainer.py
+  s_045e309c7b4bfc::t_5516c2b7e2a181 1-695
+aspec/training/eagle4_trainer.py
+  s_045e309c7b4bfc::t_dfb0b423891ecc 1-120
+aspec/training/evaluation.py
+  s_045e309c7b4bfc::t_5411eca1330bb7 1-62
+aspec/training/fsdp.py
+  s_045e309c7b4bfc::t_9da1446eec45cb 1-232
+aspec/training/lr_scheduler.py
+  s_045e309c7b4bfc::t_72ed7d7d01b57f 1-276
+aspec/training/mtp_trainer.py
+  s_045e309c7b4bfc::t_558afe1d02ae13 1-61
+aspec/training/optimizer.py
+  s_045e309c7b4bfc::t_1583340d0330c5 1-182
+aspec/training/trainer.py
+  s_045e309c7b4bfc::t_8d128e40ee2d91 1-1012
+aspec/training/trainer_actor.py
+  s_045e309c7b4bfc::t_100a941ebb3dd1 1-245
+aspec/transfer/__init__.py
+  s_045e309c7b4bfc::t_8957dfec380cf5 1-21
+aspec/transfer/mooncake/__init__.py
+  s_045e309c7b4bfc::t_056f8251977a33 1-56
+aspec/transfer/mooncake/buffers.py
+  s_045e309c7b4bfc::t_66dff6afcb1f3d 1-385
+aspec/transfer/mooncake/deferred_delete.py
+  s_045e309c7b4bfc::t_0e27541e5d6a0a 1-306
+aspec/transfer/mooncake/eagle_store.py
+  s_045e309c7b4bfc::t_b48a3afbff1d87 1-987
+aspec/transfer/mooncake/helpers.py
+  s_045e309c7b4bfc::t_df4a84da8bd6d3 1-116
+aspec/transfer/mooncake/p2p.py
+  s_045e309c7b4bfc::t_419b68a58e1e64 1-1706
+aspec/transfer/mooncake/store.py
+  s_045e309c7b4bfc::t_625214f40562bc 1-602
+aspec/transfer/mooncake/utils.py
+  s_045e309c7b4bfc::t_12df0665790314 1-343
+aspec/utils/__init__.py
+  s_045e309c7b4bfc::t_3fb903b18b8d45 1-21
+aspec/utils/distributed.py
+  s_045e309c7b4bfc::t_34bf36318d0b99 1-272
+aspec/utils/env.py
+  s_045e309c7b4bfc::t_427bc3d09c4f96 1-86
+aspec/utils/logging.py
+  s_045e309c7b4bfc::t_24faba3fe14e87 1-276
+aspec/utils/memory.py
+  s_045e309c7b4bfc::t_e3064bce3b48b0 1-96
+aspec/utils/misc.py
+  s_045e309c7b4bfc::t_16fa71ac7485c7 1-116
+aspec/utils/processing.py
+  s_045e309c7b4bfc::t_dc8cab5e9fd205 1-91
+aspec/utils/profiling.py
+  s_045e309c7b4bfc::t_99ab6ed811323f 1-179
+aspec/utils/tensor.py
+  s_045e309c7b4bfc::t_fff0988355e822 1-31
+aspec/utils/timeline.py
+  s_045e309c7b4bfc::t_33435d02a8dd0e 1-286
+aspec/utils/train_dump.py
+  s_045e309c7b4bfc::t_ae1603ccdab737 1-499
+aspec/utils/types.py
+  s_045e309c7b4bfc::t_9e194fcdc64e2a 1-52
+aspec/utils/usp.py
+  s_045e309c7b4bfc::t_ddaa5238fe2185 1-115
+aspec/utils/wandb.py
+  s_045e309c7b4bfc::t_64ee6a0bebe653 1-246
+aspec/work_lifecycle.py
+  s_045e309c7b4bfc::t_ffc4efb7cd0342 1-434
+configs/README.md
+  s_045e309c7b4bfc::t_fc47c0835dad53 1-31
+configs/benchmarks/aspec_qwen3_8b.yaml
+  s_045e309c7b4bfc::t_b21704117bfddc 1-95
+configs/benchmarks/aspec_qwen3_8b_128k.yaml
+  s_045e309c7b4bfc::t_1d28077fc20227 1-100
+configs/benchmarks/specforge_qwen3_8b.yaml
+  s_045e309c7b4bfc::t_8c3070893ca0e4 1-71
+configs/benchmarks/specforge_qwen3_8b_128k.yaml
+  s_045e309c7b4bfc::t_bd5540f023d8cf 1-86
+configs/benchmarks/specforge_qwen3_8b_draft.yaml
+  s_045e309c7b4bfc::t_e06edc7913fceb 1-42
+configs/benchmarks/torchspec_qwen3_8b.yaml
+  s_045e309c7b4bfc::t_6fc2340b059445 1-70
+configs/benchmarks/torchspec_qwen3_8b_128k.yaml
+  s_045e309c7b4bfc::t_27fc1af8f93bfb 1-76
+configs/examples/README.md
+  s_045e309c7b4bfc::t_ab4e8ff86afe2c 1-47
+configs/examples/ling3_flash_csa_dspark.yaml
+  s_045e309c7b4bfc::t_8ad5df034e7ddc 1-105
+configs/examples/ling3_flash_multi_structure_dspark.yaml
+  s_045e309c7b4bfc::t_4135e6d8ffde8e 1-125
+configs/examples/ling3_flash_qsa_dspark.yaml
+  s_045e309c7b4bfc::t_b64f5d307cc373 1-117
+configs/examples/ling3_flash_swa_128k_packing_cp4.yaml
+  s_045e309c7b4bfc::t_a51eee0e885c0c 1-114
+configs/examples/ling3_flash_swa_compare_dspark.yaml
+  s_045e309c7b4bfc::t_9c5e4f5fb072ce 1-119
+configs/examples/qwen3_5_9b_4k_cudnn_nvlink.yaml
+  s_045e309c7b4bfc::t_9282329bebe8c6 1-108
+configs/examples/qwen3_8_27b_4k_cudnn_nvlink.yaml
+  s_045e309c7b4bfc::t_1010a157531c87 1-113
+configs/examples/qwen3_8b_4k_multinode_tcp.yaml
+  s_045e309c7b4bfc::t_42b835b0771e6a 1-142
+configs/examples/qwen3_8b_dflash2.yaml
+  s_045e309c7b4bfc::t_a86c5bb5dcc5b5 1-94
+configs/examples/qwen3_8b_dsa_dspark.yaml
+  s_045e309c7b4bfc::t_2098b141a4832c 1-74
+configs/examples/qwen3_8b_dspark_target_generated.yaml
+  s_045e309c7b4bfc::t_43f647ac9d7cdc 1-91
+configs/examples/qwen3_8b_mla_dspark.yaml
+  s_045e309c7b4bfc::t_5b3b4c8250957c 1-100
+configs/examples/qwen3_8b_moe_dspark.yaml
+  s_045e309c7b4bfc::t_9a9c1d1d59343b 1-84
+configs/examples/qwen3_8b_multi_algorithm_feature_views.yaml
+  s_045e309c7b4bfc::t_7f77b87330cc6e 1-116
+configs/examples/sglang_qwen3_8b_dspark.yaml
+  s_045e309c7b4bfc::t_9c77d8633d307f 1-117
+configs/recipes/README.md
+  s_045e309c7b4bfc::t_2b86499d6947e2 1-13
+configs/recipes/ling31_flash_mla_moe_dspark.yaml
+  s_045e309c7b4bfc::t_2d566302e31d03 1-107
+configs/recipes/ling3_flash_dspark.yaml
+  s_045e309c7b4bfc::t_8d2a8e92003489 1-102
+configs/recipes/ling3_tiny_dspark.yaml
+  s_045e309c7b4bfc::t_3f94440e4d413b 1-100
+configs/recipes/quickstart_qwen3_8b.yaml
+  s_045e309c7b4bfc::t_37a47edb030bc5 1-71
+configs/recipes/qwen3_5_9b_mtp.yaml
+  s_045e309c7b4bfc::t_6e448a388a4a80 1-91
+configs/recipes/qwen3_8_27b_256k_fa4_cp2_nvlink.yaml
+  s_045e309c7b4bfc::t_3a61ff5921274a 1-116
+configs/recipes/qwen3_8b_4k_multi_draft_nvlink.yaml
+  s_045e309c7b4bfc::t_be129542feabec 1-96
+configs/recipes/qwen3_8b_4k_multinode_node_local_nvlink.yaml
+  s_045e309c7b4bfc::t_d25ed1b47d3130 1-151
+configs/recipes/qwen3_8b_dflash.yaml
+  s_045e309c7b4bfc::t_1e1612e8981ab5 1-91
+configs/recipes/qwen3_8b_dspark.yaml
+  s_045e309c7b4bfc::t_b664a86e978baa 1-104
+configs/recipes/qwen3_8b_eagle3.yaml
+  s_045e309c7b4bfc::t_c3808338ab6c60 1-98
+configs/recipes/qwen3_8b_eagle4.yaml
+  s_045e309c7b4bfc::t_f933b93c72f767 1-92
+configs/recipes/qwen3_8b_eagle4_candidate.yaml
+  s_045e309c7b4bfc::t_bda35d86dc7e83 1-93
+docs/README.md
+  s_045e309c7b4bfc::t_ea38fafbee4758 1-47
+docs/aspec.zh-CN.md
+  s_045e309c7b4bfc::t_2d8be3ef738366 1-149
+docs/assets/architecture.svg
+  s_045e309c7b4bfc::t_75c886bad939ff 1-128
+docs/assets/aspec-training-overview.svg
+  s_045e309c7b4bfc::t_d8c7af599b6a2a 1-62
+docs/assets/benchmark-steady-throughput.svg
+  s_045e309c7b4bfc::t_832ffd91ad9029 1-139
+docs/assets/dspark-attention-pattern.svg
+  s_045e309c7b4bfc::t_dd50acbc0d2734 1-489
+docs/assets/dspark-attention-training/01-visible-regions.svg
+  s_045e309c7b4bfc::t_05e48a5e1e7886 1-270
+docs/assets/dspark-attention-training/02-five-backends.svg
+  s_045e309c7b4bfc::t_1258c0203a7104 1-322
+docs/assets/dspark-attention-training/03-register-pressure.svg
+  s_045e309c7b4bfc::t_c56afc9cfdc6d3 1-140
+docs/assets/dspark-attention-training/README.md
+  s_045e309c7b4bfc::t_116b96d237aefe 1-53
+docs/assets/dspark-attention-training/benchmark-evidence.json
+  s_045e309c7b4bfc::t_84abe5c6b32204 1-6861
+docs/assets/dspark-cp-positions.svg
+  s_045e309c7b4bfc::t_09f14011d21458 1-2295
+docs/assets/dspark-cp-training.svg
+  s_045e309c7b4bfc::t_26d46a3f539085 1-18255
+docs/assets/dspark-cp-validation.svg
+  s_045e309c7b4bfc::t_960ac7db0de3f5 1-808
+docs/assets/dspark-fixed-positions.svg
+  s_045e309c7b4bfc::t_0111d8a161bafb 1-2095
+docs/assets/dspark-fixed-training.svg
+  s_045e309c7b4bfc::t_8556c580853668 1-16242
+docs/assets/dspark-fixed-validation-metrics.svg
+  s_045e309c7b4bfc::t_a950e211fb0b0f 1-758
+docs/assets/dspark-head-loss.svg
+  s_045e309c7b4bfc::t_9aeb39c3e55aff 1-123
+docs/assets/dspark-kernel-optimizations.svg
+  s_045e309c7b4bfc::t_fa85aa700cb91b 1-1084
+docs/benchmarks/README.md
+  s_045e309c7b4bfc::t_ed6c7560648c6a 1-85
+docs/benchmarks/cudnn-thd-cp.md
+  s_045e309c7b4bfc::t_7e2fc7519d4577 1-57
+docs/benchmarks/deepspec.md
+  s_045e309c7b4bfc::t_5bc88a835969ed 1-222
+docs/benchmarks/dspark-alignment.md
+  s_045e309c7b4bfc::t_a1deb6a58fe035 1-264
+docs/benchmarks/dspark-cp-alignment.md
+  s_045e309c7b4bfc::t_275ae1d2e64624 1-174
+docs/benchmarks/eagle3-h200.md
+  s_045e309c7b4bfc::t_2339b4213c4aee 1-122
+docs/benchmarks/methodology.md
+  s_045e309c7b4bfc::t_f2dc3a65805df2 1-79
+docs/benchmarks/report.zh-CN.md
+  s_045e309c7b4bfc::t_0174b6f50a467a 1-86
+docs/benchmarks/results.md
+  s_045e309c7b4bfc::t_3522548456d088 1-190
+docs/benchmarks/source-identities.json
+  s_045e309c7b4bfc::t_f58f44b1b9d7bb 1-186
+docs/contributing/validation.md
+  s_045e309c7b4bfc::t_e2faf6a77ee86c 1-196
+docs/dspark_attn_kernel_optimization.md
+  s_045e309c7b4bfc::t_01593005a5617f 1-167
+docs/framework/ARCHITECTURE.md
+  s_045e309c7b4bfc::t_b56681c77ed9db 1-115
+docs/framework/COMPATIBILITY.md
+  s_045e309c7b4bfc::t_c57a9c4475117d 1-36
+docs/framework/DECISIONS.md
+  s_045e309c7b4bfc::t_defeb7d35e66da 1-68
+docs/framework/README.md
+  s_045e309c7b4bfc::t_6616a9ae0d1da3 1-15
+docs/framework/REFERENCES.md
+  s_045e309c7b4bfc::t_ebbb476d63b2ca 1-35
+docs/framework/RETENTION_BOUNDARY.md
+  s_045e309c7b4bfc::t_772a8ce3f89ca4 1-24
+docs/framework/ROADMAP.md
+  s_045e309c7b4bfc::t_4df9eadf009962 1-14
+docs/releasing.md
+  s_045e309c7b4bfc::t_6eafdf67a2d17c 1-66
+docs/support.md
+  s_045e309c7b4bfc::t_4c9aee0d4e4514 1-74
+docs/user-guide/algorithms.md
+  s_045e309c7b4bfc::t_f952ff7852ca64 1-116
+docs/user-guide/benchmarks.md
+  s_045e309c7b4bfc::t_92f0ec1ee858ff 1-81
+docs/user-guide/configuration.md
+  s_045e309c7b4bfc::t_b8993549f3a3b7 1-106
+docs/user-guide/containers.md
+  s_045e309c7b4bfc::t_8abe49edeae694 1-37
+docs/user-guide/data.md
+  s_045e309c7b4bfc::t_1cd74aac38d140 1-52
+docs/user-guide/evaluation.md
+  s_045e309c7b4bfc::t_7d6b3f4e3c3417 1-97
+docs/user-guide/installation-advanced.md
+  s_045e309c7b4bfc::t_c7fa84a044a730 1-192
+docs/user-guide/installation.md
+  s_045e309c7b4bfc::t_ab6ad7d69cea52 1-109
+docs/user-guide/ling.md
+  s_045e309c7b4bfc::t_380fb660538c00 1-87
+docs/user-guide/multinode.md
+  s_045e309c7b4bfc::t_f8ca52dd704348 1-125
+docs/user-guide/portability.md
+  s_045e309c7b4bfc::t_133630831c4eaf 1-34
+docs/user-guide/quickstart.md
+  s_045e309c7b4bfc::t_52ee50f5098fc5 1-81
+docs/user-guide/recipes.md
+  s_045e309c7b4bfc::t_6303bef9924009 1-130
+docs/user-guide/sharing.md
+  s_045e309c7b4bfc::t_73d6d6d81325fe 1-69
+docs/user-guide/structures.md
+  s_045e309c7b4bfc::t_f0dbd2afbfdf1f 1-234
+docs/user-guide/topology.md
+  s_045e309c7b4bfc::t_dd4dc0538f394d 1-53
+docs/user-guide/training.md
+  s_045e309c7b4bfc::t_bf849627bfb3d3 1-174
+docs/user-guide/troubleshooting.md
+  s_045e309c7b4bfc::t_65390956cf6457 1-44
+examples/data/sample_conversations.jsonl
+  s_045e309c7b4bfc::t_10edd39b471739 1-1000
+examples/qwen3-8b-single-node/run.sh
+  s_045e309c7b4bfc::t_933666552e5fa3 1-16
+licenses/AngelSpec-LICENSE
+  s_045e309c7b4bfc::t_3ea992c31d66b5 1-474
+licenses/DFlash-MIT.txt
+  s_045e309c7b4bfc::t_331aef723bed80 1-21
+licenses/DeepSpec-LICENSE
+  s_045e309c7b4bfc::t_d06118959e4bf8 1-21
+licenses/EAGLE-LICENSE
+  s_045e309c7b4bfc::t_bdaa9184bd6bb2 1-13
+licenses/FlashAttention-AUTHORS
+  s_045e309c7b4bfc::t_b1fae6cdca93cc 1
+licenses/FlashAttention-BSD-3-Clause.txt
+  s_045e309c7b4bfc::t_571637f33e146f 1-29
+licenses/FlashLinearAttention-MIT.txt
+  s_045e309c7b4bfc::t_51de344d43358e 1-19
+licenses/Ling-V2-MIT.txt
+  s_045e309c7b4bfc::t_02f9c4513e2203 1-21
+licenses/NVIDIA-Megatron-LM-BSD-3-Clause.txt
+  s_045e309c7b4bfc::t_b634a45aa41db9 1-24
+licenses/NVIDIA-cuDNN-Frontend-MIT.txt
+  s_045e309c7b4bfc::t_f91573019637cb 1-21
+licenses/SGLang-LICENSE
+  s_045e309c7b4bfc::t_0f2adcbd98833a 1-201
+licenses/SpecForge-MIT.txt
+  s_045e309c7b4bfc::t_d1bee875616d10 1-21
+licenses/Speculators-LICENSE
+  s_045e309c7b4bfc::t_2401148195ede0 1-201
+licenses/TorchSpec-LICENSE
+  s_045e309c7b4bfc::t_e1176a7b277430 1-21
+licenses/TorchSpec-THIRDPARTYNOTICES
+  s_045e309c7b4bfc::t_ac1a584a1f1324 1-460
+licenses/Transformers-LICENSE
+  s_045e309c7b4bfc::t_f621156130ed33 1-203
+patches/README.md
+  s_045e309c7b4bfc::t_c526be15b4d442 1-26
+pyproject.toml
+  s_045e309c7b4bfc::t_5038d495cd30c6 1-75
+requirements/ci-cpu.txt
+  s_045e309c7b4bfc::t_1e4d8066116458 1-15
+requirements/cute-overrides.txt
+  s_045e309c7b4bfc::t_b6e4227639017b 1-4
+requirements/sglang-v0.5.21.txt
+  s_045e309c7b4bfc::t_0ac2c7094f9959 1-23
+setup.py
+  s_045e309c7b4bfc::t_bf42102e6afe85 1-66
+setup.sh
+  s_045e309c7b4bfc::t_0019578d9ae284 1-54
+tests/conftest.py
+  s_045e309c7b4bfc::t_7052105993d343 1-35
+tests/reference_ling_moe.py
+  s_045e309c7b4bfc::t_c2c8a528b2f3a9 1-180
+tests/test_actor_cpu_defaults.py
+  s_045e309c7b4bfc::t_4e453747429217 1-53
+tests/test_backend_diagnostics.py
+  s_045e309c7b4bfc::t_d33fd9db4808f0 1-47
+tests/test_calibration.py
+  s_045e309c7b4bfc::t_cd25f857b9e263 1-407
+tests/test_capacity_handling.py
+  s_045e309c7b4bfc::t_d9879af0411a8b 1-841
+tests/test_checkpoint_work_state.py
+  s_045e309c7b4bfc::t_87823fbafcc0fe 1-546
+tests/test_cluster_preflight.py
+  s_045e309c7b4bfc::t_e6bc1faa78ea12 1-331
+tests/test_compiled_l1.py
+  s_045e309c7b4bfc::t_589b3246d2ac01 1-88
+tests/test_context_features.py
+  s_045e309c7b4bfc::t_174f18bfbbde62 1-62
+tests/test_conversation_normalization.py
+  s_045e309c7b4bfc::t_e1bab5d735d5c6 1-107
+tests/test_convert_pretokenized_jsonl.py
+  s_045e309c7b4bfc::t_3828b6640f5fc9 1-104
+tests/test_convert_to_hf.py
+  s_045e309c7b4bfc::t_6cec89278d5856 1-320
+tests/test_csa_cp_gpu.py
+  s_045e309c7b4bfc::t_9df6694b6d492b 1-289
+tests/test_cudnn_flex_attention.py
+  s_045e309c7b4bfc::t_3784215efac21f 1-775
+tests/test_cudnn_gqa_layout_gpu.py
+  s_045e309c7b4bfc::t_881f4e269e2589 1-77
+tests/test_cudnn_gqa_mode.py
+  s_045e309c7b4bfc::t_2ce4205c1e7d45 1-125
+tests/test_cudnn_internal_gqa_gpu.py
+  s_045e309c7b4bfc::t_f9068441c4fec8 1-342
+tests/test_cudnn_thd_cp_gpu.py
+  s_045e309c7b4bfc::t_036a338121ed66 1-205
+tests/test_data_fetcher.py
+  s_045e309c7b4bfc::t_7bfd862cb3ea20 1-943
+tests/test_data_utils.py
+  s_045e309c7b4bfc::t_b8efe6ab91569f 1-102
+tests/test_decode_evaluation.py
+  s_045e309c7b4bfc::t_fb21d189a61f8c 1-107
+tests/test_deepspec_benchmark.py
+  s_045e309c7b4bfc::t_da657218daeef2 1-89
+tests/test_deepspec_offline_benchmark.py
+  s_045e309c7b4bfc::t_5d7d398c556ce8 1-108
+tests/test_dependency_audit.py
+  s_045e309c7b4bfc::t_2e2f998ff2c6bc 1-70
+tests/test_dependency_extras.py
+  s_045e309c7b4bfc::t_9c1b5ef310f7aa 1-62
+tests/test_dflash.py
+  s_045e309c7b4bfc::t_65a1b73f577021 1-1818
+tests/test_dflash2.py
+  s_045e309c7b4bfc::t_71d414dc847e33 1-407
+tests/test_dflash2_direct_cp.py
+  s_045e309c7b4bfc::t_e8cd9f01065296 1-122
+tests/test_dflash_position_layout.py
+  s_045e309c7b4bfc::t_91fba257243328 1-25
+tests/test_diagnostic_utilities.py
+  s_045e309c7b4bfc::t_06b9dbc7c93a06 1-102
+tests/test_direct_cp.py
+  s_045e309c7b4bfc::t_665119e1fd81bf 1-354
+tests/test_direct_cp_gpu.py
+  s_045e309c7b4bfc::t_40ee29741f795a 1-125
+tests/test_draft_configuration_effects.py
+  s_045e309c7b4bfc::t_5a200a66da9005 1-132
+tests/test_draft_csa.py
+  s_045e309c7b4bfc::t_9b16db32ff5e39 1-655
+tests/test_draft_dsa.py
+  s_045e309c7b4bfc::t_5cc2b1cfd87519 1-606
+tests/test_draft_from_pretrained.py
+  s_045e309c7b4bfc::t_b909ec487760ce 1-121
+tests/test_draft_model_config.py
+  s_045e309c7b4bfc::t_e34ca1398c64a3 1-214
+tests/test_draft_moe.py
+  s_045e309c7b4bfc::t_5837f0032ad864 1-274
+tests/test_draft_qsa.py
+  s_045e309c7b4bfc::t_f7fd69bb8a3776 1-638
+tests/test_draft_rope.py
+  s_045e309c7b4bfc::t_768f9e15fa3dc3 1-196
+tests/test_draft_swa.py
+  s_045e309c7b4bfc::t_985ef5342f5e9a 1-318
+tests/test_dsa_gpu.py
+  s_045e309c7b4bfc::t_83d05bdb8cfb0f 1-177
+tests/test_dspark.py
+  s_045e309c7b4bfc::t_60fd0287a375ed 1-845
+tests/test_dspark_acceptance.py
+  s_045e309c7b4bfc::t_ae5a72ba5b606a 1-98
+tests/test_dspark_alignment_resume_gpu.py
+  s_045e309c7b4bfc::t_9287446276abe3 1-144
+tests/test_dspark_checkpoint_comparison.py
+  s_045e309c7b4bfc::t_ac85c108883d51 1-64
+tests/test_dspark_cp1_drift.py
+  s_045e309c7b4bfc::t_05f3ce4f208a50 1-57
+tests/test_dspark_cp1_probe.py
+  s_045e309c7b4bfc::t_ae7ec1f59e38a3 1-70
+tests/test_dspark_cp1_replay.py
+  s_045e309c7b4bfc::t_e44cba4dc3381e 1-54
+tests/test_dspark_cp_operator_probe.py
+  s_045e309c7b4bfc::t_042a27a603ea90 1-28
+tests/test_dspark_cp_self_replay.py
+  s_045e309c7b4bfc::t_426dda88fe0e84 1-46
+tests/test_dspark_cp_state_audit.py
+  s_045e309c7b4bfc::t_9b88084df3103d 1-169
+tests/test_dspark_draft_benchmark.py
+  s_045e309c7b4bfc::t_a19041bae57e5c 1-57
+tests/test_dspark_fa4_numerics.py
+  s_045e309c7b4bfc::t_eed81ac46952d0 1-73
+tests/test_dspark_layout_alignment.py
+  s_045e309c7b4bfc::t_7d1d94a7e05f47 1-60
+tests/test_dspark_loss_alignment.py
+  s_045e309c7b4bfc::t_5e8dc19e079f88 1-242
+tests/test_dspark_nonpacking_alignment.py
+  s_045e309c7b4bfc::t_a7341f4647b6db 1-236
+tests/test_dspark_output_compaction.py
+  s_045e309c7b4bfc::t_5ac50576e8471b 1-652
+tests/test_dspark_pipeline_alignment.py
+  s_045e309c7b4bfc::t_5decd65fc1ff00 1-172
+tests/test_dspark_qk_cutedsl.py
+  s_045e309c7b4bfc::t_894b4194f40d69 1-288
+tests/test_dspark_quality_comparison.py
+  s_045e309c7b4bfc::t_e4b48f396a0a11 1-206
+tests/test_dspark_teacher_contract.py
+  s_045e309c7b4bfc::t_6240771647bfac 1-81
+tests/test_dspark_torchspec_alignment.py
+  s_045e309c7b4bfc::t_963ac91278cf89 1-168
+tests/test_dspark_trajectory_probe.py
+  s_045e309c7b4bfc::t_a213c728fba9d8 1-128
+tests/test_dspark_update_alignment.py
+  s_045e309c7b4bfc::t_4b251eb4fad644 1-207
+tests/test_dynamic_last_turn_loss.py
+  s_045e309c7b4bfc::t_b2af80b36cf6ed 1-398
+tests/test_eagle3_metric_lifecycle.py
+  s_045e309c7b4bfc::t_b92e0d2141ac6c 1-110
+tests/test_eagle3_target_cache.py
+  s_045e309c7b4bfc::t_5c990de1b4f9dc 1-244
+tests/test_eagle3_trainer.py
+  s_045e309c7b4bfc::t_f5c2a80c9438bf 1-308
+tests/test_eagle4.py
+  s_045e309c7b4bfc::t_241f3de33cf769 1-397
+tests/test_eagle4_moe.py
+  s_045e309c7b4bfc::t_30006ebd4d7175 1-157
+tests/test_eagle4_validation.py
+  s_045e309c7b4bfc::t_d32d598360ef75 1-40
+tests/test_eagle_pruned.py
+  s_045e309c7b4bfc::t_c60ce4846e2ea7 1-240
+tests/test_eagle_thd.py
+  s_045e309c7b4bfc::t_3cdde6149dcb6e 1-70
+tests/test_env.py
+  s_045e309c7b4bfc::t_3fa6e25475fc79 1-68
+tests/test_environment_scripts.py
+  s_045e309c7b4bfc::t_1d2edf343af199 1-91
+tests/test_evaluation_contract.py
+  s_045e309c7b4bfc::t_1a2b977ba768a7 1-296
+tests/test_evidence.py
+  s_045e309c7b4bfc::t_1c671f5dd139ae 1-1694
+tests/test_experiment_tracking.py
+  s_045e309c7b4bfc::t_b7c3d0884e6ea2 1-226
+tests/test_fa4_import_compat.py
+  s_045e309c7b4bfc::t_0e0483104cb5df 1-107
+tests/test_fa4_sparse_tiles.py
+  s_045e309c7b4bfc::t_d7c9e466c18e23 1-84
+tests/test_feature_contract.py
+  s_045e309c7b4bfc::t_9732f43f3cdc8f 1-138
+tests/test_flex_attention.py
+  s_045e309c7b4bfc::t_b7637dee9a5775 1-517
+tests/test_gradient_scaling_gpu.py
+  s_045e309c7b4bfc::t_9b3c3f6eede0d3 1-121
+tests/test_indexed_l1_gpu.py
+  s_045e309c7b4bfc::t_e0fab0efe314e4 1-168
+tests/test_inference_concurrency.py
+  s_045e309c7b4bfc::t_86f1c9172091d9 1-279
+tests/test_inference_manager_lifecycle.py
+  s_045e309c7b4bfc::t_7bb4390f9f5c62 1-680
+tests/test_initial_draft_model_path.py
+  s_045e309c7b4bfc::t_3eee2904945989 1-286
+tests/test_l1_checkpoint_gpu.py
+  s_045e309c7b4bfc::t_49bbf0bb4751d5 1-82
+tests/test_length_grouping.py
+  s_045e309c7b4bfc::t_bbd930186d99b7 1-213
+tests/test_ling31_recipe.py
+  s_045e309c7b4bfc::t_de8d3d25c76caf 1-57
+tests/test_ling3_flash_recipe.py
+  s_045e309c7b4bfc::t_9071d44129378a 1-68
+tests/test_ling3_recipe.py
+  s_045e309c7b4bfc::t_cae366b38a978e 1-93
+tests/test_ling_moe.py
+  s_045e309c7b4bfc::t_0623951f34d635 1-309
+tests/test_loop_cleanup.py
+  s_045e309c7b4bfc::t_c414ffc7fbcce3 1-2171
+tests/test_loss_mask.py
+  s_045e309c7b4bfc::t_966f2eca3b8717 1-305
+tests/test_loss_mask_cross_validation.py
+  s_045e309c7b4bfc::t_7608bd8bdec39c 1-250
+tests/test_misc.py
+  s_045e309c7b4bfc::t_5634c6ee03853e 1-53
+tests/test_mooncake_config.py
+  s_045e309c7b4bfc::t_61b9e843413f8e 1-290
+tests/test_mooncake_force_delete.py
+  s_045e309c7b4bfc::t_960ad39c962e1e 1-474
+tests/test_mooncake_master.py
+  s_045e309c7b4bfc::t_f83b1b4156a8b4 1-328
+tests/test_mooncake_p2p.py
+  s_045e309c7b4bfc::t_a2bd429197dc48 1-632
+tests/test_mooncake_p2p_gpu.py
+  s_045e309c7b4bfc::t_e7572ecd2ea106 1-179
+tests/test_mooncake_p2p_multinode.py
+  s_045e309c7b4bfc::t_d9dc28c5434f3f 1-279
+tests/test_mooncake_store_multinode.py
+  s_045e309c7b4bfc::t_46e53bbf689129 1-150
+tests/test_mooncake_store_transport.py
+  s_045e309c7b4bfc::t_4efacad2931973 1-336
+tests/test_multi_draft_endurance_audit.py
+  s_045e309c7b4bfc::t_17ce18f0065a4c 1-109
+tests/test_multi_draft_plan.py
+  s_045e309c7b4bfc::t_f883934342fb9b 1-288
+tests/test_multi_draft_resume_audit.py
+  s_045e309c7b4bfc::t_0d2e0e0a28168f 1-153
+tests/test_multi_draft_runtime.py
+  s_045e309c7b4bfc::t_a237e3af98a855 1-393
+tests/test_multi_structure_recipe.py
+  s_045e309c7b4bfc::t_a4e94eb6c98ee4 1-138
+tests/test_multinode_tcp_reference.py
+  s_045e309c7b4bfc::t_96a8657ff4be26 1-160
+tests/test_native_draft_artifact.py
+  s_045e309c7b4bfc::t_64abb5b4e8aa17 1-227
+tests/test_native_mtp.py
+  s_045e309c7b4bfc::t_2a4fa2494b17f4 1-297
+tests/test_native_mtp_thd.py
+  s_045e309c7b4bfc::t_9ffcde4d60545f 1-113
+tests/test_node_local_files.py
+  s_045e309c7b4bfc::t_25f6011394a6c9 1-111
+tests/test_offline_replay.py
+  s_045e309c7b4bfc::t_b7c1679c10cb27 1-580
+tests/test_onboarding.py
+  s_045e309c7b4bfc::t_0e06000a2525fb 1-190
+tests/test_open_source_entrypoints.py
+  s_045e309c7b4bfc::t_972568c54b05f8 1-180
+tests/test_optimizer.py
+  s_045e309c7b4bfc::t_2815880ed5b8f4 1-193
+tests/test_optimizer_sharded_norm.py
+  s_045e309c7b4bfc::t_bbc9a8364d9a99 1-62
+tests/test_optimizer_state_keys.py
+  s_045e309c7b4bfc::t_fb9b0ccb289d32 1-175
+tests/test_owner_fence.py
+  s_045e309c7b4bfc::t_c4b68f29df23e5 1-139
+tests/test_packing.py
+  s_045e309c7b4bfc::t_4a44324b16d677 1-181
+tests/test_partition_results.py
+  s_045e309c7b4bfc::t_747142d2f2c85d 1-336
+tests/test_placement_group.py
+  s_045e309c7b4bfc::t_864b9de609cac4 1-364
+tests/test_planning.py
+  s_045e309c7b4bfc::t_4e3dd884642166 1-1132
+tests/test_prepare_quality_dataset.py
+  s_045e309c7b4bfc::t_483b766ccb3f14 1-83
+tests/test_prepare_single_node_27b_4k.py
+  s_045e309c7b4bfc::t_dac42fed524d60 1-74
+tests/test_pretokenized_dataset.py
+  s_045e309c7b4bfc::t_672ba9410410b9 1-239
+tests/test_profiling_cleanup.py
+  s_045e309c7b4bfc::t_d9352e26f13bae 1-84
+tests/test_qsa_warmup_cp_gpu.py
+  s_045e309c7b4bfc::t_12964a775ec849 1-264
+tests/test_recipe_capacity.py
+  s_045e309c7b4bfc::t_1db4edd4cf428a 1-59
+tests/test_recipe_node_loss.py
+  s_045e309c7b4bfc::t_310162fd6c22e3 1-77
+tests/test_release_audit.py
+  s_045e309c7b4bfc::t_5c37d8a62d19a3 1-133
+tests/test_release_recipes.py
+  s_045e309c7b4bfc::t_ed6f91db98c2a3 1-283
+tests/test_renderer_registry.py
+  s_045e309c7b4bfc::t_bf1a1e08bea0e2 1-504
+tests/test_reporting.py
+  s_045e309c7b4bfc::t_f79b83f99acb96 1-228
+tests/test_rotary_gpu.py
+  s_045e309c7b4bfc::t_c52b328007f807 1-62
+tests/test_runtime_control.py
+  s_045e309c7b4bfc::t_78e62c40381dd8 1-79
+tests/test_sample_anchor_budget.py
+  s_045e309c7b4bfc::t_e89a284218e424 1-212
+tests/test_save_config.py
+  s_045e309c7b4bfc::t_afb6166b8c0994 1-353
+tests/test_selected_answers.py
+  s_045e309c7b4bfc::t_f5827eda58a84a 1-183
+tests/test_sgl_engine_decode.py
+  s_045e309c7b4bfc::t_0af3b33b0feda9 1-186
+tests/test_sgl_engine_factory.py
+  s_045e309c7b4bfc::t_2b285a709a1ff5 1-740
+tests/test_sglang_engine_integration.py
+  s_045e309c7b4bfc::t_5fac940c1bd08e 1-397
+tests/test_sglang_migration_replay.py
+  s_045e309c7b4bfc::t_fd6a4995fac7cf 1-59
+tests/test_sglang_patch_contract.py
+  s_045e309c7b4bfc::t_e9b0c26113b372 1-128
+tests/test_sglang_v0521.py
+  s_045e309c7b4bfc::t_705709dcfa494c 1-473
+tests/test_shared_cp_views.py
+  s_045e309c7b4bfc::t_678a3ce2490d03 1-171
+tests/test_shared_feature_views.py
+  s_045e309c7b4bfc::t_b7eafb08059ee1 1-103
+tests/test_shared_source.py
+  s_045e309c7b4bfc::t_3fcf7cb6c92583 1-667
+tests/test_shipped_config_defaults.py
+  s_045e309c7b4bfc::t_3f313445f3b083 1-62
+tests/test_source_balanced_dispatch.py
+  s_045e309c7b4bfc::t_218b218f0219b4 1-284
+tests/test_source_fence_cli.py
+  s_045e309c7b4bfc::t_a0d259c1008bd4 1-147
+tests/test_source_quality_contracts.py
+  s_045e309c7b4bfc::t_9b19b6557010d9 1-232
+tests/test_sparse_cp_geometry.py
+  s_045e309c7b4bfc::t_e989a9713ea5ba 1-223
+tests/test_sparse_thd_cp.py
+  s_045e309c7b4bfc::t_f5d97625163622 1-703
+tests/test_specforge_draft_benchmark.py
+  s_045e309c7b4bfc::t_b5b6163e09f4fe 1-52
+tests/test_specforge_e2e_benchmark.py
+  s_045e309c7b4bfc::t_87a1c7da40874a 1-310
+tests/test_speculative_algorithms.py
+  s_045e309c7b4bfc::t_0c2c02faed7fdb 1-416
+tests/test_stage_recipe_inputs.py
+  s_045e309c7b4bfc::t_3490dfc9c1f066 1-56
+tests/test_startup_cleanup.py
+  s_045e309c7b4bfc::t_ff52fcbddf8392 1-360
+tests/test_target_dataset.py
+  s_045e309c7b4bfc::t_68182ecc604606 1-194
+tests/test_target_lm_head.py
+  s_045e309c7b4bfc::t_5970f03914c1ea 1-244
+tests/test_target_prefill.py
+  s_045e309c7b4bfc::t_36252a3dbbf8cb 1-295
+tests/test_thd_attention.py
+  s_045e309c7b4bfc::t_31446c0253dbe7 1-302
+tests/test_thd_cache.py
+  s_045e309c7b4bfc::t_7b29e217025b51 1-104
+tests/test_thd_sparse_metadata.py
+  s_045e309c7b4bfc::t_1df562f842c482 1-215
+tests/test_tiled_l1.py
+  s_045e309c7b4bfc::t_dc844c5bbbcc84 1-148
+tests/test_topology.py
+  s_045e309c7b4bfc::t_2d9c0abfea245f 1-846
+tests/test_torchspec_benchmark.py
+  s_045e309c7b4bfc::t_b32ff7c85fd2fa 1-329
+tests/test_torchspec_e2e_benchmark.py
+  s_045e309c7b4bfc::t_5adbe89149bbee 1-429
+tests/test_training_config_validation.py
+  s_045e309c7b4bfc::t_07b0e95a06378b 1-744
+tests/test_training_resume_rng.py
+  s_045e309c7b4bfc::t_9ba611a7042319 1-85
+tests/test_unpadded_bshd.py
+  s_045e309c7b4bfc::t_b67a13b7ae4afd 1-64
+tests/test_vocab_mapping.py
+  s_045e309c7b4bfc::t_5360acf67235fc 1-266
+tests/test_wheel_assets.py
+  s_045e309c7b4bfc::t_21f0d8cbafc8ca 1-85
+tests/test_work_lifecycle.py
+  s_045e309c7b4bfc::t_587f2dbc948b9d 1-396
+tests/utils.py
+  s_045e309c7b4bfc::t_aa9a68a17061d1 1-33
+tools/README.md
+  s_045e309c7b4bfc::t_63881d0d9000a5 1-38
+tools/apply_sglang_patch.py
+  s_045e309c7b4bfc::t_e094e12d6a09e8 1-25
+tools/audit_release.py
+  s_045e309c7b4bfc::t_16aa930f6c3380 1-222
+tools/build_fixed_token_workload.py
+  s_045e309c7b4bfc::t_71e9f4c3321c00 1-173
+tools/build_mixed_length_workload.py
+  s_045e309c7b4bfc::t_7c415e77034995 1-79
+tools/build_release.py
+  s_045e309c7b4bfc::t_bce6d85d5312f7 1-52
+tools/calibration.py
+  s_045e309c7b4bfc::t_147a8ab9eabcef 1-272
+tools/check_docs.py
+  s_045e309c7b4bfc::t_8feb71f2956631 1-61
+tools/check_wheel_install.py
+  s_045e309c7b4bfc::t_521260d37d5a4e 1-134
+tools/convert_pretokenized_jsonl.py
+  s_045e309c7b4bfc::t_c0dccd58bbe8f3 1-24
+tools/convert_to_hf.py
+  s_045e309c7b4bfc::t_8cb28246f63c06 1-24
+tools/doctor.py
+  s_045e309c7b4bfc::t_bf351d58681aec 1-24
+tools/evaluate_draft.py
+  s_045e309c7b4bfc::t_758fe9ab9ebddf 1-24
+tools/install.sh
+  s_045e309c7b4bfc::t_d2684d9e57b207 1-56
+tools/performance/angelspec_dspark_correctness.patch
+  s_045e309c7b4bfc::t_7fc2964d9ddbc7 1-291
+tools/performance/angelspec_h20_runtime_compat.patch
+  s_045e309c7b4bfc::t_7489e5b755cee5 1-24
+tools/performance/angelspec_mooncake_wait_config.patch
+  s_045e309c7b4bfc::t_8ba13e762320e7 1-29
+tools/performance/angelspec_skip_final_artifacts.patch
+  s_045e309c7b4bfc::t_09d7ca0e707676 1-25
+tools/performance/bench_dspark_b7_attention.py
+  s_045e309c7b4bfc::t_4578d3d25df570 1-1487
+tools/performance/bench_dspark_mla_cudnn.py
+  s_045e309c7b4bfc::t_34d2dff02fd0ef 1-357
+tools/performance/bench_eagle3_train_core.py
+  s_045e309c7b4bfc::t_b82882f46dae10 1-297
+tools/performance/bench_thd_cp_attention.py
+  s_045e309c7b4bfc::t_e19a047370e3c6 1-231
+tools/performance/benchmark_cudnn_gqa.py
+  s_045e309c7b4bfc::t_c4f35d412afd7b 1-289
+tools/performance/deepspec_benchmark.py
+  s_045e309c7b4bfc::t_fcc69e80ecfb33 1-353
+tools/performance/deepspec_offline_benchmark.py
+  s_045e309c7b4bfc::t_033c9dc12c1e53 1-415
+tools/performance/dspark_draft_benchmark.py
+  s_045e309c7b4bfc::t_b79dabc7e4c584 1-507
+tools/performance/dspark_sm90_probe.py
+  s_045e309c7b4bfc::t_1ca74df6eb09c4 1-205
+tools/performance/prepare_single_node_27b_4k.py
+  s_045e309c7b4bfc::t_b8ee9c0471e3ec 1-370
+tools/performance/profile_dspark_draft.py
+  s_045e309c7b4bfc::t_ac99cc346579f8 1-95
+tools/performance/sglang_0_5_19_angelspec_baseline.patch
+  s_045e309c7b4bfc::t_ae2135b3aab37d 1-58
+tools/performance/specforge_draft_benchmark.py
+  s_045e309c7b4bfc::t_34e9bdc39eb82b 1-336
+tools/performance/specforge_e2e_benchmark.py
+  s_045e309c7b4bfc::t_d0ac8ac8d684ef 1-573
+tools/performance/specforge_wall_observer.py
+  s_045e309c7b4bfc::t_94039c9eeb172e 1-134
+tools/performance/torchspec_benchmark.py
+  s_045e309c7b4bfc::t_079a3623561558 1-909
+tools/performance/torchspec_e2e_benchmark.py
+  s_045e309c7b4bfc::t_3bf67160cdcc77 1-811
+tools/performance/validate_dspark_cudnn_accuracy.py
+  s_045e309c7b4bfc::t_5080e1a444eb1f 1-325
+tools/prepare_quality_dataset.py
+  s_045e309c7b4bfc::t_293530789b0c12 1-24
+tools/prepare_selected_answers.py
+  s_045e309c7b4bfc::t_1414cf2f7f24ff 1-24
+tools/prepare_target_dataset.py
+  s_045e309c7b4bfc::t_4d932974376011 1-24
+tools/quickstart.py
+  s_045e309c7b4bfc::t_ba873c5176d32f 1-24
+tools/recipe_catalog.json
+  s_045e309c7b4bfc::t_beabd668d3a595 1-139
+tools/recipes.py
+  s_045e309c7b4bfc::t_c89bd22a6a84a7 1-294
+tools/run_in_env.sh
+  s_045e309c7b4bfc::t_d01f168d67b152 1-10
+tools/stage_recipe_inputs.py
+  s_045e309c7b4bfc::t_858716ba823552 1-100
+tools/start_recipe_node.sh
+  s_045e309c7b4bfc::t_86e832fd7fea60 1-16
+tools/stitch_native_mtp.py
+  s_045e309c7b4bfc::t_a518e6fcb7fb2c 1-24
+tools/validation/csa_layer_training.py
+  s_045e309c7b4bfc::t_c45006396c4b12 1-165
+tools/validation/dflash2_asset_contract.py
+  s_045e309c7b4bfc::t_7b3488cf6761df 1-77
+tools/validation/dflash2_reference.py
+  s_045e309c7b4bfc::t_3b06edbef111c5 1-168
+tools/validation/dspark_cache_replay.py
+  s_045e309c7b4bfc::t_a1faedd8a19519 1-114
+tools/validation/dspark_checkpoint_comparison.py
+  s_045e309c7b4bfc::t_42aec7e6f8db81 1-121
+tools/validation/dspark_confidence_probe.py
+  s_045e309c7b4bfc::t_1edc451536871a 1-163
+tools/validation/dspark_cp1_drift.py
+  s_045e309c7b4bfc::t_e237a40c138f66 1-143
+tools/validation/dspark_cp1_probe.py
+  s_045e309c7b4bfc::t_63d198d1355952 1-287
+tools/validation/dspark_cp1_replay.py
+  s_045e309c7b4bfc::t_2fbad217d6819c 1-238
+tools/validation/dspark_cp_operator_probe.py
+  s_045e309c7b4bfc::t_b7e785f89953fd 1-255
+tools/validation/dspark_cp_self_replay.py
+  s_045e309c7b4bfc::t_1d6d08923e9ac6 1-240
+tools/validation/dspark_cp_state_audit.py
+  s_045e309c7b4bfc::t_104e22d6dd546b 1-383
+tools/validation/dspark_fa4_numerics.py
+  s_045e309c7b4bfc::t_a94157f96cf394 1-346
+tools/validation/dspark_fa4_repeatability.py
+  s_045e309c7b4bfc::t_50bfc208ae5595 1-194
+tools/validation/dspark_layout_alignment.py
+  s_045e309c7b4bfc::t_a30c0b29d5ce21 1-99
+tools/validation/dspark_loss_alignment.py
+  s_045e309c7b4bfc::t_b8486079c9aa0f 1-394
+tools/validation/dspark_nonpacking_alignment.py
+  s_045e309c7b4bfc::t_d17a158fb75f3e 1-1098
+tools/validation/dspark_nonpacking_operator_probe.py
+  s_045e309c7b4bfc::t_9c2af2222093eb 1-196
+tools/validation/dspark_output_compaction.py
+  s_045e309c7b4bfc::t_e59e5491291d74 1-344
+tools/validation/dspark_pipeline_alignment.py
+  s_045e309c7b4bfc::t_fd8535b89fe606 1-747
+tools/validation/dspark_quality_comparison.py
+  s_045e309c7b4bfc::t_42ebc5c2b589e0 1-349
+tools/validation/dspark_reference.py
+  s_045e309c7b4bfc::t_720cadda1280fa 1-179
+tools/validation/dspark_sm90_alignment.py
+  s_045e309c7b4bfc::t_547954dce26aae 1-195
+tools/validation/dspark_state_transplant.py
+  s_045e309c7b4bfc::t_476330aa7b8d7e 1-129
+tools/validation/dspark_teacher_contract.py
+  s_045e309c7b4bfc::t_78a4e9912ed461 1-85
+tools/validation/dspark_torchspec_alignment.py
+  s_045e309c7b4bfc::t_c287d4d4b4ced6 1-395
+tools/validation/dspark_trajectory_probe.py
+  s_045e309c7b4bfc::t_b0f976e6d11804 1-317
+tools/validation/dspark_update_alignment.py
+  s_045e309c7b4bfc::t_3a25f8931fc619 1-183
+tools/validation/dspark_update_replay.py
+  s_045e309c7b4bfc::t_cf17b3c7337430 1-276
+tools/validation/eagle4_asset.py
+  s_045e309c7b4bfc::t_8adc989f462d96 1-58
+tools/validation/eagle4_candidate_state.py
+  s_045e309c7b4bfc::t_61b0ecb703d6a7 1-112
+tools/validation/eagle4_upstream.py
+  s_045e309c7b4bfc::t_f1d09271a691ef 1-125
+tools/validation/eagle_thd_reference.py
+  s_045e309c7b4bfc::t_74075e5750a593 1-308
+tools/validation/lifecycle_gpu_regression.py
+  s_045e309c7b4bfc::t_00165935e7a429 1-252
+tools/validation/ling_moe_reference.py
+  s_045e309c7b4bfc::t_0d331a41efa924 1-79
+tools/validation/ling_qwen_moe_config.json
+  s_045e309c7b4bfc::t_3045895c6bd98d 1-39
+tools/validation/moe_draft_distributed.py
+  s_045e309c7b4bfc::t_3534912e0a1ebb 1-194
+tools/validation/moe_export_parity.py
+  s_045e309c7b4bfc::t_3e6a60eeef0f00 1-297
+tools/validation/multi_draft_endurance.py
+  s_045e309c7b4bfc::t_d92ac8d1d514a7 1-165
+tools/validation/multi_draft_endurance_summary.py
+  s_045e309c7b4bfc::t_36a3a003257f7d 1-162
+tools/validation/multi_draft_faults.py
+  s_045e309c7b4bfc::t_0511cec146bb0b 1-94
+tools/validation/multi_draft_replay.py
+  s_045e309c7b4bfc::t_fb8230274cce66 1-304
+tools/validation/multi_draft_resume.py
+  s_045e309c7b4bfc::t_07e0bbd84e377b 1-279
+tools/validation/multi_draft_summary.py
+  s_045e309c7b4bfc::t_cdf9ee0ed60941 1-87
+tools/validation/native_asset_proposal.py
+  s_045e309c7b4bfc::t_8eaad60b1aa8ce 1-105
+tools/validation/native_mtp_reference.py
+  s_045e309c7b4bfc::t_05bbaa6354e3a5 1-165
+tools/validation/native_mtp_thd.py
+  s_045e309c7b4bfc::t_9787d43aff96bb 1-139
+tools/validation/qsa_attention.py
+  s_045e309c7b4bfc::t_b28893cb86d0ef 1-262
+tools/validation/qsa_correctness.py
+  s_045e309c7b4bfc::t_a33cf29b33a5b7 1-162
+tools/validation/recipe_capacity.py
+  s_045e309c7b4bfc::t_7847455f02895a 1-24
+tools/validation/recipe_faults.py
+  s_045e309c7b4bfc::t_5917aa766b178d 1-53
+tools/validation/recipe_gpu_smoke.py
+  s_045e309c7b4bfc::t_83c9c9d674c0a7 1-24
+tools/validation/recipe_node_loss.py
+  s_045e309c7b4bfc::t_8ecd69e0f18883 1-221
+tools/validation/sample_anchor_alignment.py
+  s_045e309c7b4bfc::t_6840860d4945d6 1-138
+tools/validation/sglang_export_smoke.py
+  s_045e309c7b4bfc::t_3e77a4e12d6719 1-107
+tools/validation/sglang_migration_replay.py
+  s_045e309c7b4bfc::t_8b324ccf5fe555 1-251
+tools/validation/sglang_v0521_features.py
+  s_045e309c7b4bfc::t_760c7bd58323ea 1-197
+tools/validation/shared_cp_lifecycle.py
+  s_045e309c7b4bfc::t_5de5be9d0633ac 1-92
+tools/validation/shared_tracking_readback.py
+  s_045e309c7b4bfc::t_78022dbe22b638 1-107
+tools/validation/speculative_algorithm_reference.py
+  s_045e309c7b4bfc::t_cd5a29adc0d141 1-146
+tools/validation/store_gpu_regression.py
+  s_045e309c7b4bfc::t_e9a36551924225 1-207
+tools/validation/structured_thd_training.py
+  s_045e309c7b4bfc::t_b078c1f7a3114d 1-254
+tools/validation/swa_attention.py
+  s_045e309c7b4bfc::t_15b6cdb5ddd36d 1-147
+tools/validation/swa_training.py
+  s_045e309c7b4bfc::t_3b91d8464f5b10 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6d0b481ddeed90f0847b38ea543ee1eaa6e977c0",
+  "prompts": {},
+  "sessions": {
+    "s_045e309c7b4bfc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1636f-6da7-7d11-ab9f-90167fb49e87",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "zhouaihui <albert.zah@antgroup.com>"
+    }
+  }
+}
