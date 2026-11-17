@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Adapted by ASpec Authors from NVIDIA cuDNN Frontend cb8cec8.
+# ASpec modifications Copyright (c) 2026 Ant Group Co., Ltd.
 
 """ASpec-owned CuTeDSL adjoint for the DSpark Q/K preparation kernel.
 
@@ -131,6 +132,7 @@ def _row_class(
     mAmaxOut: Optional[cute.Tensor],  # [>= grid] fp32: partials[cta] = max |stored words| of this CTA (plain store at CTA end); None = no fold
     cta: cutlass.Int32,  # the GRID-level block index: the partial this CTA owns
     sred,  # the ONE sRed SMEM Array of the kernel, fp32 [warps] (None without want_amax)
+    round_intermediates: cutlass.Constexpr[bool] = False,
 ) -> None:
     """The persistent loop of ONE row class (Q, K or V) for one CTA.
 
@@ -288,9 +290,15 @@ def _row_class(
                     rotated = []
                     for i in cutlass.range_constexpr(ELEMS_PER_ACCESS):
                         t_i = g[0][i] * sin_v[i]
+                        if cutlass.const_expr(round_intermediates):
+                            t_i = t_i.to(io_dtype).to(cutlass.Float32)
                         partner = cutlass.Float32(nvvm.shfl_sync(0xFFFFFFFF, t_i, cutlass.Int32(half_lanes), 31, kind=nvvm.Shfl.BFLY))
                         signed = partner if lane < cutlass.Int32(half_lanes) else -partner  # the forward's sign, FLIPPED
-                        rotated.append(cute.math.fma(g[0][i], cos_v[i], signed))
+                        if cutlass.const_expr(round_intermediates):
+                            direct = (g[0][i] * cos_v[i]).to(io_dtype).to(cutlass.Float32)
+                            rotated.append((direct + signed).to(io_dtype).to(cutlass.Float32))
+                        else:
+                            rotated.append(cute.math.fma(g[0][i], cos_v[i], signed))
                     for i in cutlass.range_constexpr(ELEMS_PER_ACCESS):
                         g[0][i] = rotated[i] if in_rope else g[0][i]
 
@@ -304,6 +312,9 @@ def _row_class(
                     rstd = rstds[r]
                     x_hat = [[xs[r][c][i] * rstd for i in range(ELEMS_PER_ACCESS)] for c in range(chunks)]
                     gw = [[g[c][i] * ws[c][i] for i in range(ELEMS_PER_ACCESS)] for c in range(chunks)]
+                    if cutlass.const_expr(round_intermediates):
+                        gw = [[gw[c][i].to(io_dtype).to(cutlass.Float32)
+                               for i in range(ELEMS_PER_ACCESS)] for c in range(chunks)]
                     acc = zero
                     for c in cutlass.range_constexpr(chunks):
                         for i in cutlass.range_constexpr(ELEMS_PER_ACCESS):
@@ -317,15 +328,23 @@ def _row_class(
                         keep = valid & (~deads[r]) if cutlass.const_expr(has_seq_lens) else valid
                         for c in cutlass.range_constexpr(chunks):
                             for i in cutlass.range_constexpr(ELEMS_PER_ACCESS):
-                                dw_acc[c * ELEMS_PER_ACCESS + i] = (
-                                    cute.math.fma(
-                                        g[c][i],
-                                        x_hat[c][i],
-                                        dw_acc[c * ELEMS_PER_ACCESS + i],
+                                if cutlass.const_expr(round_intermediates):
+                                    normalized = x_hat[c][i].to(io_dtype).to(cutlass.Float32)
+                                    contribution = (g[c][i] * normalized).to(io_dtype).to(cutlass.Float32)
+                                    dw_acc[c * ELEMS_PER_ACCESS + i] = (
+                                        dw_acc[c * ELEMS_PER_ACCESS + i] + contribution
+                                        if keep else dw_acc[c * ELEMS_PER_ACCESS + i]
                                     )
-                                    if keep
-                                    else dw_acc[c * ELEMS_PER_ACCESS + i]
-                                )
+                                else:
+                                    dw_acc[c * ELEMS_PER_ACCESS + i] = (
+                                        cute.math.fma(
+                                            g[c][i],
+                                            x_hat[c][i],
+                                            dw_acc[c * ELEMS_PER_ACCESS + i],
+                                        )
+                                        if keep
+                                        else dw_acc[c * ELEMS_PER_ACCESS + i]
+                                    )
                 else:
                     # RoPE-only: dx IS g; [rope_dim, D) goes back through fp32_to_fp16
                     # untouched by any fp32 op -> a bit-exact copy (asserted by the tests).
@@ -437,6 +456,7 @@ def frost_qk_norm_rope_bwd(
     rows_per_group: cutlass.Constexpr[int],
     batch_one: cutlass.Constexpr[bool],
     use_pdl: cutlass.Constexpr[bool],
+    round_intermediates: cutlass.Constexpr[bool] = False,
 ) -> None:
     """Three CTA classes over one grid (Q | K | V), each a persistent row loop; see the module docstring."""
     if cutlass.const_expr(use_pdl):
@@ -524,6 +544,7 @@ def frost_qk_norm_rope_bwd(
             mAmaxOut,
             cta,
             sred,
+            round_intermediates,
         )
     else:
         if cta < n_ctas_q + n_ctas_k:
@@ -585,6 +606,7 @@ def frost_qk_norm_rope_bwd(
                 mAmaxOut,
                 cta,
                 sred,
+                round_intermediates,
             )
         else:
             # ---- V class: the band copy (no norm, no RoPE, no dW) --------------------
@@ -638,6 +660,7 @@ def frost_qk_norm_rope_bwd(
                 mAmaxOut,
                 cta,
                 sred,
+                round_intermediates,
             )
 
     if cutlass.const_expr(use_pdl):
@@ -771,6 +794,7 @@ def qk_norm_rope_bwd_launch(
     batch_one: cutlass.Constexpr[bool],
     use_pdl: cutlass.Constexpr[bool],
     stream: cuda.CUstream,
+    round_intermediates: cutlass.Constexpr[bool] = False,
 ):
     frost_qk_norm_rope_bwd(
         dq,
@@ -815,6 +839,7 @@ def qk_norm_rope_bwd_launch(
         rows_per_group,
         batch_one,
         use_pdl,
+        round_intermediates,
     ).launch(grid=(n_blocks, 1, 1), block=(threads_per_cta, 1, 1), stream=stream, use_pdl=use_pdl)
 
 
@@ -874,6 +899,7 @@ class QkNormRopeBwdRecipe(NamedTuple):
     # Appended (default = today's artifact): the amax fold of the stored bands as per-CTA partials (``amax_out`` REQUIRED).
     want_amax: bool = False
     batch_one: bool = False
+    round_intermediates: bool = False
 
 
 def _resolve_n_ctas_cap(policy: str, device: int) -> int:
@@ -905,6 +931,7 @@ def compile_dspark_qk_norm_rope_bwd(
     batch_one: bool = False,
     use_pdl: bool = False,
     n_ctas_policy: str = DEFAULT_N_CTAS_POLICY,
+    round_intermediates: bool = False,
 ) -> QkNormRopeBwdRecipe:
     """Compile the DSpark asymmetric, indexed-RoPE training adjoint.
 
@@ -939,6 +966,7 @@ def compile_dspark_qk_norm_rope_bwd(
         bool(const_head_counts),
         bool(batch_one),
         bool(use_pdl),
+        bool(round_intermediates),
         str(n_ctas_policy),
         device,
     )
@@ -1007,6 +1035,7 @@ def compile_dspark_qk_norm_rope_bwd(
             bool(batch_one),
             bool(use_pdl),
             _FAKE_STREAM,
+            bool(round_intermediates),
             options="--enable-tvm-ffi",
         )
     reduce_key = (int(d), device)
@@ -1044,6 +1073,7 @@ def compile_dspark_qk_norm_rope_bwd(
         rows_per_group=int(rows_per_group),
         want_amax=False,
         batch_one=bool(batch_one),
+        round_intermediates=bool(round_intermediates),
     )
 
 

@@ -422,11 +422,16 @@ class DFlashAttention(nn.Module):
                 "DFlash GQA attention supports flex_attention and "
                 f"cudnn_flex_attention, got {attention_backend!r}"
             )
-        if attention_backend == "cudnn_flex_attention" and self.head_dim != 128:
-            raise NotImplementedError(
-                "DFlash cuDNN FlexAttention currently requires head_dim=128, "
-                f"got {self.head_dim}"
-            )
+        if attention_backend == "cudnn_flex_attention":
+            if self.head_dim not in {64, 128}:
+                raise NotImplementedError(
+                    "DFlash cuDNN FlexAttention requires head_dim=64 or 128, "
+                    f"got {self.head_dim}"
+                )
+            if self.head_dim == 64 and self.num_heads != self.num_kv_heads:
+                raise NotImplementedError(
+                    "DFlash cuDNN head_dim=64 currently requires Hq=Hkv (MHA)"
+                )
         self.attention_backend = attention_backend
 
     def forward(

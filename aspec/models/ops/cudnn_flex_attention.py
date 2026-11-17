@@ -27,7 +27,7 @@ from typing import Any
 
 import torch
 
-_SUPPORTED_HEAD_DIMS = {(128, 128), (192, 128)}
+_SUPPORTED_HEAD_DIMS = {(64, 64), (128, 128), (192, 128)}
 
 
 def _document_run_starts(ctx_doc_ids: torch.Tensor) -> torch.Tensor:
@@ -373,9 +373,11 @@ def cudnn_flex_attention(
     dims = (query.shape[-1], value.shape[-1])
     if dims not in _SUPPORTED_HEAD_DIMS:
         raise ValueError(
-            "the ASpec cuDNN path currently supports (Dqk,Dv)=(128,128) "
-            f"for GQA and (192,128) for materialized MLA; got {dims}"
+            "the ASpec cuDNN path currently supports (Dqk,Dv)=(64,64) for MHA, "
+            f"(128,128) for GQA and (192,128) for materialized MLA; got {dims}"
         )
+    if dims == (64, 64) and query_heads != key_heads:
+        raise ValueError("cuDNN head_dim=64 currently requires Hq=Hkv (MHA)")
     if dims == (192, 128) and query_heads != key_heads:
         raise ValueError("materialized MLA currently requires Hq=Hkv")
 

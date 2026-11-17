@@ -92,6 +92,7 @@ def _forward_recipe(
                 eps=eps,
                 defer_secondary_loads=False,
                 batch_one=batch_one,
+                round_intermediates=d == 64 and h_q == h_kv,
             )
         _FWD_RECIPES[key] = recipe
     return recipe
@@ -118,6 +119,7 @@ def _backward_recipe(
                 rope_dim=d,
                 eps=eps,
                 batch_one=batch_one,
+                round_intermediates=d == 64 and h_q == h_kv,
             )
         _BWD_RECIPES[key] = recipe
     return recipe

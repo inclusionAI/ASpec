@@ -26,6 +26,35 @@ optimizer/FP32 master, gradients, activations and transfer buffers when checking
 resume/export preserves expert count, top-k, normalization, auxiliary policy and control state;
 missing or unverifiable routing state is not silently accepted.
 
+## cuDNN attention geometry
+
+Set `training.attention_backend=cudnn_flex_attention` to select the cuDNN Frontend
+backend in the [pinned runtime](installation.md). On SM90 and SM100, native MHA
+supports query/key and value head widths of 64 with equal query and KV head counts.
+The adapter also supports width-128 GQA and materialized MLA with query/key width
+192 and value width 128. Width-64 GQA is outside the supported contract.
+
+The optional internal joint-GQA backward has a separate contract: head width 128
+and four query heads per KV head. Native MHA64 does not use that specialization.
+Its fused Q/K normalization and RoPE preserve the eager FP16/BF16 intermediate
+rounding boundaries while retaining FP32 normalization reductions. Keep the
+attention backend fixed when reproducing or resuming a training run: identical-state
+loss/gradient comparisons and independent optimizer trajectories are different checks.
+
+Run the MHA64 and retained attention/kernel regressions in the Linux Draft environment:
+
+```bash
+ASPEC_RUN_CUDNN_FLEX_INTEGRATION=1 ASPEC_RUN_CUTEDSL_INTEGRATION=1 \
+  bash tools/run_in_env.sh python -m pytest -q \
+  tests/test_cudnn_mha64.py tests/test_cudnn_flex_attention.py tests/test_dspark_qk_cutedsl.py
+```
+
+The MHA64 training tests use synthetic features and bounded hidden/vocabulary sizes.
+Add `ASPEC_RUN_CUDNN_MHA64_FULL=1` to include hidden size 4096, vocabulary size 154880
+and 64 anchors at both 8K and 256K. The full-width 256K case enables gradient checkpointing
+uniformly across FA4, FlexAttention and cuDNN. These numerical checks do not establish
+real-checkpoint training quality or convergence.
+
 ## Packing and context parallelism
 
 ASpec supports two dense attention layouts. The padded-document layout keeps one
