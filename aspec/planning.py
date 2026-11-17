@@ -1382,6 +1382,8 @@ def _workload(
         }
     else:
         objective = {
+            "family": family,
+            "block_size": _select(config, "training.dflash_block_size"),
             "num_anchors": _select(config, "training.dflash_num_anchors"),
             "num_target_layers": _select(config, "training.dflash_num_target_layers"),
             "loss_objective": _select(config, "training.dflash_loss_objective"),
