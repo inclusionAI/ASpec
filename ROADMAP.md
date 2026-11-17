@@ -16,6 +16,9 @@ The authoritative details and limitations are in [supported paths](docs/support.
 - [x] Sequence packing, context parallelism and independent Drafts sharing compatible Target data.
 - [x] Primary SGLang + Qwen3/Ling path on single-node multi-GPU systems.
 - [x] Bounded static multi-node, single-Draft execution.
+- [ ] [Megatron-Core backends](https://github.com/inclusionAI/ASpec/issues/42) for Target feature
+  generation and Draft training, with explicit compatibility boundaries and preserved training,
+  recovery and export semantics.
 - [ ] Multi-node multi-Draft training: share compatible Target features across independent Draft
   experiments, preserving per-Draft progress and checkpoint recovery without requiring a shared filesystem.
 - [ ] Elastic membership and broader failure recovery.
@@ -54,6 +57,9 @@ See [Ling recipes and model contracts](docs/user-guide/ling.md).
 - [x] Source and wheel packaging, distribution checks and third-party attribution.
 - [x] Fail-closed configuration and checkpoint/export identity for supported paths.
 - [x] Reproducible benchmark methodology that separates throughput, correctness and quality claims.
+- [ ] Maintained, reproducible [cross-algorithm reference baselines](https://github.com/inclusionAI/ASpec/issues/43)
+  with versioned training/evaluation protocols, consistent metric definitions and reference artifacts;
+  distinguish controlled comparisons from paper reproductions.
 - [ ] Improve repeated greedy decode reproducibility under default inference settings;
   the documented deterministic Qwen3-8B DSpark evaluation already matches Target-only output.
 - [ ] Broaden long-run model-quality and reliability evidence across supported recipes.
