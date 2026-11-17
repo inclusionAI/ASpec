@@ -19,6 +19,9 @@ from torch.utils.checkpoint import checkpoint
 class MedusaModel(nn.Module):
     def __init__(self, draft_model, gradient_checkpointing=False):
         super().__init__()
+        # Chunked CE retains each chunk's f32 logits until backward
+        # (~chunk x vocab x 4 bytes per head); long-sequence training should
+        # enable gradient_checkpointing, as the maintained recipes do.
         self.draft_model = draft_model
         self.num_heads = draft_model.medusa_num_heads
         self.gradient_checkpointing = gradient_checkpointing
