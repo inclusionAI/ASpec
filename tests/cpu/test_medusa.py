@@ -155,6 +155,13 @@ def test_from_dict_preserves_unused_arguments():
     assert not hasattr(restored, "gradient_checkpointing")
 
 
+@pytest.mark.parametrize("override", [{"dtype": "auto"}, {"torch_dtype": "auto"}])
+def test_from_dict_defers_auto_dtype(override):
+    config = make_config()
+    restored = MedusaConfig.from_dict(config.to_dict(), **override)
+    assert restored.dtype == "auto"
+
+
 def test_resblock_zero_weight_initialization():
     block = MedusaResBlock(16)
     assert torch.count_nonzero(block.linear.weight) == 0

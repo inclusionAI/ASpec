@@ -63,10 +63,18 @@ class MedusaConfig(PretrainedConfig):
         return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
         config = cls(**dict(config_dict))
         recognized = {key: value for key, value in kwargs.items() if hasattr(config, key)}
-        if recognized:
+        # An "auto" dtype is a loader value, not a constructor input; the
+        # inherited loader applies it after construction.
+        deferred = {key: value for key, value in recognized.items()
+                    if key in ("dtype", "torch_dtype") and value == "auto"}
+        merged_overrides = {key: value for key, value in recognized.items()
+                            if key not in deferred}
+        if merged_overrides:
             merged = dict(config_dict)
-            merged.update(recognized)
+            merged.update(merged_overrides)
             config = cls(**merged)
+        for key, value in deferred.items():
+            setattr(config, key, value)
         unused = {key: value for key, value in kwargs.items() if key not in recognized}
         return (config, unused) if return_unused_kwargs else config
 
