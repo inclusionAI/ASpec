@@ -20,7 +20,9 @@ RAY_ADDRESS=local aspec --config configs/recipes/qwen3_8b_eagle3.yaml \
   model.target_model_path=/path/to/Qwen3-8B
 ```
 
-DSpark retains CE/L1/Markov/confidence semantics; DFlash does not use those auxiliary targets.
+DSpark defaults to DeepSpec CE/L1/confidence training with a Markov head. Set
+`training.dspark_loss_recipe=speculators_redhat_v1` for teacher-argmax CE and TV.
+See [DSpark loss recipes](training.md#dspark-loss-recipes) for the masks and reductions.
 EAGLE3 uses recurrent TTT and its selected distillation objective. Its pruned vocabulary preserves
 the checkpoint's `d2t/t2d` mapping across recovery/export. Teacher argmax outside the selected
 vocabulary is filtered; omitted probability mass is not reassigned to the reduced head.
@@ -54,6 +56,9 @@ aspec --config configs/recipes/qwen3_8b_eagle3.yaml --dry-run \
 `dflash_packing` is the shared configuration field name; it does not change EAGLE into DFlash.
 TTT shifts, teacher halos and supervision remain document-local. Unsupported factorized/ambiguous
 heads fail export rather than producing an unfaithful serving asset.
+
+For text-only DSpark training against the official GLM-5.3-Flash FP8 Target, see the
+[GLM training workflow](recipes.md#glm-53-flash-dspark).
 
 ## P-EAGLE core prerequisite
 

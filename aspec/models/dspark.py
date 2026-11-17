@@ -18,34 +18,37 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""DSpark training model: DFlash training wrapper + Markov / L1 / confidence losses.
+"""DSpark training with selectable DeepSpec and Red Hat objectives.
 
-Reuses :class:`DFlashModel`'s anchor sampling, block-causal FlexAttention mask,
-and MASK-token noise construction verbatim, then layers on the DSpark training
-objective:
+The shared DFlash backbone supplies anchor sampling, block attention and MASK-token
+inputs. A Markov head biases Draft logits using the observed previous token, and a
+confidence head learns the detached Draft/Target probability overlap.
 
-  - Markov-biased draft logits (teacher-forced previous token).
-  - Cross-entropy against the ground-truth next tokens (hard labels).
-  - L1 distribution distillation: ``|softmax(draft) - softmax(target)|`` where the
-    target distribution is the frozen LM head applied to the *target's* final
-    hidden state at the aligned position (requires ``last_hidden_states``).
-  - Confidence head BCE against the empirical per-token accept rate.
+DeepSpec uses next-token CE and full L1 distillation with contiguous supervision.
+The optional Red Hat recipe uses teacher-argmax CE, total variation and independent
+slot supervision with per-row normalization. Both return additive loss terms so the
+trainer can normalize across ranks and gradient-accumulation steps.
 
-Combined: ``ce_alpha*ce + l1_alpha*l1 + confidence_alpha*confidence``.
-
-Loss formulation adapted from DeepSeek's DeepSpec
-(deepspec/modeling/dspark/loss.py, MIT). Additive loss terms are returned to
-the trainer so normalization covers every rank and gradient-accumulation step.
+The default loss is adapted from DeepSeek's DeepSpec (deepspec/modeling/dspark/loss.py,
+MIT). The Red Hat objective reimplements vllm-project/speculators b9c51bc DSpark
+metrics, fused CE/TV and row reductions within ASpec's chunked heads.
 """
 
 from typing import List, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 
+from aspec.config.draft_algorithm import DSparkLossRecipe
 from aspec.models.dflash import DFlashModel
 from aspec.models.ops.acceptance import acceptance_components, acceptance_statistics
-from aspec.models.ops.loss import compiled_l1_from_logits, use_sm90_tiled_l1
+from aspec.models.ops.loss import (
+    compiled_l1_from_logits,
+    speculators_token_losses,
+    use_cutedsl_speculators_loss,
+    use_sm90_tiled_l1,
+)
 from aspec.models.ops.output_blocks import (
     empty_prediction_terms,
     output_block_counts,
@@ -69,7 +72,7 @@ def _cached_projection_chunks(counts, row_budget, block_size, *, copies, limit=N
 
 
 class DSparkModel(DFlashModel):
-    """DSpark training wrapper (DFlash backbone + Markov/L1/confidence heads)."""
+    """DFlash backbone with Markov logits and selectable DSpark distillation losses."""
 
     prediction_start = 0
 
@@ -89,6 +92,7 @@ class DSparkModel(DFlashModel):
         anchor_sampling_scope: str = "row",
         l1_target_sampling: tuple[float, float, int] = (1.0, 1.0, -1),
         l1_draft_sampling: tuple[float, float, int] = (1.0, 1.0, -1),
+        loss_recipe: str = "deepspec",
     ):
         # Reuse DFlash anchor/mask/noise machinery. The "decay" objective drives
         # the per-within-block position weighting shared by all DSpark terms.
@@ -111,6 +115,9 @@ class DSparkModel(DFlashModel):
         self.confidence_head_alpha = float(confidence_head_alpha)
         self.l1_sampling = (l1_target_sampling, l1_draft_sampling)
         self.l1_sampling_enabled = self.l1_sampling != ((1.0, 1.0, -1), (1.0, 1.0, -1))
+        self.loss_recipe = DSparkLossRecipe(loss_recipe)
+        if self.loss_recipe == DSparkLossRecipe.SPECULATORS_REDHAT_V1 and self.l1_sampling_enabled:
+            raise ValueError("speculators_redhat_v1 requires unfiltered distributions at temperature one")
         self.l1_loss_backend = None
         self.l1_kernel_invocations = {}
         self._use_l1_kernel_optimizations = True
@@ -157,8 +164,10 @@ class DSparkModel(DFlashModel):
             return False
         # The confidence head regresses onto an accept rate derived from the
         # verifier distribution, so the L1 weight alone does not cover it.
-        return super().uses_target_distribution or (
-            self.draft_model.confidence_head is not None and self.confidence_head_alpha > 0
+        return (
+            self.loss_recipe == DSparkLossRecipe.SPECULATORS_REDHAT_V1
+            or super().uses_target_distribution
+            or (self.draft_model.confidence_head is not None and self.confidence_head_alpha > 0)
         )
 
     def _decay_weights(self, device: torch.device) -> torch.Tensor:
@@ -171,6 +180,15 @@ class DSparkModel(DFlashModel):
         if self.loss_decay_gamma is not None and self.loss_decay_gamma > 0:
             return torch.exp(-(k - self.prediction_start).clamp_min(0).float() / self.loss_decay_gamma)
         return torch.ones_like(k, dtype=torch.float32)
+
+    def _speculators_row_weights(self, mask, decay_weights):
+        """Normalize within a logical row before pooling rows across DP/microsteps."""
+        valid = mask.sum((1, 2), keepdim=True)
+        if self.draft_context_parallel_size > 1:
+            dist.all_reduce(valid, group=self.direct_cp_group)
+        # CP shards contribute disjoint numerators for the same logical rows.
+        row_count = mask.new_tensor(mask.shape[0] / self.draft_context_parallel_size)
+        return decay_weights / (valid + 1e-5), decay_weights / (valid + 1e-8), row_count
 
     def forward(
         self,
@@ -256,14 +274,19 @@ class DSparkModel(DFlashModel):
             torch.zeros_like(safe_label_indices),
         )
 
-        # eval mask = contiguous supervised prefix per block (DeepSpec
-        # build_eval_mask): block kept, label in-bounds, target token supervised,
-        # then cumprod so a gap truncates the rest of the block.
+        warmup_kind = self._indexer_warmup_kind()
+        speculators = self.loss_recipe == DSparkLossRecipe.SPECULATORS_REDHAT_V1 and warmup_kind is None
+        teacher_indices = (safe_label_indices - 1).clamp_min(0)
+        mask_indices = teacher_indices if speculators else safe_label_indices
         target_loss_mask = torch.gather(
-            loss_mask.unsqueeze(1).expand(-1, n_blocks, -1), 2, safe_label_indices
+            loss_mask.unsqueeze(1).expand(-1, n_blocks, -1), 2, mask_indices
         )
         eval_bool = block_keep_mask.unsqueeze(-1) & valid_label_mask & (target_loss_mask > 0.5)
-        eval_bool = eval_bool.to(torch.int32).cumprod(dim=-1).bool()
+        if speculators and attention_mask is not None:
+            # Padded BSHD rows keep the same label domain as an unpadded row.
+            eval_bool &= attention_mask.gather(1, safe_label_indices.flatten(1)).view_as(eval_bool).bool()
+        if not speculators:
+            eval_bool = eval_bool.to(torch.int32).cumprod(dim=-1).bool()
         eval_mask = eval_bool.float()  # [B, nb, bs]
         eval_mask = eval_mask * (
             torch.arange(self.block_size, device=device) >= self.prediction_start
@@ -272,7 +295,6 @@ class DSparkModel(DFlashModel):
         decay_weight_mask = eval_mask * self._decay_weights(device)
         local_den = decay_weight_mask.sum()
 
-        warmup_kind = self._indexer_warmup_kind()
         if warmup_kind is not None:
             if warmup_kind == "csa":
                 numerator, loss_components = self._csa_training_loss(
@@ -308,6 +330,12 @@ class DSparkModel(DFlashModel):
                 (numerator, local_den.detach()),
             )
 
+        confidence_weights = None
+        if speculators:
+            decay_weight_mask, confidence_weights, local_den = self._speculators_row_weights(
+                eval_mask, decay_weight_mask
+            )
+
         hidden_4d = draft_hidden.view(bsz, n_blocks, self.block_size, -1)
         target_ids = torch.gather(
             input_ids.unsqueeze(1).expand(-1, n_blocks, -1), 2, safe_label_indices
@@ -318,12 +346,12 @@ class DSparkModel(DFlashModel):
         if self.uses_target_distribution:
             if last_hidden_states is None:
                 raise ValueError(
-                    "DSpark L1/confidence losses require target last_hidden_states; set "
+                    "DSpark teacher-dependent losses require target last_hidden_states; set "
                     "inference.store_last_hidden_states=true in the run config."
                 )
             # target distribution for the token at label_indices = target LM head
             # applied to the target hidden one position earlier (anchor+j).
-            tgt_idx = (safe_label_indices - 1).clamp(min=0)  # [B, nb, bs]
+            tgt_idx = teacher_indices  # [B, nb, bs]
             aligned_hidden = self._align_target_hidden_states(
                 last_hidden_states,
                 tgt_idx,
@@ -470,14 +498,25 @@ class DSparkModel(DFlashModel):
             # Keep only small FP32 L1 statistics across checkpoint replay; full
             # vocabulary logits still follow the projection budget above.
             loss_cache = {} if checkpoint_heads and self._reuse_l1_statistics else None
-            values = (*values, cached_teacher, cached_draft, cached_positions, loss_cache)
+            conf_weights = confidence_weights[:, start:stop] if confidence_weights is not None else None
+            if conf_weights is not None and selection is not None:
+                conf_weights = select_blocks(conf_weights, selection)
+            values = (*values, cached_teacher, cached_draft, cached_positions, loss_cache, conf_weights)
             if checkpoint_heads:
                 terms = checkpoint(self._prediction_terms, *values,
                                    use_reentrant=False, preserve_rng_state=False)
+            elif (speculators and n_blocks <= chunk_size and bsz == 1 and cached_teacher is None
+                  and self._reuse_head_projections and self._reuse_context_teacher_projection
+                  and self.draft_context_parallel_size == 1 and not lm_head_weight.requires_grad
+                  and not last_hidden_states.requires_grad and last_hidden_states.shape[1] == seq_len):
+                positions = tgt_idx[:, start:stop]
+                if selection is not None:
+                    positions = select_blocks(positions, selection)
+                terms = self._prediction_terms(*values, teacher_context=(last_hidden_states, positions))
             else:
                 terms = self._prediction_terms(*values)
             head_terms.append(terms)
-        ce_num, l1_num, conf_num, ce_position_sum, correct_position_sum, acceptance_totals = (
+        ce_num, distance_num, conf_num, ce_position_sum, correct_position_sum, acceptance_totals = (
             sum(parts[1:], parts[0]) for parts in zip(*head_terms, strict=True)
         )
 
@@ -485,7 +524,7 @@ class DSparkModel(DFlashModel):
         # before compensating for FSDP's mean gradient reduction.
         loss_numerator = (
             self.ce_loss_alpha * ce_num
-            + self.l1_loss_alpha * l1_num
+            + self.l1_loss_alpha * distance_num
             + self.confidence_head_alpha * conf_num
         )
         moe_numerator, moe_components = self._moe_training_loss(
@@ -513,7 +552,7 @@ class DSparkModel(DFlashModel):
         component_denominator = local_den.detach()
         loss_components = {
             "ce_loss": (ce_num.detach(), component_denominator),
-            "l1_loss": (l1_num.detach(), component_denominator),
+            self.loss_recipe.distribution_metric: (distance_num.detach(), component_denominator),
             "confidence_loss": (conf_num.detach(), component_denominator),
             **moe_components,
             **csa_components,
@@ -561,26 +600,60 @@ class DSparkModel(DFlashModel):
 
     def _prediction_terms(self, hidden, target_ids, prev_ids, head_weight,
                           aligned_target_hidden, eval_mask, weights, cached_target_logits=None,
-                          cached_draft_logits=None, cached_target_positions=None, loss_cache=None):
+                          cached_draft_logits=None, cached_target_positions=None, loss_cache=None,
+                          confidence_weights=None, *, teacher_context=None):
         """Additive DSpark head terms for a bounded block slice."""
         # Explicit token-major GEMM: a block slice can be non-contiguous even
         # though the complete hidden stream is contiguous. Do not broadcast a
         # vocabulary projection over many tiny [block_size, hidden] matrices.
         logits = (cached_draft_logits if cached_draft_logits is not None
                   else self._project_draft(hidden, head_weight))
-        if self.draft_model.markov_head is not None:
-            logits = self.draft_model.markov_head.apply_block_logits(logits, token_ids=prev_ids)
         vocab = logits.shape[-1]
-        ce = F.cross_entropy(logits.reshape(-1, vocab), target_ids.reshape(-1),
-                             reduction="none").view_as(weights)
-        ce_num = (ce * weights).sum()
-        l1_num = logits.new_zeros((), dtype=torch.float32)
+        speculators = self.loss_recipe == DSparkLossRecipe.SPECULATORS_REDHAT_V1
+        cute_loss = (speculators and self._use_l1_kernel_optimizations
+                     and use_cutedsl_speculators_loss(logits, cached_target_logits,
+                                                   indexed=cached_target_positions is not None))
+        markov = self.draft_model.markov_head
+        prev_emb = None
+        fused_correct = None
+        if markov is not None:
+            if (cute_loss and logits.numel() // vocab >= 256 and vocab % 8 == 0
+                    and markov.markov_rank % 8 == 0 and markov.markov_w2.weight.is_contiguous()
+                    and markov.markov_w2.weight.dtype == logits.dtype):
+                from aspec.kernels.cutedsl.speculators_loss import markov_residual_projection
+
+                prev_emb = markov.get_prev_embeddings(prev_ids)
+                logits = markov_residual_projection(logits, prev_emb, markov.markov_w2.weight)
+                calls = self.l1_kernel_invocations
+                calls["cutedsl_markov_projection"] = calls.get("cutedsl_markov_projection", 0) + 1
+            else:
+                logits = markov.apply_block_logits(logits, token_ids=prev_ids)
+        if not speculators:
+            ce = F.cross_entropy(logits.reshape(-1, vocab), target_ids.reshape(-1),
+                                 reduction="none").view_as(weights)
+        distance_num = logits.new_zeros((), dtype=torch.float32)
         accept_rate = None
         if aligned_target_hidden is not None:
+            # A long prompt can contain a short supervised region. Many anchors
+            # then share teacher positions even when projecting the full context
+            # would cost more than projecting all query rows.
+            # Small teacher projections do not amortize sorting and its host
+            # synchronization on SM100. Keep its regular CuTeDSL head path.
+            if (cute_loss and teacher_context is not None
+                    and torch.cuda.get_device_capability(logits.device) == (9, 0)):
+                context, positions = teacher_context
+                unique, inverse = torch.unique(positions.reshape(-1), return_inverse=True)
+                # Small reductions cost more in the indexed path on Hopper.
+                if inverse.numel() - unique.numel() >= 64:
+                    cached_target_logits = F.linear(context[0].index_select(0, unique), head_weight)[None]
+                    cached_target_positions = inverse.view_as(positions)
+                    self.loss_head_cached_context_tokens_observed = unique.numel()
+                    self.loss_head_cached_teacher_blocks_observed = hidden.shape[1]
             indexed_teacher = (
-                not self.l1_sampling_enabled
-                and self._use_l1_kernel_optimizations and cached_target_positions is not None
-                and use_sm90_tiled_l1(logits, cached_target_logits, True)
+                cached_target_positions is not None and (cute_loss or (
+                    not speculators and not self.l1_sampling_enabled and self._use_l1_kernel_optimizations
+                    and use_sm90_tiled_l1(logits, cached_target_logits, True)
+                ))
             )
             target_indices = None
             if indexed_teacher:
@@ -599,36 +672,54 @@ class DSparkModel(DFlashModel):
                 target_logits = cached_target_logits if cached_target_logits is not None else F.linear(
                     aligned_target_hidden.reshape(-1, aligned_target_hidden.shape[-1]), head_weight
                 ).view_as(logits)
-            if not self.l1_sampling_enabled and (
+            if cute_loss and not target_logits.requires_grad and target_logits.dtype == logits.dtype:
+                from aspec.kernels.cutedsl.speculators_loss import speculators_cutedsl_loss
+
+                ce, distance, target_ids, fused_correct = speculators_cutedsl_loss(
+                    logits, target_logits, target_indices)
+                self.l1_loss_backend = "cutedsl_ce_tv"
+                kernel = ("indexed_" if indexed_teacher else "") + self.l1_loss_backend
+                calls = self.l1_kernel_invocations
+                calls[kernel] = calls.get(kernel, 0) + 1
+            elif speculators:
+                ce, distance, target_ids = speculators_token_losses(logits, target_logits)
+                self.l1_loss_backend = "torch_compiled_tv"
+            elif not self.l1_sampling_enabled and (
                 indexed_teacher or use_sm90_tiled_l1(logits, target_logits)
             ):
                 from aspec.models.ops.tiled_l1 import tiled_l1_from_logits
 
-                l1 = tiled_l1_from_logits(logits, target_logits, target_indices=target_indices,
-                                         _replay_cache=loss_cache)
+                distance = tiled_l1_from_logits(logits, target_logits, target_indices=target_indices,
+                                                _replay_cache=loss_cache)
                 self.l1_loss_backend = "tiled_fp32"
                 kernel = ("indexed_" if indexed_teacher else "") + self.l1_loss_backend
                 self.l1_kernel_invocations[kernel] = self.l1_kernel_invocations.get(kernel, 0) + 1
             else:
-                l1 = (compiled_l1_from_logits(logits, target_logits, *self.l1_sampling)
-                      if self.l1_sampling_enabled else compiled_l1_from_logits(logits, target_logits))
+                distance = (compiled_l1_from_logits(logits, target_logits, *self.l1_sampling)
+                            if self.l1_sampling_enabled else compiled_l1_from_logits(logits, target_logits))
                 self.l1_loss_backend = "torch_compiled"
             if self.l1_loss_alpha > 0:
-                l1_num = (l1 * weights).sum()
-            accept_rate = (1.0 - 0.5 * l1).clamp(0.0, 1.0)
+                distance_num = (distance * weights).sum()
+            accept_rate = 1.0 - distance if speculators else (1.0 - 0.5 * distance).clamp(0.0, 1.0)
+        ce_num = (ce * weights).sum()
         conf_num = logits.new_zeros((), dtype=torch.float32)
         if self.draft_model.confidence_head is not None and self.confidence_head_alpha > 0:
             if self.draft_model.confidence_head_with_markov:
-                prev_emb = self.draft_model.markov_head.get_prev_embeddings(prev_ids).to(hidden.dtype)
+                # Keep the two embedding backward reductions independent. Sharing
+                # this lookup changes BF16 scatter/add rounding for repeated IDs.
+                prev_emb = markov.get_prev_embeddings(prev_ids).to(hidden.dtype)
                 conf_features = torch.cat([hidden, prev_emb], dim=-1)
             else:
                 conf_features = hidden
-            prediction = self.draft_model.confidence_head(conf_features).float()
+            prediction = self.draft_model.confidence_head(conf_features)
+            confidence_target = accept_rate.detach()
+            if speculators:
+                confidence_target = confidence_target.to(prediction.dtype)
             conf_num = (F.binary_cross_entropy_with_logits(
-                prediction, accept_rate.detach(), reduction="none"
-            ) * weights).sum()
+                prediction.float(), confidence_target.float(), reduction="none"
+            ) * (weights if confidence_weights is None else confidence_weights)).sum()
         with torch.no_grad():
-            correct = (logits.argmax(-1) == target_ids) & (eval_mask > 0.5)
+            correct = ((logits.argmax(-1) == target_ids) if fused_correct is None else fused_correct) & (eval_mask > 0.5)
             position_loss = (ce * eval_mask).sum((0, 1))
             position_correct = correct.float().sum((0, 1))
             acceptance_totals = (
@@ -639,4 +730,4 @@ class DSparkModel(DFlashModel):
                     (2, self.block_size + 1), dtype=torch.float32,
                 )
             )
-        return ce_num, l1_num, conf_num, position_loss, position_correct, acceptance_totals
+        return ce_num, distance_num, conf_num, position_loss, position_correct, acceptance_totals

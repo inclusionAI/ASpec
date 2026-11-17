@@ -18,6 +18,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from functools import lru_cache
+from importlib.util import find_spec
 from typing import Optional
 
 import torch
@@ -43,6 +45,31 @@ def use_sm90_tiled_l1(logits: torch.Tensor, target: torch.Tensor, indexed: bool 
         and logits.is_contiguous()
         and target.is_contiguous()
         and torch.cuda.get_device_capability(logits.device) == (9, 0)
+    )
+
+
+@lru_cache(maxsize=1)
+def _have_cutedsl_loss():
+    return all(find_spec(pkg) is not None for pkg in ("quack", "cutlass"))
+
+
+def use_cutedsl_speculators_loss(logits, teacher=None, indexed=False):
+    """At most two reference normalization blocks and one CTA of overlap partials."""
+    return (
+        not torch.compiler.is_compiling() and logits.is_cuda
+        and logits.ndim > 0 and logits.numel() > 0 and logits.dtype == torch.bfloat16
+        and logits.is_contiguous() and logits.data_ptr() % 16 == 0
+        and 1 <= logits.shape[-1] <= 196608
+        and (teacher is None or (
+            teacher.device == logits.device and teacher.dtype == logits.dtype
+            and teacher.is_contiguous() and teacher.data_ptr() % 16 == 0
+            and not teacher.requires_grad
+            and (teacher.shape == logits.shape if not indexed else
+                 teacher.ndim == 3 and teacher.shape[0] == logits.shape[0]
+                 and teacher.shape[-1] == logits.shape[-1])
+        ))
+        and torch.cuda.get_device_capability(logits.device) in {(9, 0), (10, 0)}
+        and _have_cutedsl_loss()
     )
 
 
@@ -89,6 +116,19 @@ def compiled_l1_from_logits(logits: torch.Tensor, target_logits: torch.Tensor,
     draft_probs = torch.softmax(sampling_logits(logits, draft_sampling).float(), dim=-1)
     target_probs = torch.softmax(sampling_logits(target_logits, target_sampling).float(), dim=-1)
     return (draft_probs - target_probs).abs().sum(dim=-1)
+
+
+@torch.compile(dynamic=None)
+def speculators_token_losses(logits: torch.Tensor, teacher_logits: torch.Tensor):
+    """Reimplement Speculators b9c51bc fused CE/TV with FP32 reductions."""
+    labels = teacher_logits.argmax(-1)
+    draft = logits.float()
+    ce = draft.logsumexp(-1) - draft.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
+    q = draft.softmax(-1)
+    p = teacher_logits.detach().float().softmax(-1)
+    # The published fused TV backward assigns equality to the Draft branch.
+    overlap = torch.where(q <= p, q, p).sum(-1)
+    return ce, 1.0 - overlap, labels
 
 
 def _project(

@@ -143,6 +143,9 @@ def resolve_draft_attention(raw: Mapping) -> dict:
     ):
         raise ValueError("Draft sliding_window must be a positive integer or null")
     schedule = raw.get("layer_types")
+    sliding_non_causal = raw.get("sliding_window_non_causal", True)
+    if not isinstance(sliding_non_causal, bool):
+        raise ValueError("sliding_window_non_causal must be boolean")
     ratios = raw.get("compress_ratios")
     if ratios is not None:
         if not isinstance(ratios, (list, tuple)) or len(ratios) != layers:
@@ -421,7 +424,8 @@ def resolve_draft_attention(raw: Mapping) -> dict:
                              else kind == "sliding_attention") else "bidirectional"
                 for kind in schedule
             ] if raw.get("architectures") == ["DFlash2DraftModel"]
-            else "bidirectional"
+            else ["causal" if kind == "sliding_attention" else "bidirectional" for kind in schedule]
+            if not sliding_non_causal else "bidirectional"
         ),
     }
 

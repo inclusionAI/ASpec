@@ -30,6 +30,8 @@ def test_catalog_plans(name, monkeypatch):
         "ASPEC_TARGET_MODEL",
         "Qwen/Qwen3.8-27B" if name == "qwen27b-long" else recipes.catalog()[name]["model"],
     )
+    if name == "glm5-flash":
+        monkeypatch.setenv("ASPEC_TARGET_MODEL", "zai-org/GLM-5.3-Flash")
     if name.startswith("ling"):
         monkeypatch.setenv(
             "ASPEC_TARGET_MODEL", "inclusionAI/" + recipes.catalog()[name]["model"]
@@ -83,7 +85,7 @@ def test_qwen8b_recipes_plan_without_target_override(name, monkeypatch):
 
 def test_catalog_exactly_covers_formal_files():
     entries = recipes.catalog()
-    assert len(entries) == 13
+    assert len(entries) == 14
     declared = {p for entry in entries.values() for p in entry["configs"]}
     assert declared == {
         str(p.relative_to(recipes.ROOT)) for p in (recipes.ROOT / "configs/recipes").glob("*.yaml")

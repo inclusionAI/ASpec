@@ -29,7 +29,8 @@ import torch.distributed as dist
 import torch.nn as nn
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
-from transformers import AutoConfig
+
+from aspec.config.utils import load_target_config
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class TargetLMHead(nn.Module):
         dtype: torch.dtype = torch.bfloat16,
         trust_remote_code: bool = False,
     ) -> "TargetLMHead":
-        config = AutoConfig.from_pretrained(
+        config = load_target_config(
             model_path, cache_dir=cache_dir, trust_remote_code=trust_remote_code
         )
         instance = cls(config, trust_remote_code=trust_remote_code)
@@ -324,7 +325,7 @@ def load_synced_target_lm_head(
                 trust_remote_code=trust_remote_code,
             )
         else:
-            config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
+            config = load_target_config(model_path, trust_remote_code=trust_remote_code)
             head = TargetLMHead(config, trust_remote_code=trust_remote_code)
             if load_norm:
                 head._init_norm_structure()

@@ -15,6 +15,17 @@
 """Algorithm identity for the currently registered Draft architectures."""
 
 from collections.abc import Mapping
+from enum import StrEnum
+
+
+class DSparkLossRecipe(StrEnum):
+    DEEPSPEC = "deepspec"
+    SPECULATORS_REDHAT_V1 = "speculators_redhat_v1"
+
+    @property
+    def distribution_metric(self) -> str:
+        return "tv_loss" if self is self.SPECULATORS_REDHAT_V1 else "l1_loss"
+
 
 DRAFT_ALGORITHMS = {
     "NativeMTPDraftModel": "mtp",

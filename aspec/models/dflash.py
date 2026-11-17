@@ -468,6 +468,8 @@ class DFlashModel(nn.Module):
         if config is not None and getattr(config, "layer_types", None):
             if config.layer_types[layer_id] == "sliding_attention":
                 options["context_window"] = config.sliding_window
+                if not getattr(config, "sliding_window_non_causal", True):
+                    options["is_causal"] = True
         return options
 
     def _compute_logits(
