@@ -14,7 +14,7 @@
 
 # ruff: noqa: I001
 
-"""Opt-in two-GPU correctness check for Direct CP collectives and FA4."""
+"""Opt-in CUDA correctness checks for Direct CP attention and collectives."""
 
 import os
 
@@ -30,6 +30,70 @@ import torch
 import torch.distributed as dist
 
 from aspec.models.ops.direct_cp import DirectCPMetadata, direct_cp_attention
+
+
+@pytest.mark.parametrize("context_length", [2103, 8192])
+def test_glm_swa_fa4_matches_dense_mask_forward_and_backward(context_length):
+    """GLM's MHA64 window and causal Draft slots survive sparse FA4 execution."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    from aspec.models.dflash import _create_dflash_mask_mod
+
+    torch.manual_seed(73)
+    anchors = torch.cat((
+        torch.arange(2040, 2072, device="cuda"),
+        torch.arange(context_length - 100, context_length - 68, device="cuda"),
+        torch.tensor([0, 1, 2047, 2048, 2050, context_length - 3,
+                      context_length - 8, 100], device="cuda"),
+    ))[None]
+    keep = torch.ones_like(anchors, dtype=torch.bool)
+    keep[0, -1] = False
+    block_size = 8
+    queries = anchors.numel() * block_size
+    shapes = [(1, 64, queries, 64), (1, 64, context_length, 64),
+              (1, 64, context_length, 64), (1, 64, queries, 64), (1, 64, queries, 64)]
+    actual_inputs = [torch.randn(*shape, device="cuda", dtype=torch.bfloat16,
+                                 requires_grad=True) for shape in shapes]
+    reference_inputs = [value.detach().float().requires_grad_() for value in actual_inputs]
+    metadata = DirectCPMetadata(
+        anchor_positions=anchors, block_keep_mask=keep,
+        context_position_ids=torch.arange(context_length, device="cuda")[None],
+        block_size=block_size, cp_rank=0, cp_size=1, group=None,
+        sequence_length=context_length, backend="fa4", context_window=2048,
+        draft_is_causal=True,
+    )
+    actual, _ = direct_cp_attention(*actual_inputs, metadata)
+    mask_mod = _create_dflash_mask_mod(anchors, keep, context_length, block_size,
+                                      context_window=2048, is_causal=True)
+    dense_mask = mask_mod(
+        0, 0, torch.arange(queries, device="cuda")[:, None],
+        torch.arange(context_length + queries, device="cuda")[None, :],
+    )
+    token_keep = (keep[:, :, None]
+                  & (anchors[:, :, None] + torch.arange(block_size, device="cuda")
+                     < context_length)).flatten()
+    key_keep = torch.cat((torch.ones(context_length, device="cuda", dtype=torch.bool),
+                          token_keep))
+    dense_mask = (dense_mask & token_keep[:, None] & key_keep[None, :])[None, None]
+    query, context_key, context_value, draft_key, draft_value = reference_inputs
+    with sdpa_kernel(SDPBackend.MATH):
+        reference = torch.nn.functional.scaled_dot_product_attention(
+            query, torch.cat((context_key, draft_key), dim=2),
+            torch.cat((context_value, draft_value), dim=2), attn_mask=dense_mask,
+        )
+    upstream = torch.randn_like(actual)
+    (actual.float() * upstream.float()).sum().backward()
+    (reference * upstream.float()).sum().backward()
+    pairs = [(actual, reference), *((value.grad, expected.grad) for value, expected
+                                    in zip(actual_inputs, reference_inputs, strict=True))]
+    for value, expected in pairs:
+        assert torch.isfinite(value).all()
+        relative = (value.float() - expected).norm() / expected.norm().clamp_min(1e-12)
+        assert relative < 0.01, float(relative)
+    assert torch.count_nonzero(actual[:, :, -block_size:]) == 0
+
 
 def test_cp2_fa4_matches_unsharded_math_forward_and_backward():
     if int(os.getenv("WORLD_SIZE", "1")) != 2:

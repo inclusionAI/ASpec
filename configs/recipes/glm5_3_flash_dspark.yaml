@@ -19,7 +19,7 @@ dataset:
   shuffle_dataset: true
 
 training:
-  attention_backend: flex_attention
+  attention_backend: fa4
   draft_context_parallel_size: 1
   micro_batch_size: 1
   draft_accumulation_steps: 16
