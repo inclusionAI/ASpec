@@ -55,6 +55,16 @@ class MedusaConfig(PretrainedConfig):
                          medusa_num_heads=medusa_num_heads, medusa_num_layers=medusa_num_layers,
                          **kwargs)
 
+    @classmethod
+    def from_dict(cls, config_dict, **kwargs):
+        # The base class applies keyword overrides with setattr after construction,
+        # which bypasses the fixed-field checks; merge them through __init__ instead.
+        return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
+        merged = dict(config_dict)
+        merged.update(kwargs)
+        config = cls(**merged)
+        return (config, {}) if return_unused_kwargs else config
+
 
 class MedusaResBlock(nn.Module):
     """Reference residual block: x + SiLU(Linear(x)) with a zero-initialized weight."""

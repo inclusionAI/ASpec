@@ -5,6 +5,9 @@
 # (medusa/train/train_legacy.py compute_loss, Apache-2.0). The per-head t+2+i
 # supervision offset and assistant-only CE follow the reference; loss masking,
 # chunked computation and the metric tuple use ASpec's native MTP contract.
+# The source file is based on tatsu-lab/stanford_alpaca and adapts FastChat code.
+# Retained notice: Copyright 2023 Rohan Taori, Ishaan Gulrajani, Tianyi Zhang,
+# Yann Dubois, Xuechen Li (Apache-2.0).
 """Parallel heads-only Medusa objective. No recurrent state or TTT suffix."""
 
 import torch

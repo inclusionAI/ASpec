@@ -136,6 +136,17 @@ def test_config_fail_closed(override):
         MedusaConfig(**kwargs)
 
 
+def test_from_dict_overrides_stay_validated():
+    config = make_config()
+    # The inherited loader applies overrides after construction; these must still fail.
+    with pytest.raises(ValueError):
+        MedusaConfig.from_dict(config.to_dict(), target_layer_ids=[0])
+    with pytest.raises(ValueError):
+        MedusaConfig.from_dict(config.to_dict(), medusa_num_heads=0)
+    restored = MedusaConfig.from_dict(config.to_dict(), medusa_num_heads=2)
+    assert restored.medusa_num_heads == 2
+
+
 def test_resblock_zero_weight_initialization():
     block = MedusaResBlock(16)
     assert torch.count_nonzero(block.linear.weight) == 0
