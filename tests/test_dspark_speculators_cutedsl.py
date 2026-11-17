@@ -17,7 +17,8 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.parametrize("vocab", [257, 154880])
 @pytest.mark.parametrize("indexed", [False, True])
-def test_speculators_cute_components_and_tied_gradient(vocab, indexed):
+@pytest.mark.parametrize("teacher_kind", ["tie", "independent"])
+def test_speculators_cute_components_and_gradient(vocab, indexed, teacher_kind):
     from aspec.kernels.cutedsl.speculators_loss import speculators_cutedsl_loss
 
     gen = torch.Generator(device="cuda").manual_seed(6)
@@ -26,8 +27,11 @@ def test_speculators_cute_components_and_tied_gradient(vocab, indexed):
     # The identical row and a permutation exercise the <= branch independently
     # of random probabilities. Duplicate maxima straddle vocabulary tiles.
     x[0, :, [2, vocab - 1]] = 4
-    t = x.clone()
-    t[:, 1:, :2] = x[:, 1:, [1, 0]]
+    if teacher_kind == "tie":
+        t = x.clone()
+        t[:, 1:, :2] = x[:, 1:, [1, 0]]
+    else:
+        t = torch.randn(x.shape, generator=gen, device=x.device, dtype=x.dtype) * 1.5 + 4
     idx = None
     if indexed:
         idx = torch.arange(rows, device=x.device).roll(1)
@@ -38,6 +42,14 @@ def test_speculators_cute_components_and_tied_gradient(vocab, indexed):
     ce, tv, label, correct = speculators_cutedsl_loss(x, t, idx)
     q = x.detach().double().softmax(-1)
     p = teacher.double().softmax(-1)
+    if teacher_kind == "independent":
+        student_norm = x.detach().double().logsumexp(-1)
+        teacher_norm = teacher.double().logsumexp(-1)
+        assert (teacher_norm - student_norm).abs().min() > 0.5
+        wrong_teacher = (teacher.double() - student_norm[..., None]).exp()
+        expected_tv = 1 - torch.minimum(q, p).sum(-1)
+        wrong_tv = 1 - torch.minimum(q, wrong_teacher).sum(-1)
+        assert (expected_tv - wrong_tv).abs().min() > 1e-3
     w = torch.linspace(-0.5, 0.5, rows, device=x.device).view(1, -1)
     w[:, 5] = 0
     target = teacher.argmax(-1)
@@ -46,8 +58,8 @@ def test_speculators_cute_components_and_tied_gradient(vocab, indexed):
     ref_ce = x.double().logsumexp(-1) - x.double().gather(-1, target[..., None]).squeeze(-1)
     torch.testing.assert_close(ce.double(), ref_ce, rtol=0, atol=2e-6)
     torch.testing.assert_close(tv.double(), 1 - torch.minimum(q, p).sum(-1), rtol=0, atol=2e-6)
-    # The swap preserves the partition sum; compare logits for exact mathematical ties.
-    indicator = (x.detach() <= teacher).double()
+    # Raw logits resolve exact ties only when the partition sums are identical.
+    indicator = ((x.detach() <= teacher) if teacher_kind == "tie" else (q <= p)).double()
     mass = (q * indicator).sum(-1, keepdim=True)
     gt = (w[..., None] * q * (mass - indicator)).bfloat16()
     gc = q.clone()

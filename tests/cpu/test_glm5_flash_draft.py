@@ -1,6 +1,7 @@
 # Copyright 2026 Ant Group Co., Ltd.
 # SPDX-License-Identifier: Apache-2.0
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,37 @@ def test_native_role_masks():
         renderer.render([{"role": "user", "content": "<|assistant|>"}], max_seq_length=20)
 
 
-def test_speculators_published_head_binding(tmp_path):
+@pytest.mark.parametrize("field", ["thinking", "thinking_content", "reasoning"])
+@pytest.mark.parametrize("with_canonical", [False, True])
+def test_native_reasoning_aliases_are_rejected(field, with_canonical):
+    renderer = Glm5FlashRenderer(Tokenizer())
+    message = {"role": "assistant", "content": "answer", field: "reasoning"}
+    if with_canonical:
+        message["reasoning_content"] = "canonical reasoning"
+    with pytest.raises(ValueError, match="reasoning_content"):
+        renderer.render([message], max_seq_length=20)
+
+
+@pytest.mark.parametrize("field", ["thinking", "thinking_content", "reasoning"])
+def test_sharegpt_reasoning_remains_canonical_before_rendering(field):
+    from aspec.data.preprocessing import _normalize_conversation
+
+    class ReasoningTokenizer(Tokenizer):
+        def apply_chat_template(self, messages, **kwargs):
+            assert messages == [
+                {"role": "assistant", "content": "answer", "reasoning_content": "reasoning"}
+            ]
+            return [9, 10, 11]
+
+    messages = _normalize_conversation([{"from": "gpt", "value": "answer", field: "reasoning"}])
+    renderer = Glm5FlashRenderer(ReasoningTokenizer())
+    ids, mask = renderer.render(messages, max_seq_length=20)
+    assert ids == [9, 10, 11]
+    assert mask == [0, 1, 1]
+
+
+@pytest.fixture
+def published_dspark(tmp_path):
     from safetensors.torch import save_file
 
     config = DSparkConfig(**json.loads(CONFIG.read_text()))
@@ -114,12 +145,64 @@ def test_speculators_published_head_binding(tmp_path):
     save_file(weights, tmp_path / "model.safetensors")
     save_file(weights, target / "model.safetensors")
     bindings = (str(target), "embed_tokens.weight", "lm_head.weight")
+    return draft, published, embedding, head, target, bindings
+
+
+def test_speculators_published_head_binding(tmp_path, published_dspark):
+    from safetensors.torch import save_file
+
+    draft, published, embedding, head, target, bindings = published_dspark
     load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
     torch.testing.assert_close(draft.embed_tokens.weight, embedding)
-    save_file({**weights, "lm_head.weight": -head}, target / "model.safetensors")
+    save_file({"embed_tokens.weight": embedding, "lm_head.weight": -head},
+              target / "model.safetensors")
     with pytest.raises(ValueError, match="lm_head.weight differs"):
         load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
     published["aux_hidden_state_layer_ids"][-1] -= 1
     (tmp_path / "config.json").write_text(json.dumps(published))
     with pytest.raises(ValueError, match="capture"):
         load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+
+
+@pytest.mark.parametrize("published_rope,configured_rope", [
+    ({}, {"rope_type": "linear", "factor": 2.0}),
+    ({"rope_type": "linear", "factor": 2.0}, {}),
+    ({"rope_type": "linear", "factor": 2.0}, {"rope_type": "linear", "factor": 4.0}),
+    ({"rope_theta": 20000}, {}),
+    ({"rope_type": "yarn", "factor": 2.0, "beta_fast": 64},
+     {"rope_type": "yarn", "factor": 2.0, "beta_fast": 32}),
+])
+def test_published_dspark_rejects_different_rope(tmp_path, published_dspark,
+                                               published_rope, configured_rope):
+    draft, published, _, _, _, bindings = published_dspark
+    geometry = published["transformer_layer_config"]
+    geometry["rope_parameters"] = {"rope_theta": 10000, **published_rope}
+    geometry["max_position_embeddings"] = draft.config.max_position_embeddings
+    draft.config.rope_parameters = {"rope_theta": 10000, **configured_rope}
+    (tmp_path / "config.json").write_text(json.dumps(published))
+    with pytest.raises(ValueError, match="RoPE|geometry"):
+        load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+
+
+@pytest.mark.parametrize("published_updates,configured_updates", [
+    ({"rope_parameters": None}, {}),
+    ({"rope_theta": 10000, "rope_parameters": None}, {}),
+    ({"rope_parameters": {"rope_type": "default", "factor": 1.0, "rope_theta": 10000,
+                          "partial_rotary_factor": 1.0}}, {}),
+    ({"rope_theta": 10000, "rope_parameters": None,
+      "rope_scaling": {"type": "linear", "factor": 2.0}},
+     {"rope_parameters": {"rope_type": "linear", "factor": 2.0, "rope_theta": 10000}}),
+    ({"rope_parameters": {"rope_type": "yarn", "factor": 2.0, "rope_theta": 10000,
+                          "beta_fast": 32, "beta_slow": 1}},
+     {"rope_parameters": {"type": "yarn", "factor": 2.0, "rope_theta": 10000}}),
+])
+def test_published_dspark_accepts_equivalent_rope(tmp_path, published_dspark,
+                                                published_updates, configured_updates):
+    draft, published, embedding, _, _, bindings = published_dspark
+    published["transformer_layer_config"].update(deepcopy(published_updates))
+    published["transformer_layer_config"]["max_position_embeddings"] = draft.config.max_position_embeddings
+    for key, value in configured_updates.items():
+        setattr(draft.config, key, deepcopy(value))
+    (tmp_path / "config.json").write_text(json.dumps(published))
+    load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+    torch.testing.assert_close(draft.embed_tokens.weight, embedding)

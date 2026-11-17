@@ -139,7 +139,8 @@ this choice is independent of the DSpark loss recipe.
 Keep the attention backend fixed when reproducing or resuming a run: changing it can alter
 BF16 rounding and the training trajectory.
 Use the checkpoint's chat template with text-only `system`, `user` and `assistant` messages
-in disjoint conversation JSONL files. Assistant `reasoning_content` is supported.
+in disjoint conversation JSONL files. Native assistant messages must use `reasoning_content`
+for reasoning text; reasoning alias fields are rejected.
 [Official Target](https://modelscope.cn/models/ZhipuAI/GLM-5.3-Flash) · [Draft configuration](../../aspec/config/dspark_glm5_3_flash_draft_config.json)
 
 Activate the patched Target environment and start the service. DeepGEMM compiles kernels for

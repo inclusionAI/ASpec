@@ -25,6 +25,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -828,6 +829,28 @@ def resolve_initial_draft_checkpoint(path: str) -> Path:
     return checkpoint_path
 
 
+def _speculators_dspark_rope_policy(config):
+    from aspec.config.utils import resolve_dflash_rope_parameters
+
+    params = resolve_dflash_rope_parameters(config)
+    kind = params["rope_type"]
+    policy = (kind, params["rope_theta"], 1.0 if kind == "default" else params["factor"])
+    if kind != "yarn":
+        return policy
+    # Use the runtime's YaRN implementation to normalize optional defaults
+    # and compare every parameter that affects frequencies or attention scale.
+    from transformers import PretrainedConfig
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+    resolved = PretrainedConfig(
+        rope_parameters=params, head_dim=dim, hidden_size=dim, num_attention_heads=1,
+        max_position_embeddings=config.max_position_embeddings,
+    )
+    frequencies, attention_scale = ROPE_INIT_FUNCTIONS[kind](resolved, device=torch.device("cpu"))
+    return (*policy, tuple(frequencies.tolist()), float(attention_scale))
+
+
 def _bind_speculators_dspark(directory, config, tensors, target_bindings):
     """Validate the published Draft's layout and replace its frozen head with the Target binding."""
     config_path = directory / "config.json"
@@ -850,9 +873,15 @@ def _bind_speculators_dspark(directory, config, tensors, target_bindings):
     geometry = published["transformer_layer_config"]
     fields = ("sliding_window", "layer_types", "rms_norm_eps", "num_attention_heads",
               "num_key_value_heads", "head_dim")
-    if (any(geometry.get(field) != getattr(config, field) for field in fields)
-            or geometry.get("rope_parameters", {}).get("rope_theta") != config.rope_theta):
+    if any(geometry.get(field) != getattr(config, field) for field in fields):
         raise ValueError("Speculators DSpark layer geometry differs from the configured Draft")
+    published_config = SimpleNamespace(**{
+        "hidden_size": config.hidden_size,
+        "max_position_embeddings": config.max_position_embeddings,
+        **geometry,
+    })
+    if _speculators_dspark_rope_policy(published_config) != _speculators_dspark_rope_policy(config):
+        raise ValueError("Speculators DSpark RoPE policy differs from the configured Draft")
 
     from aspec.models.draft.base import load_tensor_from_pretrained
 

@@ -5,7 +5,7 @@
 
 
 class Glm5FlashRenderer:
-    CACHE_VERSION = "v1"
+    CACHE_VERSION = "v2"
     roles = ("system", "user", "assistant")
 
     def __init__(self, tokenizer):
@@ -34,6 +34,11 @@ class Glm5FlashRenderer:
                 or msg.get("tool_calls")
             ):
                 raise ValueError("Expected GLM system/user/assistant text messages")
+            for alias in ("thinking", "thinking_content", "reasoning"):
+                if alias in msg:
+                    raise ValueError(
+                        f"GLM messages must store reasoning in reasoning_content, not {alias!r}"
+                    )
             for field in ("content", "reasoning_content"):
                 value = msg.get(field)
                 if value is None:
