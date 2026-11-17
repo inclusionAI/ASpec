@@ -147,6 +147,14 @@ def test_from_dict_overrides_stay_validated():
     assert restored.medusa_num_heads == 2
 
 
+def test_from_dict_preserves_unused_arguments():
+    config = make_config()
+    restored, unused = MedusaConfig.from_dict(
+        config.to_dict(), gradient_checkpointing=True, return_unused_kwargs=True)
+    assert unused == {"gradient_checkpointing": True}
+    assert not hasattr(restored, "gradient_checkpointing")
+
+
 def test_resblock_zero_weight_initialization():
     block = MedusaResBlock(16)
     assert torch.count_nonzero(block.linear.weight) == 0
@@ -394,6 +402,14 @@ def test_eval_mode_without_grad():
     with torch.no_grad():
         losses, _, _, _, _ = model(**make_inputs())
     assert all(torch.isfinite(loss) for loss in losses)
+
+
+def test_fully_frozen_model_keeps_zero_accumulator_on_device():
+    model = make_model()
+    model.requires_grad_(False)
+    losses, _, _, counts, _ = model(**make_inputs())
+    assert all(torch.isfinite(loss) for loss in losses)
+    assert all(int(count) > 0 for count in counts)
 
 
 def test_bfloat16_features_produce_finite_losses():

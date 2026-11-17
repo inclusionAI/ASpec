@@ -27,7 +27,9 @@ class MedusaModel(nn.Module):
     def forward(self, input_ids, hidden_states, loss_mask, attention_mask, thd_layout=None):
         if thd_layout is not None:
             raise NotImplementedError("Medusa currently supports padded CP1 execution only")
-        zero = sum(p.reshape(-1)[0] for p in self.parameters() if p.requires_grad) * 0.0
+        trainable = [p for p in self.parameters() if p.requires_grad]
+        zero = (sum(p.reshape(-1)[0] for p in trainable) * 0.0 if trainable
+                else hidden_states.new_zeros(()))
         sums = [zero for _ in range(self.num_heads)]
         # Exact token counts are dtype-independent; bf16 cannot represent every
         # integer above 256.

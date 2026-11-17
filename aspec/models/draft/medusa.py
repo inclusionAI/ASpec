@@ -58,12 +58,17 @@ class MedusaConfig(PretrainedConfig):
     @classmethod
     def from_dict(cls, config_dict, **kwargs):
         # The base class applies keyword overrides with setattr after construction,
-        # which bypasses the fixed-field checks; merge them through __init__ instead.
+        # so recognized overrides are merged through __init__ instead; unknown
+        # arguments stay unused, preserving the inherited loader contract.
         return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
-        merged = dict(config_dict)
-        merged.update(kwargs)
-        config = cls(**merged)
-        return (config, {}) if return_unused_kwargs else config
+        config = cls(**dict(config_dict))
+        recognized = {key: value for key, value in kwargs.items() if hasattr(config, key)}
+        if recognized:
+            merged = dict(config_dict)
+            merged.update(recognized)
+            config = cls(**merged)
+        unused = {key: value for key, value in kwargs.items() if key not in recognized}
+        return (config, unused) if return_unused_kwargs else config
 
 
 class MedusaResBlock(nn.Module):
