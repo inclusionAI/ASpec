@@ -4,6 +4,7 @@
 """Backend policy must preserve explicit choices in both compilation paths."""
 
 import copy
+from collections import Counter
 
 import pytest
 import torch
@@ -46,3 +47,43 @@ def test_kernel_backend_policy_preserves_caller_choices(monkeypatch, compiling, 
     assert options == original
     if options.get("kernel_options") is not None:
         assert kwargs["kernel_options"] is not options["kernel_options"]
+
+
+def test_new_compilation_collects_tracing_cycles_but_cache_hits_do_not(monkeypatch):
+    counters = {"frames": Counter(), "stats": Counter()}
+    collected, calls = [], []
+    result = object()
+
+    def attention(*args, **kwargs):
+        if not calls:
+            counters["frames"]["total"] += 1
+        calls.append(args)
+        return result
+
+    monkeypatch.setattr(flex_mod, "is_torchdynamo_compiling", lambda: False)
+    monkeypatch.setattr(flex_mod, "WrappedFlexAttention", lambda: lambda: attention)
+    monkeypatch.setattr(flex_mod, "dynamo_counters", counters)
+    monkeypatch.setattr(flex_mod.gc, "collect", lambda: collected.append(True))
+    for _ in range(3):
+        assert flex_mod.compile_friendly_flex_attention(None, None, None) is result
+    assert len(calls) == 3
+    assert collected == [True]
+
+
+def test_tracing_cleanup_preserves_compilation_failure(monkeypatch):
+    counters = {"frames": Counter(), "stats": Counter()}
+    collected = []
+    failure = RuntimeError("attention compilation failed")
+
+    def attention(*args, **kwargs):
+        counters["stats"]["unique_graphs"] += 1
+        raise failure
+
+    monkeypatch.setattr(flex_mod, "is_torchdynamo_compiling", lambda: False)
+    monkeypatch.setattr(flex_mod, "WrappedFlexAttention", lambda: lambda: attention)
+    monkeypatch.setattr(flex_mod, "dynamo_counters", counters)
+    monkeypatch.setattr(flex_mod.gc, "collect", lambda: collected.append(True))
+    with pytest.raises(RuntimeError) as caught:
+        flex_mod.compile_friendly_flex_attention(None, None, None)
+    assert caught.value is failure
+    assert collected == [True]

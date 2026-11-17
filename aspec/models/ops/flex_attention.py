@@ -22,11 +22,13 @@
 # torchspec/models/ops/flex_attention.py. ASpec defaults to the standard Triton
 # kernel while preserving explicit backend/legacy selectors: PyTorch 2.13 AUTO
 # can select decoding with no valid kernel choice for short GQA training rows.
+import gc
 from functools import lru_cache
 
 import torch
 import torch._dynamo as dynamo
 import torch._inductor.config as inductor_config
+from torch._dynamo.utils import counters as dynamo_counters
 from torch.nn.attention.flex_attention import (
     BlockMask,
     create_block_mask,
@@ -91,17 +93,19 @@ def compile_friendly_flex_attention(
     if "FORCE_USE_FLEX_ATTENTION" not in kernel_options:
         kernel_options.setdefault("BACKEND", "TRITON")
     kwargs["kernel_options"] = kernel_options
-    # First call initialise singleton wrapper object, second call invokes the object method to return compiled flex attention
-    # Do not use compiled version if already compiling forward (it raises issues)
-    flex_attention_compiled = (
-        WrappedFlexAttention()() if not is_torchdynamo_compiling() else flex_attention
-    )
-    return flex_attention_compiled(
-        query,
-        key,
-        value,
-        **kwargs,
-    )
+    if is_torchdynamo_compiling():
+        return flex_attention(query, key, value, **kwargs)
+    flex_attention_compiled = WrappedFlexAttention()()
+    compiled_before = (dynamo_counters["frames"]["total"], dynamo_counters["stats"]["unique_graphs"])
+    try:
+        return flex_attention_compiled(query, key, value, **kwargs)
+    finally:
+        compiled_after = (dynamo_counters["frames"]["total"], dynamo_counters["stats"]["unique_graphs"])
+        if compiled_after != compiled_before:
+            # Dynamo tracing cycles can retain Q/K/V after backward. Collect
+            # those unreachable objects once per compilation, before another
+            # training row can overlap their full-context buffers.
+            gc.collect()
 
 
 _compiled_create_block_mask = None
