@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from aspec.config.draft_algorithm import draft_model_semantics, resolve_draft_algorithm
 from aspec.config.draft_attention import resolve_draft_attention, resolve_draft_head_layout
@@ -197,6 +198,28 @@ def _trainer_args(config, **overrides):
     )
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_target_head_binding_is_rng_free_and_reuses_an_existing_head():
+    from aspec.training.medusa_trainer import MedusaTrainer
+
+    trainer = object.__new__(MedusaTrainer)
+    draft = MedusaDraftModel(_tiny_config())
+    trainer.draft_model = draft
+    before = torch.get_rng_state().clone()
+    trainer._init_target_lm_head("unused")
+    assert trainer.target_lm_head.lm_head is draft.medusa_head[0][-1]
+    assert trainer.target_lm_head.norm is None
+    assert torch.equal(torch.get_rng_state(), before)
+
+
+def test_frozen_head_is_rejected():
+    from aspec.training.medusa_trainer import MedusaTrainer
+
+    trainer = object.__new__(MedusaTrainer)
+    trainer.args = SimpleNamespace(freeze_lm_head=True)
+    with pytest.raises(ValueError):
+        trainer._prepare_algorithm_training(MedusaDraftModel(_tiny_config()))
 
 
 def test_checkpoint_topology_pins_head_count():
