@@ -36,6 +36,7 @@ from aspec.models.draft.dspark import (
 )
 from aspec.models.draft.eagle4 import Eagle4DraftModel
 from aspec.models.draft.llama3_eagle import LlamaForCausalLMEagle3
+from aspec.models.draft.medusa import MedusaConfig, MedusaDraftModel
 from aspec.models.draft.mtp import NativeMTPConfig, NativeMTPDraftModel
 from aspec.utils.logging import logger
 
@@ -46,6 +47,7 @@ class AutoEagle3DraftModel(AutoModelForCausalLMBase):
         Eagle4Config: Eagle4DraftModel,
         DeepseekV3Config: Eagle3DeepseekV2ForCausalLM,
         NativeMTPConfig: NativeMTPDraftModel,
+        MedusaConfig: MedusaDraftModel,
         DFlashConfig: DFlashDraftModel,
         DFlash2Config: DFlash2DraftModel,
         DSparkConfig: DSparkDraftModel,
@@ -68,6 +70,7 @@ class AutoDraftModelConfig:
         "LlamaForCausalLMEagle4": Eagle4Config,
         "Eagle3DeepseekV2ForCausalLM": DeepseekV3Config,
         "NativeMTPDraftModel": NativeMTPConfig,
+        "MedusaDraftModel": MedusaConfig,
         "DFlashDraftModel": DFlashConfig,
         "DFlash2DraftModel": DFlash2Config,
         "Qwen3DSparkModel": DSparkConfig,

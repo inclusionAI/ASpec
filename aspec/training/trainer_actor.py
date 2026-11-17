@@ -48,6 +48,10 @@ def _trainer_class_for_config(draft_model_config):
         from aspec.training.mtp_trainer import MTPTrainer
 
         return MTPTrainer
+    if getattr(draft_model_config, "architectures", None) == ["MedusaDraftModel"]:
+        from aspec.training.medusa_trainer import MedusaTrainer
+
+        return MedusaTrainer
     if isinstance(draft_model_config, DFlash2Config):
         from aspec.training.dflash2_trainer import DFlash2Trainer
 
@@ -67,7 +71,7 @@ def _trainer_class_for_config(draft_model_config):
 
         return Eagle3Trainer
     raise ValueError(
-        "ASpec supports DSpark, DFlash and Llama EAGLE3 draft model configs; "
+        "ASpec supports DSpark, DFlash, EAGLE3, native MTP and Medusa draft model configs; "
         f"got {type(draft_model_config).__name__}"
     )
 

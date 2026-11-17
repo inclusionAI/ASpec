@@ -593,7 +593,7 @@ def training_engine_kwargs(kwargs, args):
             "max_sequence_length": args.max_seq_length,
             "store_last_hidden_states": args.store_last_hidden_states,
             "direct_prefill": args.target_prefill_memory_optimized,
-            "final_hidden_as_aux": getattr(args, "draft_algorithm", None) == "mtp",
+            "final_hidden_as_aux": getattr(args, "draft_algorithm", None) in {"mtp", "medusa"},
             "attention_backend": args.attention_backend,
             **({"mtp": args.aspec_feature_contract["mtp"], "target_model_path": args.target_model_path}
                if (getattr(args, "aspec_feature_contract", None) or {}).get("mtp") is not None else {}),

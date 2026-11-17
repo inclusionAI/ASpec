@@ -21,6 +21,11 @@ from collections.abc import Mapping
 def resolve_draft_head_layout(raw: Mapping) -> dict:
     """Resolve the physical Q/KV head layout used by DFlash/DSpark attention."""
 
+    if raw.get("architectures") == ["MedusaDraftModel"]:
+        return {"type": "heads_only", "query_heads": None, "key_value_heads": None,
+                "query_heads_per_key_value_head": None, "head_dim": None,
+                "head_dim_source": "not_applicable"}
+
     def positive_integer(name: str, default: int) -> int:
         value = raw.get(name, default)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -115,6 +120,10 @@ def resolve_draft_head_layout(raw: Mapping) -> dict:
 
 
 def resolve_draft_attention(raw: Mapping) -> dict:
+    if raw.get("architectures") == ["MedusaDraftModel"]:
+        return {"sliding_window": None, "layer_types": [], "compress_ratios": None,
+                "csa": None, "qsa": None, "context_windows": [],
+                "window_semantics": "none", "draft_block_attention": "parallel_heads"}
     layers = raw.get("num_hidden_layers", 1)
     if isinstance(layers, bool) or not isinstance(layers, int) or layers < 1:
         raise ValueError("Draft num_hidden_layers must be a positive integer")

@@ -18,6 +18,7 @@ from collections.abc import Mapping
 
 DRAFT_ALGORITHMS = {
     "NativeMTPDraftModel": "mtp",
+    "MedusaDraftModel": "medusa",
     "DFlashDraftModel": "dflash",
     "DFlash2DraftModel": "dflash2",
     "DSparkDraftModel": "dspark",
@@ -65,7 +66,8 @@ def draft_model_semantics(config) -> dict:
         "vocab_size", "draft_vocab_size", "hidden_act", "rms_norm_eps",
         "max_position_embeddings", "rope_theta", "rope_scaling", "rope_parameters",
         "target_layer_ids", "num_target_layers", "target_num_hidden_layers",
-        "num_aux_hidden_states", "fc_norm", "norm_output", "mask_token_id",
+        "num_aux_hidden_states", "medusa_num_heads", "medusa_num_layers", "fc_norm",
+        "norm_output", "mask_token_id",
         "lm_head_rank_divisor", "attention_mode", "q_lora_rank", "kv_lora_rank",
         "qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim", "block_size",
         "conv_kernel_size", "conv_group_size", "selector_rank", "selector_top_k",

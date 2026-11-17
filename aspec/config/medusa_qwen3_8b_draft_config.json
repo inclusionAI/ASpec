@@ -1,0 +1,18 @@
+{
+  "architectures": ["MedusaDraftModel"],
+  "model_type": "aspec_medusa",
+  "hidden_size": 4096,
+  "target_hidden_size": 4096,
+  "vocab_size": 151936,
+  "draft_vocab_size": 151936,
+  "target_num_hidden_layers": 36,
+  "target_layer_ids": [35],
+  "num_target_layers": 1,
+  "num_aux_hidden_states": 1,
+  "medusa_num_heads": 5,
+  "medusa_num_layers": 1,
+  "tie_word_embeddings": false,
+  "norm_output": false,
+  "fc_norm": false,
+  "torch_dtype": "bfloat16"
+}

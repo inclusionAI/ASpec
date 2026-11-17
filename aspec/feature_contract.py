@@ -117,9 +117,10 @@ def build_target_feature_contract(
             "layout": "sequence",
         },
     }
-    if drafter_family == "mtp":
+    if drafter_family in {"mtp", "medusa"}:
         if len(aux_hidden_state_layers) != 1 or store_last_hidden_states:
-            raise FeatureContractError("Native MTP requests one post-norm feature, without a duplicate teacher tensor")
+            raise FeatureContractError(
+                "Native MTP and Medusa request one post-norm feature, without a duplicate teacher tensor")
         tensors["hidden_states"] = {
             "semantic": "target_final_hidden_state", "dtype": "bfloat16",
             "shape": ["sequence", target_hidden_size], "layout": "sequence_hidden",

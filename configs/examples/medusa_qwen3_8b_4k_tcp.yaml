@@ -1,0 +1,87 @@
+# Supplementary configuration example; see the support matrix for supported workflows.
+# Single-node heads-only Medusa (K=5) on a frozen Qwen3-8B Target: one Target GPU
+# plus one Draft GPU, 4K, CP1, no packing, SDPA, Store/TCP transport (no NVLink).
+# Uses the bundled conversations; the short window validates the execution path,
+# not convergence, acceptance or decoding quality.
+
+model:
+  target_model_path: ${oc.env:ASPEC_TARGET_MODEL}
+  native_context_length: 32768
+  trust_remote_code: false
+  draft_model_config: aspec/config/medusa_qwen3_8b_draft_config.json
+
+dataset:
+  train_data_path: ../../examples/data/sample_conversations.jsonl
+  eval_data_path: null
+  chat_template: qwen3-instruct
+  min_loss_tokens: 1
+  shuffle_dataset: false
+
+training:
+  attention_backend: sdpa
+  draft_context_parallel_size: 1
+  micro_batch_size: 1
+  draft_accumulation_steps: 4
+  learning_rate: 6e-4
+  min_lr: 6e-5
+  weight_decay: 0.0
+  max_concurrent_batches: 1
+  streaming_dispatch_with_training: true
+  pipeline_dispatch_with_training: true
+  max_grad_norm: 1.0
+  max_seq_length: 4096
+  num_epochs: 100
+  num_train_steps: 8
+  lr_total_steps: 8
+  seed: 42
+  training_num_gpus_per_node: 2
+  training_num_nodes: 1
+  placement_strategy: inference_first
+  fsdp_strategy: REPLICATE
+  fsdp_reduce_dtype: bfloat16
+  prefetch_depth: 1
+  save_interval: 0
+  save_per_epoch: false
+  save_final_checkpoint: true
+  warmup_ratio: 0.04
+  dflash_packing: false
+  gradient_checkpointing: true
+
+inference:
+  inference_engine_type: sgl
+  store_last_hidden_states: false
+  target_prefill_memory_optimized: false
+  inference_num_gpus: 1
+  inference_num_gpus_per_engine: 1
+  inference_num_gpus_per_node: 2
+  inference_fetch_batch: 8
+  inference_buffer_threshold: 2
+  max_sample_pool_size: 12
+  inference_batch_size: 2
+  sglang:
+    tp_size: 1
+    mem_fraction_static: 0.5
+
+mooncake:
+  master_server_address: null
+  metadata_server: null
+  data_plane: store
+  protocol: tcp
+  enable_gpu_direct: false
+  allow_host_fallback: false
+  global_segment_size: 32GB
+  local_buffer_size: 8GB
+  host_buffer_size: 1GB
+  async_put_pool_size: 1
+  enable_hard_pin: true
+  max_seq_len: 4096
+  hidden_dim: 4096
+
+logging:
+  report_to: none
+
+debug:
+  enable_perf_metrics: true
+
+output_dir: outputs/medusa_qwen3_8b_4k_tcp
+cache_dir: cache/medusa_qwen3_8b_4k_tcp

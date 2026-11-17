@@ -65,6 +65,13 @@ def _logical_training_topology(args: Any, world_size: int) -> dict[str, Any]:
             "step_weights": args.ploss_weights,
             "loss": "teacher_forced_native_mtp_ce", "frozen_shared": ["embedding", "lm_head"],
         }
+    elif getattr(args, "draft_algorithm", None) == "medusa":
+        topology["training_objective"] = {
+            "ttt_length": args.ttt_length,
+            "ploss_weights": args.ploss_weights,
+            "loss": "parallel_future_token_ce",
+            "head_weighting": "sum_of_per_head_mean_ce",
+        }
     elif getattr(args, "draft_algorithm", None) in {"eagle3", "eagle4"}:
         topology["training_objective"] = {
             key: getattr(args, key, None)
@@ -96,7 +103,7 @@ def _logical_training_topology(args: Any, world_size: int) -> dict[str, Any]:
     if "training_objective" in topology:
         fields = ("max_seq_length", "micro_batch_size", "draft_accumulation_steps",
                   "max_grad_norm", "seed")
-        fields += (("freeze_lm_head",) if args.draft_algorithm in {"eagle3", "eagle4", "mtp"}
+        fields += (("freeze_lm_head",) if args.draft_algorithm in {"eagle3", "eagle4", "mtp", "medusa"}
                    else ("deterministic_anchor_sampling",))
         for key in fields:
             if hasattr(args, key):

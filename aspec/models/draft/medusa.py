@@ -95,9 +95,12 @@ class MedusaResBlock(nn.Module):
 class MedusaDraftModel(nn.Module):
     config_class = MedusaConfig
 
-    def __init__(self, config):
+    def __init__(self, config, attention_backend="sdpa"):
         super().__init__()
+        if attention_backend != "sdpa":
+            raise NotImplementedError("Medusa heads have no attention; use the sdpa backend")
         self.config = config
+        self.attention_backend = attention_backend
         self.medusa_num_heads = config.medusa_num_heads
         self.medusa_num_layers = config.medusa_num_layers
         self.hidden_size = config.hidden_size
@@ -114,3 +117,9 @@ class MedusaDraftModel(nn.Module):
     def forward(self, hidden_states):
         """[B, S, H] frozen Target features -> [K, B, S, V] per-head logits."""
         return torch.stack([head(hidden_states) for head in self.medusa_head], dim=0)
+
+    def load_embedding(self, target_model_path, embedding_key=None):
+        """Heads-only: the draft reads Target features and owns no token embedding."""
+
+    def freeze_embedding(self):
+        """Heads-only: the draft reads Target features and owns no token embedding."""
