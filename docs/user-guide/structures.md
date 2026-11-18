@@ -36,8 +36,9 @@ The adapter also supports width-128 GQA and materialized MLA with query/key widt
 
 The optional internal joint-GQA backward has a separate contract: head width 128
 and four query heads per KV head. Native MHA64 does not use that specialization.
-Keep the attention backend fixed when reproducing or resuming a training run: identical-state
-loss/gradient comparisons and independent optimizer trajectories are different checks.
+Compare loss and gradients at identical weights when validating backend precision.
+Independent BF16 optimizer trajectories also include accumulated arithmetic and gradient-reduction
+differences; keep the attention backend fixed when reproducing or resuming a training run.
 
 Run the MHA64 and retained attention/kernel regressions in the Linux Draft environment:
 
@@ -50,8 +51,12 @@ ASPEC_RUN_CUDNN_FLEX_INTEGRATION=1 ASPEC_RUN_CUTEDSL_INTEGRATION=1 \
 The MHA64 training tests use synthetic features and bounded hidden/vocabulary sizes.
 Add `ASPEC_RUN_CUDNN_MHA64_FULL=1` to include hidden size 4096, vocabulary size 154880
 and 64 anchors at both 8K and 256K. The full-width 256K case enables gradient checkpointing
-uniformly across FA4, FlexAttention and cuDNN. These numerical checks do not establish
-real-checkpoint training quality or convergence.
+uniformly across FA4, FlexAttention and cuDNN. The independent-trajectory checks retain a 0.1%
+total-loss criterion and component tolerances of `atol=1e-4, rtol=1e-3`. In the synthetic 256K
+control, FA4 versus FlexAttention alone shows about 0.105% third-update total-loss drift, with
+confidence-loss drift also crossing its component tolerance. Fixed-weight and weight-swap controls
+show that drift follows trained weight states while identical-state loss and gradients agree across
+backends. These numerical checks do not establish real-checkpoint training quality or convergence.
 
 ## Packing and context parallelism
 
