@@ -1155,3 +1155,18 @@ def test_dry_run_prints_plan_without_writing_artifacts(tmp_path, monkeypatch, ca
     rendered = json.loads(capsys.readouterr().out)
     assert rendered["workload"]["duration"]["num_train_steps"] == 1
     assert not output_dir.exists()
+
+
+@pytest.mark.parametrize("relative_path, algorithm", [
+    ("configs/recipes/qwen3_8b_dflash.yaml", "dflash"),
+    ("configs/examples/qwen3_8b_dflash2.yaml", "dflash2"),
+])
+def test_block_objectives_pin_family_and_block_size(
+    monkeypatch, relative_path, algorithm,
+):
+    monkeypatch.setenv(
+        "ASPEC_TRAIN_DATA", str(_REPO_ROOT / "examples/data/sample_conversations.jsonl"))
+    config = load_config(str(_REPO_ROOT / relative_path))
+    plan = compile_execution_plan(config)
+    assert plan.workload.objective["family"] == algorithm
+    assert plan.workload.objective["block_size"] == config.training.dflash_block_size
