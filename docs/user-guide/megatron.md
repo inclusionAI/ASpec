@@ -168,3 +168,86 @@ gradient differences that Adam amplifies into larger update differences. The
 tool also checks clipping/Adam with the same gradients and records checkpoint
 load fidelity, in-memory replay and checkpoint replay independently. A failed
 future-bitwise or unpartitioned-update gate remains a failed gate.
+
+To exercise the online 4K path with accumulation and evaluation, provide
+pretokenized Parquet inputs containing `input_ids` and `loss_mask`, and use six
+allocated GPUs for Draft TP2 x DP2 plus Target TP2:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5 python -m aspec._environment \
+  /absolute/path/to/megatron-draft-venv/bin/python \
+  -m tools.validation.megatron_pipeline_acceptance \
+  --model /absolute/path/to/Qwen3-8B \
+  --train-data /absolute/path/to/train.parquet \
+  --eval-data /absolute/path/to/eval.parquet \
+  --target-python /absolute/path/to/megatron-target-venv/bin/python \
+  --target-tp 2 --draft-tp 2 --dp 2 --accumulation 2 \
+  --sequence-length 4096 --anchors 512 --steps 4 \
+  --output /tmp/megatron-online-check
+```
+
+This source-only validation entry uses the ordinary launcher and existing recipe
+audits. It creates a fresh checkpoint, restarts the driver and workers, checks
+loaded state/RNG and committed work, continues training, and exports an asset for
+strict loading. Keep native compiler caches on a filesystem that supports the
+toolchain's concurrent cache operations.
+
+## Recorded online checks
+
+The 4K diagnostic corpus uses 48 training work identities and eight separate
+evaluation identities, each with 4096 pretokenized tokens and unequal supervision
+masks. Text is repeated for a bounded functional check; it is not a quality corpus.
+Both checks below ran four optimizer updates with 512 anchors, accumulation two,
+evaluation, a fresh process restart after update two, checkpoint state/RNG/work
+audits, native export and strict reloading:
+
+| Target | Draft | Result |
+| --- | --- | --- |
+| SGLang TP1 | Megatron TP1 x DP1 | Passed |
+| Megatron TP2 | Megatron TP2 x DP2 | Passed; 16 unique training work identities committed after four updates |
+
+The successful runs drained source and destination leases and ended with zero
+resident feature outputs. Earlier failed/canceled runs exercised reader-process
+fencing before source teardown and also ended with zero resident outputs. This
+does not certify driver hangs, host loss or network partitions.
+
+## Numerical validation status
+
+The following diagnostic results were obtained on SM90 with the dependency
+versions above and a locally supplied Qwen3-8B checkpoint. Draft checks use the
+full DSpark geometry (1,126,422,017 trainable parameters), two unequal-supervision
+microbatches per update, two updates and the retained cuDNN attention path.
+They are numerical diagnostics, not a quality or throughput benchmark.
+
+| Check | Observed result |
+| --- | --- |
+| Frozen Target, TP1/TP2, 128 and 4096 tokens, five residual captures plus final norm | Passed; worst feature relative L2 0.8787%, minimum cosine 0.999961 |
+| Draft, 128 tokens/16 anchors, TP1 | Passed loss/gradient/update and future bitwise replay gates |
+| Draft, 128 tokens/16 anchors, TP2, matched TP reference | Passed; worst update relative L2 0.24594%; future bitwise replay passed |
+| Draft, 128 tokens/16 anchors, TP2 x DP2, matched TP reference | Passed; worst update relative L2 0.74774%; pooled denominators matched exactly; future bitwise replay passed |
+| Draft, 4096 tokens/512 anchors, TP1 | Loss/gradient/update tolerances passed (worst update 2.77321%); future bitwise replay failed |
+| Draft, 4096 tokens/512 anchors, TP2, matched TP reference | Worst update 3.01748% exceeds the unchanged 3% gate; future bitwise replay failed |
+
+The 4K check remains **unaccepted**. Loading model/master/moment/scheduler state
+was exact in the TP2 diagnostic, but subsequent backward arithmetic differed.
+An in-memory restore of the same tensors also differed, independently of
+checkpoint deserialization. This establishes arithmetic nondeterminism in the
+tested execution; it does not establish that all remaining numerical differences
+have that cause. The same-gradient independent clipping/Adam oracle agreed to
+relative update L2 below 3.1e-7 in the recorded checks.
+
+The unpartitioned BF16 reference also remains a failed TP2 update comparison
+(approximately 9.7% on the first short-context update). The matched TP reference
+explains rounding boundaries; passing it does not erase that result. Full 4K
+update/future-replay acceptance and matched resident/online performance
+measurements remain open before treating this adapter as generally validated.
+
+The online 4K check records actual Q/K preparation, L1 invocations, block counts,
+projection-cache occupancy, checkpointing and fused optimizer clipping. Q/K
+CuTeDSL, tiled FP32 L1 and fused clipping were observed. The short diagnostic
+compacted 16 sampled blocks to 12 valid blocks. A single 4K row with 512 anchors
+has one head chunk and does not exercise the retained multi-chunk projection
+cache/head-recomputation optimization. Its THD/packing validation belongs to the
+next integration stage; retaining the shared code path is not activation evidence.
+Use `--gradient-checkpointing` on either Draft validation command to check optional
+backbone recomputation separately from the default workload.

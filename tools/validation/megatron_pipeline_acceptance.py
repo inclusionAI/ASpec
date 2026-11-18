@@ -35,6 +35,7 @@ def main():
     parser.add_argument("--sequence-length", type=int, default=4096)
     parser.add_argument("--anchors", type=int, default=512)
     parser.add_argument("--steps", type=int, default=4)
+    parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--attention-backend", choices=("fa4", "cudnn_flex_attention"),
                         default="cudnn_flex_attention")
     parser.add_argument("--target-address", default="http://127.0.0.1:30000")
@@ -68,6 +69,7 @@ def main():
             "train_backend": args.draft_backend, "draft_tensor_parallel_size": args.draft_tp,
             "training_num_gpus_per_node": world, "draft_accumulation_steps": args.accumulation,
             "attention_backend": args.attention_backend, "dflash_packing": False,
+            "gradient_checkpointing": args.gradient_checkpointing,
             "max_seq_length": args.sequence_length, "dspark_num_anchors": args.anchors,
             "num_epochs": 100, "lr_total_steps": args.steps,
             "save_interval": args.steps // 2, "save_final_checkpoint": True,
@@ -90,6 +92,7 @@ def main():
               "source_input": {"path": str(args.train_data.resolve()), "sha256": digest(args.train_data)},
               "world_size": world, "dp": args.dp, "draft_tp": args.draft_tp,
               "target_tp": args.target_tp, "accumulation": args.accumulation}
+    result["gradient_checkpointing"] = args.gradient_checkpointing
     if args.eval_data:
         result["eval_input"] = {"path": str(args.eval_data.resolve()), "sha256": digest(args.eval_data)}
     try:

@@ -447,7 +447,8 @@ class RunEvidenceRecorder:
                     or any(not isinstance(item, Mapping) or not item.get("effective_tree_sha256")
                            or item.get("missing_files") for item in backend_identities)
                     or len({item["effective_tree_sha256"] for item in backend_identities}) != 1):
-                raise RuntimeError("Target workers reported incomplete or different backend identities")
+                name = "SGLang" if target_backend == "sglang" else "Megatron"
+                raise RuntimeError(f"Target workers reported incomplete or different {name} identities")
             self._data["source"]["backends"][target_backend] = dict(backend_identities[0])
             self._data["source"]["target_runtimes"] = target_runtimes
 

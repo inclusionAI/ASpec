@@ -200,6 +200,7 @@ def main():
     parser.add_argument("--anchors", type=int, default=16)
     parser.add_argument("--attention-backend", choices=("fa4", "cudnn_flex_attention"), default="fa4")
     parser.add_argument("--reference-tp-projections", action="store_true")
+    parser.add_argument("--gradient-checkpointing", action="store_true")
     args = parser.parse_args()
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl")
@@ -221,6 +222,7 @@ def main():
         f"training.attention_backend={args.attention_backend}",
         f"training.training_num_gpus_per_node={world}", "training.dflash_packing=false",
         "training.draft_accumulation_steps=2", "training.deterministic_anchor_sampling=true",
+        f"training.gradient_checkpointing={str(args.gradient_checkpointing).lower()}",
         f"training.max_seq_length={args.sequence_length}", f"training.dspark_num_anchors={args.anchors}",
         "training.lr_total_steps=4", "training.num_train_steps=4",
         "mooncake.destination_gpu_ring_slots=4",
@@ -418,6 +420,7 @@ def main():
                   "reference_accumulation_dtype": "float32",
                   "reference_projection_topology": "simulated_tp" if args.reference_tp_projections else "unpartitioned",
                   "attention_backend": args.attention_backend,
+                  "gradient_checkpointing": args.gradient_checkpointing,
                   "dspark_execution": trainer._kernel_observation(),
                   "tolerances": {"loss_relative_error": 0.01, "gradient_relative_l2": 0.03,
                                  "update_relative_l2": 0.03}}

@@ -160,6 +160,10 @@ class MegatronDSparkTrainer(DSparkTrainer):
             "l1_backend": wrapper.l1_loss_backend,
             "l1_kernel_invocations": dict(wrapper.l1_kernel_invocations),
             "anchor_tp_broadcasts": wrapper._aspec_anchor_tp_broadcasts,
+            "qk_preparation_backends": [layer.self_attn.qk_prepare_backend
+                                        for layer in self.draft_model.layers],
+            "gradient_checkpointing_enabled": self.draft_model.gradient_checkpointing,
+            "optimizer_fused_clip_scaling": self.optimizer._fuse_clip_scaling,
             "last_batch": {name.removesuffix("_observed"): value
                            for name, value in vars(wrapper).items()
                            if name.endswith("_observed") and type(value) in (int, float)},
