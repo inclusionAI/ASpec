@@ -19,6 +19,7 @@ from aspec.config.train_config import load_config
 from aspec.feature_contract import FeatureContractError, build_target_feature_contract
 from aspec.models.draft.auto import AutoDraftModelConfig, AutoEagle3DraftModel
 from aspec.models.draft.medusa import MedusaConfig, MedusaDraftModel
+from aspec.models.medusa import MedusaModel
 from aspec.planning import (
     PlanCompileError,
     _load_draft_descriptor,
@@ -38,8 +39,12 @@ _DRAFT_JSON = _REPO_ROOT / "aspec" / "config" / "medusa_qwen3_8b_draft_config.js
 
 _ILLEGAL_OVERRIDES = [
     ("training.dflash_packing=true", PlanCompileError),
+    # CP>1 is rejected by the shared draft-execution contract inside load_config;
+    # the family guard is covered directly in test_direct_compile_rejects_medusa_cp.
     ("training.draft_context_parallel_size=2", NotImplementedError),
     ("training.micro_batch_size=2", PlanCompileError),
+    ("training.fsdp_strategy=FULL_SHARD", PlanCompileError),
+    ("training.training_num_nodes=2", PlanCompileError),
     ("training.attention_backend=fa4", PlanCompileError),
     ("training.attention_backend=cudnn_flex_attention", PlanCompileError),
     ("inference.store_last_hidden_states=true", PlanCompileError),
@@ -162,6 +167,15 @@ def test_plan_rejects_unsupported_medusa_combinations(tmp_path, override, error)
         compile_execution_plan(config, config_path=str(_EXAMPLE), cli_args=args)
 
 
+def test_direct_compile_rejects_medusa_cp(tmp_path):
+    # load_config normally rejects CP>1 first; keep the family guard effective
+    # for callers that hand a config straight to plan compilation.
+    config, _ = _config(tmp_path)
+    config.training.draft_context_parallel_size = 2
+    with pytest.raises(PlanCompileError, match="draft_context_parallel_size=1"):
+        _load_draft_descriptor(config)
+
+
 def test_producer_publishes_final_state_for_medusa(monkeypatch):
     for name in ("sglang", "sglang.srt", "sglang.srt.model_executor",
                  "mooncake", "mooncake.store"):
@@ -220,6 +234,39 @@ def test_frozen_head_is_rejected():
     trainer.args = SimpleNamespace(freeze_lm_head=True)
     with pytest.raises(ValueError):
         trainer._prepare_algorithm_training(MedusaDraftModel(_tiny_config()))
+    # Bypassing Plan: freeze_lm_head() is the first call, and it must reject
+    # rather than raise AttributeError on the missing embedding-owned head.
+    with pytest.raises(ValueError, match="trainable vocabulary projections"):
+        MedusaDraftModel(_tiny_config()).freeze_lm_head()
+
+
+def test_training_model_forward_and_feature_status(monkeypatch):
+    trainer = object.__new__(MedusaTrainer)
+    trainer.args = SimpleNamespace(
+        gradient_checkpointing=True, attention_backend="sdpa",
+        draft_context_parallel_size=1, ttt_length=3)
+    trainer.data_fetcher = None
+    trainer.dp_rank = 0
+    trainer.draft_model = MedusaDraftModel(_tiny_config())
+    trainer.model = trainer._create_training_model(trainer.draft_model)
+    assert isinstance(trainer.model, MedusaModel)
+    assert trainer.model.gradient_checkpointing is True
+
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, *args, **kwargs: self)
+    losses, detached, accuracy, counts, pad = trainer._forward({
+        "input_ids": torch.arange(8).reshape(1, 8),
+        "hidden_states": torch.randn(1, 8, 16),
+        "loss_mask": torch.ones(1, 8, 1),
+        "attention_mask": torch.ones(1, 8),
+    })
+    assert len(losses) == len(detached) == len(accuracy) == len(pad) == 3
+    # Head i predicts t+2+i, so the tail shortens by the offset.
+    assert [int(count) for count in counts] == [6, 5, 4]
+
+    status = trainer.get_feature_contract_status()
+    assert status["state"] == "not_ready"
+    assert status["medusa_num_heads"] == 3
+    assert status["medusa_num_layers"] == 1
 
 
 def test_checkpoint_topology_pins_head_count():

@@ -131,7 +131,7 @@ class Eagle3Trainer(Trainer):
                 logger.info(f"[Rank 0] Seeded draft lm_head from {target_model_path}")
 
         draft_model.freeze_embedding()
-        frozen_parts = ["embedding"]
+        frozen_parts = list(getattr(draft_model, "frozen_part_labels", ("embedding",)))
         if freeze_lm_head:
             draft_model.freeze_lm_head()
             frozen_parts.append("lm_head")
@@ -142,9 +142,10 @@ class Eagle3Trainer(Trainer):
 
         frozen_count = sum(p.numel() for p in draft_model.parameters() if not p.requires_grad)
         trainable_count = sum(p.numel() for p in draft_model.parameters() if p.requires_grad)
+        frozen_detail = f" ({', '.join(frozen_parts)})" if frozen_parts else ""
         logger.info(
             f"[Rank {self.dp_rank}] Draft model: {trainable_count:,} trainable, "
-            f"{frozen_count:,} frozen ({', '.join(frozen_parts)}) parameters"
+            f"{frozen_count:,} frozen{frozen_detail} parameters"
         )
 
         if getattr(self.args, "eagle3_num_anchors", 0):

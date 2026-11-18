@@ -43,6 +43,8 @@ def test_public_algorithm_recipe_compiles_and_reports_real_algorithm(algorithm):
         assert "block_size" not in plan.workload.objective
         assert plan.policy.pipeline["eagle3_target_cache"] == "logits"
         assert plan.policy.pipeline["eagle3_loss_gradient_checkpointing"] is False
+    else:
+        assert plan.workload.objective["block_size"] == config.training.dflash_block_size
 
 
 def _shared_algorithm_config():

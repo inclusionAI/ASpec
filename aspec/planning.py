@@ -313,10 +313,17 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
             raise PlanCompileError("Medusa heads have no attention; use training.attention_backend=sdpa")
         if _select(config, "training.dflash_packing", False):
             raise PlanCompileError("Medusa does not implement sequence packing yet")
+        # load_config rejects CP>1 for SDPA before this point; keep the family
+        # guard for direct compile_execution_plan callers.
         if _select(config, "training.draft_context_parallel_size", 1) != 1:
             raise PlanCompileError("Medusa currently supports draft_context_parallel_size=1")
         if _select(config, "training.micro_batch_size", 1) != 1:
             raise PlanCompileError("Medusa currently supports micro_batch_size=1")
+        if str(_select(config, "training.fsdp_strategy", "REPLICATE")).upper() != "REPLICATE":
+            raise PlanCompileError("Medusa currently supports fsdp_strategy=REPLICATE")
+        if (_select(config, "training.training_num_nodes", 1) != 1
+                or _select(config, "cluster.mode", "single_node") != "single_node"):
+            raise PlanCompileError("Medusa currently supports a single node")
         if _select(config, "inference.store_last_hidden_states", False):
             raise PlanCompileError(
                 "Medusa publishes final post-norm features once; set store_last_hidden_states=false")

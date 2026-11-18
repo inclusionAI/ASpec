@@ -94,6 +94,8 @@ class MedusaResBlock(nn.Module):
 
 class MedusaDraftModel(nn.Module):
     config_class = MedusaConfig
+    # Heads-only: load_embedding/freeze_embedding are no-ops, so do not report a frozen embedding.
+    frozen_part_labels: tuple[str, ...] = ()
 
     def __init__(self, config, attention_backend="sdpa"):
         super().__init__()
@@ -123,3 +125,6 @@ class MedusaDraftModel(nn.Module):
 
     def freeze_embedding(self):
         """Heads-only: the draft reads Target features and owns no token embedding."""
+
+    def freeze_lm_head(self):
+        raise ValueError("Medusa heads own trainable vocabulary projections")
