@@ -44,7 +44,6 @@ _ILLEGAL_OVERRIDES = [
     ("training.draft_context_parallel_size=2", NotImplementedError),
     ("training.micro_batch_size=2", PlanCompileError),
     ("training.fsdp_strategy=FULL_SHARD", PlanCompileError),
-    ("training.training_num_nodes=2", PlanCompileError),
     ("training.attention_backend=fa4", PlanCompileError),
     ("training.attention_backend=cudnn_flex_attention", PlanCompileError),
     ("inference.store_last_hidden_states=true", PlanCompileError),
@@ -173,6 +172,22 @@ def test_direct_compile_rejects_medusa_cp(tmp_path):
     config, _ = _config(tmp_path)
     config.training.draft_context_parallel_size = 2
     with pytest.raises(PlanCompileError, match="draft_context_parallel_size=1"):
+        _load_draft_descriptor(config)
+
+
+@pytest.mark.parametrize("key, value", [
+    ("training_num_nodes", 2),
+    ("cluster", "static_multi_node"),
+])
+def test_direct_compile_rejects_medusa_multi_node(tmp_path, key, value):
+    # The shared cluster contract rejects multi-node configs before family
+    # gates; mutate the loaded config to cover the medusa guard itself.
+    config, _ = _config(tmp_path)
+    if key == "cluster":
+        config.cluster.mode = value
+    else:
+        setattr(config.training, key, value)
+    with pytest.raises(PlanCompileError, match="single node"):
         _load_draft_descriptor(config)
 
 
