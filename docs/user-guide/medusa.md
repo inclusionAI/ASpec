@@ -38,11 +38,5 @@ The current path fails closed outside the following:
 - `fsdp_strategy: REPLICATE`, one node. Anchored training, MTP conditioning and whole-model
   compile are rejected.
 
-## Capacity
-
-One head holds `hidden_size^2 + hidden_size * vocab_size` parameters (about 0.64B for Qwen3-8B),
-so `K=5` is about 3.2B trainable parameters. Bfloat16 weights, gradients, f32 master weights and
-Adam state are roughly 51 GB in REPLICATE, which does not fit one 48 GB device for the listed
-example. Size the device count for your hardware, use `fsdp_strategy: SHARD` across independent
-Draft GPUs when memory requires it, and measure the actual fit. Export, a maintained recipe,
-per-head held-out observations and candidate-tree acceptance are not part of this scope.
+Export, a maintained recipe, per-head held-out observations and candidate-tree acceptance are not
+part of this scope.

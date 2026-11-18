@@ -152,6 +152,5 @@ flag. A format manifest does not replace testing the particular exported asset w
 post-norm final state; head `i` at position `t` is supervised by token `t+2+i`. The objective is
 the sum of per-head mean cross-entropies (assistant tokens only), and the heads own trainable
 full-vocabulary projections. Start from `configs/examples/medusa_qwen3_8b_4k_tcp.yaml` (SDPA,
-CP1, MBS1, non-packing, REPLICATE, Store/TCP). `K=5` on Qwen3-8B is about 3.2B trainable
-parameters; measure memory fit before long runs. Export, a maintained recipe, per-head held-out
+CP1, MBS1, non-packing, REPLICATE, Store/TCP). Export, a maintained recipe, per-head held-out
 observations and candidate-tree acceptance remain future work; see [details](medusa.md).
