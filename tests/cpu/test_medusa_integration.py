@@ -62,14 +62,14 @@ def _tiny_config(**overrides):
     return AutoDraftModelConfig.from_dict(raw)
 
 
-def _fake_qwen_target(tmp_path):
+def _fake_qwen_target(tmp_path, vocab_size=151936):
     target = tmp_path / "Qwen3-8B-test"
     target.mkdir()
     (target / "config.json").write_text(json.dumps({
         "model_type": "qwen3",
         "architectures": ["Qwen3ForCausalLM"],
         "hidden_size": 4096,
-        "vocab_size": 151936,
+        "vocab_size": vocab_size,
         "num_hidden_layers": 36,
         "max_position_embeddings": 40960,
     }), encoding="utf-8")
@@ -102,6 +102,25 @@ def test_registration_resolves_medusa():
     assert semantics["medusa_num_layers"] == 1
 
 
+def test_loader_does_not_rewrite_heads_only_validation():
+    raw = {
+        "architectures": ["MedusaDraftModel"], "hidden_size": 16, "vocab_size": 32,
+        "target_hidden_size": 16, "target_num_hidden_layers": 4,
+    }
+    with pytest.raises(ValueError):
+        AutoDraftModelConfig.from_dict({**raw, "tie_word_embeddings": True})
+    for override in (
+        {"tie_word_embeddings": False, "sliding_window": 128},
+        {"tie_word_embeddings": False, "layer_types": ["sliding_attention"]},
+        {"tie_word_embeddings": False, "use_sliding_window": True},
+        {"tie_word_embeddings": False, "num_experts": 8},
+        {"tie_word_embeddings": False, "num_experts_per_tok": 2},
+        {"tie_word_embeddings": False, "moe_intermediate_size": 64},
+    ):
+        with pytest.raises(ValueError):
+            AutoDraftModelConfig.from_dict({**raw, **override})
+
+
 def test_heads_only_policies():
     raw = _tiny_config().to_dict()
     attention = resolve_draft_attention(raw)
@@ -130,6 +149,10 @@ def test_feature_contract_requests_one_post_norm_state():
         build_target_feature_contract(
             drafter_family="medusa", target_hidden_size=4096, target_num_hidden_layers=36,
             aux_hidden_state_layers=[34, 35], store_last_hidden_states=False)
+    with pytest.raises(FeatureContractError):
+        build_target_feature_contract(
+            drafter_family="medusa", target_hidden_size=4096, target_num_hidden_layers=36,
+            aux_hidden_state_layers=[34], store_last_hidden_states=False)
 
 
 def test_plan_compiles_with_medusa_objective(tmp_path):
@@ -175,6 +198,14 @@ def test_direct_compile_rejects_medusa_cp(tmp_path):
         _load_draft_descriptor(config)
 
 
+def test_plan_rejects_draft_target_vocabulary_mismatch(tmp_path):
+    target = f"model.target_model_path={_fake_qwen_target(tmp_path, vocab_size=151935)}"
+    args = [target]
+    with pytest.raises(PlanCompileError, match="Target vocabulary"):
+        config = load_config(config_path=str(_EXAMPLE), cli_args=args)
+        compile_execution_plan(config, config_path=str(_EXAMPLE), cli_args=args)
+
+
 @pytest.mark.parametrize("key, value", [
     ("training_num_nodes", 2),
     ("cluster", "static_multi_node"),
@@ -192,12 +223,10 @@ def test_direct_compile_rejects_medusa_multi_node(tmp_path, key, value):
 
 
 def test_producer_publishes_final_state_for_medusa(monkeypatch):
-    for name in ("sglang", "sglang.srt", "sglang.srt.model_executor",
-                 "mooncake", "mooncake.store"):
+    for name in ("sglang", "sglang.srt", "sglang.srt.model_executor"):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     sys.modules["sglang.srt.model_executor"].hook_manager = SimpleNamespace(
         SUPPORTS_MODEL_HOOK_SETUP=True)
-    sys.modules["mooncake.store"].MooncakeDistributedStore = object
     from aspec.inference.sglang_v0521 import training_engine_kwargs
 
     args = SimpleNamespace(
@@ -246,13 +275,35 @@ def test_frozen_head_is_rejected():
     from aspec.training.medusa_trainer import MedusaTrainer
 
     trainer = object.__new__(MedusaTrainer)
-    trainer.args = SimpleNamespace(freeze_lm_head=True)
+    trainer.args = SimpleNamespace(freeze_lm_head=True, ttt_length=3)
     with pytest.raises(ValueError):
         trainer._prepare_algorithm_training(MedusaDraftModel(_tiny_config()))
     # Bypassing Plan: freeze_lm_head() is the first call, and it must reject
     # rather than raise AttributeError on the missing embedding-owned head.
     with pytest.raises(ValueError, match="trainable vocabulary projections"):
         MedusaDraftModel(_tiny_config()).freeze_lm_head()
+
+
+def test_head_count_drift_is_rejected():
+    from aspec.training.medusa_trainer import MedusaTrainer
+
+    trainer = object.__new__(MedusaTrainer)
+    trainer.args = SimpleNamespace(freeze_lm_head=False, ttt_length=5)
+    with pytest.raises(ValueError, match="drifted"):
+        trainer._prepare_algorithm_training(MedusaDraftModel(_tiny_config()))
+
+
+def test_metric_semantics_drop_unmeasured_acceptance():
+    from aspec.training.medusa_trainer import MedusaTrainer
+
+    trainer = object.__new__(MedusaTrainer)
+    metrics = {
+        "train/avg_loss": 1.0, "train/avg_acc": 0.5, "train/avg_alpha": 0.0,
+        "train/simulated_acc_len": 0.25, "train/alpha_0": 0.0,
+        "train/ploss_0": 1.0, "train/acc_0": 0.5,
+    }
+    cleaned = trainer._metric_semantics(dict(metrics), "train")
+    assert set(cleaned) == {"train/avg_loss", "train/avg_acc", "train/ploss_0", "train/acc_0"}
 
 
 def test_training_model_forward_and_feature_status(monkeypatch):

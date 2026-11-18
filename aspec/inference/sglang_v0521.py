@@ -32,7 +32,6 @@ import torch
 
 from aspec.config.mooncake_config import MooncakeConfig
 from aspec.inference.target_prefill import TargetPrefillDirectSink, TargetPrefillRequest
-from aspec.transfer.mooncake import EagleMooncakeStore
 
 
 class StreamingLayerAccumulator:
@@ -244,6 +243,10 @@ class TrainingFeaturePublisher:
 
     def _store(self, device):
         if self.store is None:
+            # Keep the native Mooncake dependency out of module import so
+            # config-only users (hook compilation, CPU checks) do not need it.
+            from aspec.transfer.mooncake import EagleMooncakeStore
+
             self.store = EagleMooncakeStore(MooncakeConfig.from_env())
             self.store.setup(device=device, p2p_role="source")
             from aspec.utils.timeline import get_timeline_from_env

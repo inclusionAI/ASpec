@@ -82,7 +82,7 @@ class AutoDraftModelConfig:
     def from_dict(cls, config: dict):
         config = dict(config)
 
-        if "tie_word_embeddings" in config:
+        if "tie_word_embeddings" in config and config.get("architectures") != ["MedusaDraftModel"]:
             logger.info("Set draft model tie_word_embeddings to False")
             config["tie_word_embeddings"] = False
 

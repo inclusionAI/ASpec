@@ -308,6 +308,19 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
             raw = MedusaConfig.from_dict(raw).to_dict()
         except (ValueError, TypeError) as exc:
             raise PlanCompileError(str(exc)) from exc
+        target_path = _select(config, "model.target_model_path")
+        target_config = (
+            _target_config_with_sglang_overrides(config, target_path) if target_path else None)
+        if target_config is not None:
+            target_vocab = target_config.get("vocab_size")
+            text_config = target_config.get("text_config")
+            if target_vocab is None and isinstance(text_config, Mapping):
+                target_vocab = text_config.get("vocab_size")
+            if (isinstance(target_vocab, int) and not isinstance(target_vocab, bool)
+                    and target_vocab != raw.get("vocab_size")):
+                raise PlanCompileError(
+                    "Medusa projects the full Target vocabulary: draft vocab_size "
+                    f"{raw.get('vocab_size')} != Target vocab_size {target_vocab}")
         backend = _select(config, "training.attention_backend")
         if backend != "sdpa":
             raise PlanCompileError("Medusa heads have no attention; use training.attention_backend=sdpa")

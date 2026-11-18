@@ -10,7 +10,10 @@ loss landed first; this page describes the current training scope.
 
 - Draft config: `aspec/config/medusa_qwen3_8b_draft_config.json` (Qwen3-8B Target, `K=5` heads).
 - Example: `configs/examples/medusa_qwen3_8b_4k_tcp.yaml` (one Target GPU + one Draft GPU, 4K,
-  SDPA, CP1, non-packing, REPLICATE, Store/TCP transport; no NVLink required).
+  SDPA, CP1, non-packing, REPLICATE, Store/TCP transport; no NVLink required). Set
+  `ASPEC_TARGET_MODEL` to the Qwen3-8B model ID or directory (or override
+  `model.target_model_path`) and run from the repository root so the relative draft-config path
+  resolves.
 - The heads are the only trainable parameters; the Target is frozen and its post-norm final
   state is the only feature the Draft consumes.
 
@@ -23,8 +26,11 @@ loss landed first; this page describes the current training scope.
 - Head `i` at position `t` is supervised by the token at `t+2+i` (the reference trainer's
   offset). Supervision is assistant-only through the existing loss mask.
 - The objective is the sum of per-head mean cross-entropies over the full Target vocabulary.
-  The trainer applies uniform per-head weights (`training.ttt_length = K`,
-  `ploss_weights = [1, 1, ...]`), so the aggregate equals the reference sum.
+  Each head's CE is averaged over its supervised assistant tokens within a microbatch, and the
+  per-head means are summed with equal weights; gradient accumulation weights microbatches
+  equally rather than pooling their token counts. Leave `training.ttt_length` and
+  `training.ploss_weights` unset: the Plan derives both from `medusa_num_heads` and rejects
+  explicit weights.
 - No token embedding, no Draft attention, no teacher logits. The shared-embedding and
   shared-head conventions of native MTP do not apply: every head owns its vocabulary projection.
 
