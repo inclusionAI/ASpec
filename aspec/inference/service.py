@@ -93,6 +93,8 @@ class TargetService:
         if set(arguments) - TARGET_ARGUMENTS:
             raise ValueError("Unknown Target configuration fields")
         args = Namespace(**arguments)
+        if getattr(args, "target_model_backend", "sglang") != self.runtime.get("backend", "sglang"):
+            raise ValueError("Requested Target backend differs from the service environment")
         validate_target_tp(getattr(args, "sglang_nnodes", 1), value["node_rank"])
         if self.model and args.target_model_path != self.model:
             raise ValueError("Target model differs from the service configuration")
@@ -437,6 +439,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Run Target in this environment; Draft connects by address.")
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--backend", choices=("sglang", "megatron"), default="sglang")
     parser.add_argument("--address", help="Listening http://host:port; defaults to the config or localhost:30000")
     args = parser.parse_args()
     config = OmegaConf.load(args.config) if args.config else OmegaConf.create({})
@@ -446,7 +449,7 @@ def main():
     devices = visible_gpu_ids()
     if not devices:
         parser.error("Select allocated Target GPUs with CUDA_VISIBLE_DEVICES")
-    runtime = inventory()  # Check this environment and patch before starting processes.
+    runtime = inventory(args.backend)
     service = TargetService(model=model, devices=devices, runtime=runtime)
     parsed = urlsplit(address)
     server = http_server(service, parsed.hostname, parsed.port)

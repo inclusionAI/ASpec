@@ -53,8 +53,10 @@ def check_dependency_metadata(distributions=None):
     return result
 
 
-def expected_versions(target=False):
-    source = asset_path("requirements/sglang-v0.5.21.txt" if target else "requirements/draft.txt")
+def expected_versions(target=False, *, backend=None):
+    manifest = ("megatron-v0.20.0.txt" if backend == "megatron" else
+                "sglang-v0.5.21.txt" if target else "draft.txt")
+    source = asset_path("requirements/" + manifest)
     requirements = [Requirement(line) for line in source.read_text().splitlines()
                     if line.strip() and not line.startswith("#")]
     return {requirement.name: next((spec.version for spec in requirement.specifier
@@ -62,7 +64,68 @@ def expected_versions(target=False):
             for requirement in requirements}
 
 
-def inspect_environment(*, gpu=False, target=False):
+def _inspect_megatron_environment(*, gpu, target):
+    result = {"python": sys.executable, "prefix": sys.prefix, "platform": platform.platform(),
+              "gpu_requested": gpu, "target_requested": target, "backend": "megatron",
+              "role": "target" if target else "draft", "patch": "not_required",
+              "checks": [], "errors": [], "dependencies": check_dependency_metadata()}
+    result["errors"].extend(result["dependencies"]["conflicts"])
+    if error := venv_error():
+        result["errors"].append(error)
+    if sys.version_info[:2] < (3, 12) or sys.platform != "linux":
+        result["errors"].append("Megatron requires Linux with Python >=3.12")
+    for name, expected in expected_versions(backend="megatron").items():
+        try:
+            actual = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            actual = None
+        ok = actual is not None and (expected is None or actual.split("+", 1)[0] == expected)
+        result["checks"].append({"package": name, "expected": expected, "installed": actual, "ok": ok})
+        if not ok:
+            result["errors"].append(f"{name}: expected {expected}, found {actual}")
+    for name in ("ling-aspec", "ling-aspec-target", "sglang"):
+        try:
+            importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+        else:
+            result["errors"].append(f"{name} belongs in a separate backend environment")
+    if gpu:
+        try:
+            import torch
+            import transformer_engine.pytorch as te
+            from mooncake.engine import TransferEngine
+
+            from aspec.models.megatron import require_megatron
+
+            require_megatron()
+            layer = te.Linear(16, 16, params_dtype=torch.bfloat16, device="cuda")
+            output = layer(torch.ones(2, 16, dtype=torch.bfloat16, device="cuda"))
+            if not torch.isfinite(output).all().item():
+                raise RuntimeError("Transformer Engine BF16 linear produced non-finite values")
+            result["cuda"] = {"torch": torch.__version__, "runtime": torch.version.cuda,
+                              "device_capability": list(torch.cuda.get_device_capability()),
+                              "transformer_engine": te.__file__,
+                              "mooncake_native_import": TransferEngine is not None}
+        except Exception as error:
+            result["errors"].append(f"Megatron GPU/native-library check failed: {error}")
+    result["ok"] = not result["errors"]
+    return result
+
+
+def inspect_environment(*, gpu=False, target=False, backend=None):
+    if backend is None:
+        marker = Path(sys.prefix) / ".aspec-backend"
+        if marker.is_file() and marker.read_text().strip() == "megatron":
+            backend = "megatron"
+        else:
+            try:
+                importlib.metadata.version("ling-aspec-megatron")
+                backend = "megatron"
+            except importlib.metadata.PackageNotFoundError:
+                pass
+    if backend == "megatron":
+        return _inspect_megatron_environment(gpu=gpu, target=target)
     result = {"python": sys.executable, "prefix": sys.prefix, "platform": platform.platform(),
               "gpu_requested": gpu, "target_requested": target, "checks": [], "errors": []}
     result["dependencies"] = check_dependency_metadata()
@@ -137,9 +200,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu", action="store_true", help="Also allocate a small CUDA tensor and import Mooncake")
     parser.add_argument("--target", action="store_true", help="Also require SGLang and its training patch")
+    parser.add_argument("--backend", choices=("sglang", "megatron"), default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    result = inspect_environment(gpu=args.gpu, target=args.target)
+    result = inspect_environment(gpu=args.gpu, target=args.target, backend=args.backend)
     if args.json:
         print(json.dumps(result, indent=2))
     else:

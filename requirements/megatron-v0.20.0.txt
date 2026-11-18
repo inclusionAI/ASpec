@@ -1,0 +1,17 @@
+# Independent Megatron environment for either Target or Draft (Python >=3.12).
+# Upstream core_v0.20.0: 685fb8bd970185e9ac3283fe32a5d6667bf4b268.
+megatron-core==0.20.0
+transformer-engine[pytorch,core_cu13]==2.20.2
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.12.1
+cuda-toolkit[cccl,nvcc]==13.0.3.0
+apache-tvm-ffi==0.1.11
+flash-attn-4==4.0.0b34
+nvidia-cutlass-dsl[cu13]==4.7.1
+quack-kernels[cu13]==0.6.5
+nvidia-cudnn-frontend==1.31.0
+einops==0.8.2
+cmake
+ninja
+numba

@@ -18,9 +18,16 @@ class TargetActor:
 
         self.runtime_identity = code_identity()
         self.gpu_ids = kwargs.pop("gpu_ids")
-        from aspec.inference.engine.sgl_engine import SglEngine
+        arguments = kwargs.get("args", args[0] if args else None)
+        self.backend = getattr(arguments, "target_model_backend", "sglang")
+        if self.backend == "megatron":
+            from aspec.inference.engine.megatron_engine import MegatronEngine
 
-        self.engine = SglEngine(*args, **kwargs)
+            self.engine = MegatronEngine(*args, gpu_ids=self.gpu_ids, **kwargs)
+        else:
+            from aspec.inference.engine.sgl_engine import SglEngine
+
+            self.engine = SglEngine(*args, **kwargs)
 
     def init(self, **kwargs):
         return self.engine.init(**kwargs)
@@ -37,13 +44,19 @@ class TargetActor:
     def get_status(self):
         import psutil
         import ray
-        import sglang
         import torch
 
         import aspec
-        from aspec.runtime_identity import SGLANG_RUNTIME_RELATIVE_PATHS, module_runtime_identity
+        from aspec.runtime_identity import (
+            MEGATRON_RUNTIME_RELATIVE_PATHS,
+            SGLANG_RUNTIME_RELATIVE_PATHS,
+            module_runtime_identity,
+        )
 
-        backend = module_runtime_identity("sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS)
+        if self.backend == "megatron":
+            backend = module_runtime_identity("megatron.core", relative_paths=MEGATRON_RUNTIME_RELATIVE_PATHS)
+        else:
+            backend = module_runtime_identity("sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS)
         backend_identity = {
             "path": backend["path"], "git_revision": None, "git_dirty": None,
             "effective_tree_sha256": backend["effective_tree_sha256"],
@@ -52,18 +65,23 @@ class TargetActor:
         result = self.engine.get_status()
         result["engine_gpu_ids"] = self.gpu_ids
         result["created"] = psutil.Process().create_time()
+        from aspec.inference.target_runtime import dependency_versions
+
         result["runtime"] = {
             **self.runtime_identity,
             "python": sys.executable, "prefix": sys.prefix,
             "aspec": str(Path(aspec.__file__).resolve()),
             "ray": str(Path(ray.__file__).resolve()),
-            "sglang": str(Path(sglang.__file__).resolve()),
             "backend_identity": backend_identity,
-            "sglang_version": importlib.metadata.version("sglang"),
+            "backend": self.backend,
+            "dependencies": dependency_versions("sglang", "megatron-core", "transformer-engine"),
             "torch": torch.__version__, "cuda": torch.version.cuda,
-            "cutlass": importlib.metadata.version("nvidia-cutlass-dsl"),
-            "quack": importlib.metadata.version("quack-kernels"),
+            "cutlass": dependency_versions("nvidia-cutlass-dsl")["nvidia-cutlass-dsl"],
+            "quack": dependency_versions("quack-kernels")["quack-kernels"],
         }
+        if self.backend == "sglang":
+            result["runtime"]["sglang"] = backend["path"]
+            result["runtime"]["sglang_version"] = importlib.metadata.version("sglang")
         return result
 
     def get_mooncake_config(self):

@@ -2,14 +2,16 @@
 set -euo pipefail
 dev=0
 role=draft
+backend=default
 gpu=()
 for argument in "$@"; do
   case "$argument" in
     --dev) dev=1 ;;
     --target) role=target ;;
+    --megatron) backend=megatron ;;
     --gpu) gpu=(--gpu) ;;
     --help)
-      echo 'Usage: bash tools/install.sh [--target] [--dev] [--gpu]'
+      echo 'Usage: bash tools/install.sh [--target] [--megatron] [--dev] [--gpu]'
       echo 'For an already activated isolated venv. New users: bash setup.sh'
       exit 0 ;;
     *) printf 'Unknown argument: %s\n' "$argument" >&2; exit 2 ;;
@@ -48,9 +50,27 @@ if [[ $role == target ]]; then
 fi
 extras="."
 (( dev == 0 )) || extras=".[dev]"
-python -m pip install -r "$manifest" -e "$extras"
+if [[ $backend == megatron ]]; then
+  python -c 'import sys; sys.exit("Megatron requires Python >=3.12" if sys.version_info[:2] < (3,12) else 0)'
+  manifest=requirements/megatron-v0.20.0.txt
+  check+=(--backend megatron)
+  # Build TE against the actual execution Torch, including its native headers.
+  # An unconstrained isolated build can select a different Torch ABI.
+  python -m pip install -r requirements/megatron-build.txt
+  aspec_nvidia=$(python -c 'import pathlib,sysconfig; print(pathlib.Path(sysconfig.get_paths()["purelib"]) / "nvidia")')
+  # The transport also needs CUDA 12's runtime. Including every NVIDIA wheel
+  # would put its headers ahead of CUDA 13 and break TE's C++ compilation.
+  CUDA_HOME="$aspec_nvidia/cu13" \
+    NVTE_CUDA_INCLUDE_PATH="$aspec_nvidia/cu13/include" \
+    CPLUS_INCLUDE_PATH="$aspec_nvidia/cudnn/include:$aspec_nvidia/nccl/include:${CPLUS_INCLUDE_PATH:-}" \
+    NVTE_BUILD_USE_NVIDIA_WHEELS=0 MAX_JOBS="${MAX_JOBS:-4}" \
+    python -m pip install --no-build-isolation -r "$manifest" -e "$extras"
+  printf 'megatron\n' > "$VIRTUAL_ENV/.aspec-backend"
+else
+  python -m pip install -r "$manifest" -e "$extras"
+fi
 printf '%s\n' "$role" > "$VIRTUAL_ENV/.aspec-role"
-if [[ $role == target ]]; then
+if [[ $role == target && $backend != megatron ]]; then
   aspec patch-sglang
   aspec patch-sglang --check
 fi

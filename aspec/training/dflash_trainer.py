@@ -94,6 +94,22 @@ class DFlashTrainer(Trainer):
         self.verifier_norm: Optional[torch.nn.Module] = None
         self._mtp_binding_validated = False
 
+    _optimizer_class = BF16Optimizer
+
+    def _loads_initial_weights_here(self):
+        return dist.get_rank() == 0
+
+    def _wrap_training_model(self, model, draft_model):
+        full_state = model.state_dict() if dist.get_rank() == 0 else {}
+        model = apply_fsdp2(
+            model, mesh=self.dp_mesh, cpu_offload=self.fsdp_cpu_offload,
+            args=self.args, modules_to_shard=list(draft_model.layers),
+        )
+        return fsdp2_load_full_state_dict(
+            model, full_state, self.dp_mesh,
+            cpu_offload=True if self.fsdp_cpu_offload else None,
+        )
+
     def init_model(
         self,
         draft_model_config,
@@ -145,7 +161,7 @@ class DFlashTrainer(Trainer):
             draft_model = self._build_draft_model(config)
 
         conditioning = getattr(config, "mtp_conditioning", None)
-        if dist.get_rank() == 0:
+        if self._loads_initial_weights_here():
             if conditioning:
                 draft_model.initialize_mtp_conditioning(target_model_path)
             initial_path = getattr(self.args, "initial_draft_model_path", None)
@@ -175,22 +191,7 @@ class DFlashTrainer(Trainer):
 
         dflash_model = self._build_training_wrapper(draft_model)
 
-        full_state = dflash_model.state_dict() if dist.get_rank() == 0 else {}
-
-        dflash_model = apply_fsdp2(
-            dflash_model,
-            mesh=self.dp_mesh,
-            cpu_offload=self.fsdp_cpu_offload,
-            args=self.args,
-            modules_to_shard=list(draft_model.layers),
-        )
-
-        dflash_model = fsdp2_load_full_state_dict(
-            dflash_model,
-            full_state,
-            self.dp_mesh,
-            cpu_offload=True if self.fsdp_cpu_offload else None,
-        )
+        dflash_model = self._wrap_training_model(dflash_model, draft_model)
 
         if getattr(self.args, "compile_model", False):
             logger.info("Compiling DFlash model with torch.compile (inductor backend)")
@@ -215,7 +216,7 @@ class DFlashTrainer(Trainer):
         decay_style = getattr(self.args, "lr_decay_style", "cosine")
         warmup_ratio = getattr(self.args, "warmup_ratio", 0.1)
 
-        self.optimizer = BF16Optimizer(
+        self.optimizer = self._optimizer_class(
             self.draft_model,
             lr=self.args.learning_rate,
             weight_decay=getattr(self.args, "weight_decay", 0.0),
@@ -274,7 +275,7 @@ class DFlashTrainer(Trainer):
 
         self.prof.on_init_end()
 
-        logger.info(f"[Rank {self.dp_rank}] DFlash model initialized with FSDP2")
+        logger.info("[DP rank %s] Draft initialized with %s", self.dp_rank, self.execution_backend)
 
         return 0
 

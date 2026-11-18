@@ -23,7 +23,8 @@ METHODS = frozenset({
 # to this interface. Optimizers, datasets, logging credentials and driver
 # objects remain in Draft. Unknown Draft settings do not change this protocol.
 TARGET_ARGUMENTS = frozenset("""
-target_model_path trust_remote_code aux_hidden_states_layers store_last_hidden_states native_context_length
+target_model_path target_model_backend trust_remote_code aux_hidden_states_layers store_last_hidden_states native_context_length
+megatron_tp_size megatron_init_timeout megatron_implementation
 draft_algorithm mooncake_hidden_dim
 sglang_mem_fraction_static sglang_pp_size sglang_nnodes sglang_tp_size
 sglang_extra_args sglang_allow_context_length_override sglang_enable_multimodal

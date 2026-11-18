@@ -111,6 +111,11 @@ class AuditedTrainerActor(TrainerActor):
             }
             if any(initial[key] != value for key, value in hashes.items()):
                 raise AssertionError("Restored RNG differs from saved checkpoint")
+            if "backend_rng" in initial:
+                from aspec.commands._checkpoint_audit import backend_rng_identity
+
+                if backend_rng_identity(rng["backend_rng"]) != initial["backend_rng"]:
+                    raise AssertionError("Restored model-parallel RNG differs from saved checkpoint")
             (self._audit_root / f"recipe-resume-diff{self._audit_suffix}.json").write_text(
                 json.dumps({"state": compared, "rng_exact": True}, sort_keys=True)
             )

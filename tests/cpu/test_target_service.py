@@ -57,7 +57,7 @@ def test_target_shutdown_keeps_polling_interval_until_sources_are_idle(monkeypat
     monkeypatch.setattr(module, "TargetService", lambda **_: instance)
     monkeypatch.setattr(module, "http_server", lambda *_: server)
     monkeypatch.setattr(module, "visible_gpu_ids", lambda: [0])
-    monkeypatch.setattr(module, "inventory", lambda: {"python": sys.executable})
+    monkeypatch.setattr(module, "inventory", lambda backend="sglang": {"python": sys.executable})
     monkeypatch.setattr(module, "ray", MagicMock())
     monkeypatch.setattr(module.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     monkeypatch.setattr(module.time, "sleep", lambda seconds: events.append(("wait", seconds)))

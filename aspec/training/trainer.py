@@ -74,12 +74,15 @@ def _consumer_participant(
     *,
     dp_rank: int,
     sequence_rank: int | None = None,
+    tensor_rank: int = 0,
 ) -> str:
     """Build a stable, unique identity for one feature/storage consumer."""
 
     participant = f"draft_{role}_dp_rank_{dp_rank}"
     if sequence_rank is not None:
         participant = f"{participant}_sequence_rank_{sequence_rank}"
+    if tensor_rank:
+        participant = f"{participant}_tensor_rank_{tensor_rank}"
     return participant
 
 
@@ -139,6 +142,8 @@ class Trainer(abc.ABC):
     skeleton, checkpointing, and profiling. Subclasses implement model-specific
     logic via ``init_model``, ``_train_step``, and ``_aggregate_metrics``.
     """
+
+    execution_backend = "fsdp"
 
     def __init__(self, args: Namespace):
         self.args = args
@@ -328,6 +333,7 @@ class Trainer(abc.ABC):
         )
 
         prefetch_depth = getattr(self.args, "prefetch_depth", 0)
+        tp_input = getattr(self, "input_tp_group", None) is not None
         gpu_device = torch.cuda.current_device()
 
         # When prefetching, stage data on CPU to avoid GPU contention between
@@ -340,6 +346,7 @@ class Trainer(abc.ABC):
             collator=collator,
             device=fetch_device,
             batch_size=per_dp_rank_batch_size,
+            prefetch_factor=prefetch_depth if tp_input else 2,
             assistant_header_ids=self.assistant_header_ids,
             end_token_ids=self.end_token_ids,
             dynamic_loss_mask=self.dynamic_loss_mask,
@@ -355,15 +362,18 @@ class Trainer(abc.ABC):
                 "trainer",
                 dp_rank=self.dp_rank,
                 sequence_rank=sequence_rank,
+                tensor_rank=getattr(self, "tp_rank", 0),
             ),
             lifecycle_observer=lifecycle_observer,
             packing_enabled=packing_enabled,
             feature_affinity=getattr(
                 self.args, "mooncake_feature_affinity", "any"
             ),
+            tensor_parallel_group=getattr(self, "input_tp_group", None),
+            tensor_parallel_control_group=getattr(self, "input_tp_control_group", None),
         )
 
-        if prefetch_depth > 0:
+        if prefetch_depth > 0 and not tp_input:
             self.data_fetcher = PrefetchedDataFetcher(
                 inner_fetcher,
                 prefetch_depth=prefetch_depth,
@@ -372,12 +382,13 @@ class Trainer(abc.ABC):
             logger.info(
                 f"[Rank {self.dp_rank}] Prefetched data fetcher initialized "
                 f"(batch_size={per_dp_rank_batch_size}, prefetch_depth={prefetch_depth}, "
-                f"staging=CPU, target={gpu_device})"
+                f"staging={'GPU TP' if getattr(self, 'input_tp_group', None) is not None else 'CPU'}, target={gpu_device})"
             )
         else:
             self.data_fetcher = inner_fetcher
             logger.info(
                 f"[Rank {self.dp_rank}] Data fetcher initialized with batch_size={per_dp_rank_batch_size}"
+                + (f", source_prefetch_depth={prefetch_depth}, TP broadcasts on consumer thread" if tp_input else "")
             )
 
     # ------------------------------------------------------------------
@@ -412,6 +423,7 @@ class Trainer(abc.ABC):
             collator=collator,
             device=torch.cuda.current_device(),
             batch_size=per_dp_rank_batch_size,
+            prefetch_factor=0,
             assistant_header_ids=self.assistant_header_ids,
             end_token_ids=self.end_token_ids,
             dynamic_loss_mask=self.dynamic_loss_mask,
@@ -427,8 +439,11 @@ class Trainer(abc.ABC):
                 "eval",
                 dp_rank=self.dp_rank,
                 sequence_rank=sequence_rank,
+                tensor_rank=getattr(self, "tp_rank", 0),
             ),
             lifecycle_observer=lifecycle_observer,
+            tensor_parallel_group=getattr(self, "eval_input_tp_group", None),
+            tensor_parallel_control_group=getattr(self, "eval_input_tp_control_group", None),
         )
         self._eval_collator = collator
         self._eval_cache: list[dict] = []

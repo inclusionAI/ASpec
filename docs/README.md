@@ -18,6 +18,7 @@ The [project roadmap](../ROADMAP.md) lists implemented features and planned exte
 | Task | Guide |
 | --- | --- |
 | Configure resources, batches and Plan | [Configuration](user-guide/configuration.md) |
+| Select Megatron versions and isolated environments | [Megatron integration](user-guide/megatron.md) |
 | Choose DSpark, DFlash, EAGLE or native MTP | [Algorithms](user-guide/algorithms.md) |
 | Choose Dense/MoE/MLA, SWA/CSA/QSA or packing/CP | [Structures](user-guide/structures.md) |
 | Use Ling Targets | [Ling recipes](user-guide/ling.md) |

@@ -1,7 +1,10 @@
 # Releasing
 
-ASpec publishes the Draft package `ling-aspec`, Target package `ling-aspec-target`, and
-shared code package `ling-aspec-runtime` at the same version. Python imports and the CLI use `aspec`.
+ASpec builds the Draft package `ling-aspec`, SGLang Target package `ling-aspec-target`,
+Megatron environment package `ling-aspec-megatron`, and shared code package
+`ling-aspec-runtime` at the same version. Python imports and the CLI use `aspec`.
+The [Megatron guide](user-guide/megatron.md) describes its native build prerequisites
+and independent environment profile.
 
 ## Versioning
 
@@ -39,8 +42,8 @@ maintenance tools. `setup.py` collects resources from their canonical source loc
 In the release repository, configure a GitHub environment named `pypi`:
 
 - Add the environment secret `PYPI_API_TOKEN` with an account-wide PyPI token whose account can
-  publish all three distributions. This workflow uploads them together; a token scoped to one
-  project cannot authorize the other two.
+  publish all four distributions. This workflow uploads them together; a token scoped to one
+  project cannot authorize the others.
 - Allow deployments from `v*` tags.
 - Add required reviewers if releases need approval before upload.
 

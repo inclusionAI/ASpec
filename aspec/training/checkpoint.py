@@ -51,6 +51,8 @@ def _logical_training_topology(args: Any, world_size: int) -> dict[str, Any]:
         "training_num_gpus_per_node",
         "attention_backend",
         "draft_context_parallel_size",
+        "draft_tensor_parallel_size",
+        "train_backend",
         "sp_ulysses_size",
         "sp_ring_size",
         "fsdp_strategy",
@@ -144,6 +146,11 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
     if saved_topology is not None and not isinstance(saved_topology, dict):
         raise RuntimeError("Exact resume checkpoint has invalid training_topology metadata")
     current_topology = _logical_training_topology(args, current_world_size)
+    if ((saved_topology or {}).get("train_backend", "fsdp")
+            != current_topology.get("train_backend", "fsdp")
+            or (saved_topology or {}).get("draft_tensor_parallel_size", 1)
+            != current_topology.get("draft_tensor_parallel_size", 1)):
+        raise RuntimeError("Exact resume cannot change the training backend or Draft TP; use weights-only initialization")
     if getattr(args, "draft_algorithm", None) == "dspark":
         saved_objective = (saved_topology or {}).get("training_objective") or {}
         for side in ("target", "draft"):
@@ -282,7 +289,8 @@ def _rng_state_path(checkpoint_dir: Path, rank: int) -> Path:
     return checkpoint_dir / "rng" / f"rank-{int(rank):05d}.pt"
 
 
-def _save_rank_rng_state(checkpoint_dir: Path, *, rank: int, world_size: int) -> None:
+def _save_rank_rng_state(checkpoint_dir: Path, *, rank: int, world_size: int,
+                         backend_rng_state=None) -> None:
     path = _rng_state_path(checkpoint_dir, rank)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     state = {
@@ -291,6 +299,7 @@ def _save_rank_rng_state(checkpoint_dir: Path, *, rank: int, world_size: int) ->
         "world_size": int(world_size),
         "torch": torch.get_rng_state(),
         "cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+        **({"backend_rng": backend_rng_state} if backend_rng_state is not None else {}),
     }
     try:
         torch.save(state, temporary)
@@ -397,10 +406,15 @@ class ModelState(Stateful):
         self.model = model
 
     def state_dict(self):
+        if callable(getattr(self.model, "_aspec_checkpoint_state", None)):
+            return {"model": self.model._aspec_checkpoint_state()}
         model_state_dict, _ = get_state_dict(self.model, optimizers=[])
         return {"model": model_state_dict}
 
     def load_state_dict(self, state_dict):
+        if callable(getattr(self.model, "_aspec_load_checkpoint_state", None)):
+            self.model._aspec_load_checkpoint_state(state_dict["model"])
+            return
         set_state_dict(
             self.model, optimizers=[], model_state_dict=state_dict["model"], optim_state_dict=None
         )
@@ -445,7 +459,8 @@ class OptimizerState(Stateful):
                 master = self.optimizer.fp32_params[index]
                 if len(parts) != 2 or field not in {"step", "exp_avg", "exp_avg_sq"}:
                     raise ValueError(f"Unsupported BF16 Adam checkpoint state: {key}")
-                expected_shape = () if field == "step" else tuple(master.shape)
+                logical_master = self._checkpoint_tensor(index, master)
+                expected_shape = () if field == "step" else tuple(logical_master.shape)
                 dtype = value.properties.dtype
                 valid_dtype = (
                     dtype in {torch.float32, torch.float64}
@@ -462,11 +477,24 @@ class OptimizerState(Stateful):
             self._load_template = {**template, "state": states}
         return self._load_template
 
+    def _checkpoint_tensor(self, index, tensor):
+        wrap = getattr(self.optimizer, "checkpoint_tensor", None)
+        return wrap(index, tensor) if wrap is not None else tensor
+
+    def _checkpoint_optimizer_state(self, state):
+        if not hasattr(self.optimizer, "checkpoint_tensor"):
+            return state
+        return {**state, "state": {
+            index: {key: self._checkpoint_tensor(int(index), value)
+                    if isinstance(value, torch.Tensor) else value for key, value in values.items()}
+            for index, values in state["state"].items()
+        }}
+
     def state_dict(self):
         if self._is_bf16_optimizer:
             names = _fp32_param_names(self.optimizer)
             return {
-                "optim": (
+                "optim": self._checkpoint_optimizer_state(
                     self._optimizer_load_template()
                     if self._load_path is not None
                     else self.optimizer.state_dict()
@@ -474,8 +502,8 @@ class OptimizerState(Stateful):
                 # Keyed by name: which parameters are trainable can differ between the run
                 # that saved and the run that loads.
                 "fp32_params": {
-                    name: param.data
-                    for name, param in zip(names, self.optimizer.fp32_params, strict=True)
+                    name: self._checkpoint_tensor(index, param.data)
+                    for index, (name, param) in enumerate(zip(names, self.optimizer.fp32_params, strict=True))
                 },
             }
         _, optimizer_state_dict = get_state_dict(self.model, optimizers=[self.optimizer])
@@ -483,7 +511,16 @@ class OptimizerState(Stateful):
 
     def load_state_dict(self, state_dict):
         if self._is_bf16_optimizer:
-            self.optimizer.load_state_dict(state_dict["optim"])
+            from torch.distributed.tensor import DTensor
+
+            optim = state_dict["optim"]
+            if hasattr(self.optimizer, "checkpoint_tensor"):
+                optim = {**optim, "state": {
+                    index: {key: value.to_local() if isinstance(value, DTensor) else value
+                            for key, value in values.items()}
+                    for index, values in optim["state"].items()
+                }}
+            self.optimizer.load_state_dict(optim)
             saved = state_dict.get("fp32_params")
             if saved:
                 names = _fp32_param_names(self.optimizer)
@@ -498,7 +535,8 @@ class OptimizerState(Stateful):
                     )
                 with torch.no_grad():
                     for name, master in zip(names, self.optimizer.fp32_params, strict=True):
-                        master.data.copy_(saved[name])
+                        value = saved[name]
+                        master.data.copy_(value.to_local() if isinstance(value, DTensor) else value)
                 logger.info("Restored fp32 master params from checkpoint")
             return
         set_state_dict(
@@ -1036,6 +1074,9 @@ def finalize_load(actor: Any, checkpoint_payload: dict[str, Any] | None) -> None
             rng_state,
             legacy=isinstance(rng_state, dict) and "schema_version" not in rng_state,
         )
+        restore_backend_rng = getattr(actor, "_restore_backend_rng", None)
+        if restore_backend_rng is not None:
+            restore_backend_rng(rng_state.get("backend_rng"))
         torch.set_rng_state(rng_state["torch"])
         if torch.cuda.is_available() and rng_state.get("cuda") is not None:
             cuda_state = rng_state["cuda"]
@@ -1105,6 +1146,8 @@ def save(actor: Any, step: int) -> None:
         checkpoint_dir,
         rank=dist.get_rank(),
         world_size=dist.get_world_size(),
+        backend_rng_state=(actor._checkpoint_backend_rng()
+                           if hasattr(actor, "_checkpoint_backend_rng") else None),
     )
 
     if dist.get_rank() == 0:

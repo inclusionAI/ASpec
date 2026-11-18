@@ -85,6 +85,20 @@ class BF16Optimizer:
             wsd_decay_style=wsd_decay_style,
         )
 
+    def _model_gradient(self, parameter):
+        return parameter.grad
+
+    def _clip_gradients(self):
+        if self._fuse_clip_scaling:
+            grad_norm = torch.nn.utils.get_total_norm(
+                [p.grad for p in self.fp32_params if p.grad is not None]
+            )
+            coefficient = (self.max_grad_norm / (grad_norm + 1e-6)).clamp(max=1.0)
+            self.optimizer.grad_scale = coefficient.reciprocal()
+            return grad_norm
+        self.optimizer.grad_scale = None
+        return torch.nn.utils.clip_grad_norm_(self.fp32_params, self.max_grad_norm)
+
     def step(self, closure=None):
         """Perform optimizer step with gradient clipping.
 
@@ -98,27 +112,17 @@ class BF16Optimizer:
             grad_destinations = []
             grad_sources = []
             for p, mp, g in zip(self.model_params, self.fp32_params, self.fp32_grads):
-                if p.grad is not None:
+                gradient = self._model_gradient(p)
+                if gradient is not None:
                     grad_destinations.append(g)
-                    grad_sources.append(p.grad)
+                    grad_sources.append(gradient)
                     mp.grad = g
                 else:
                     mp.grad = None
             if grad_destinations:
                 _copy_tensors_(grad_destinations, grad_sources)
 
-        if self._fuse_clip_scaling:
-            grad_norm = torch.nn.utils.get_total_norm(
-                [p.grad for p in self.fp32_params if p.grad is not None]
-            )
-            # Fused AdamW already supports device-side gradient unscaling.
-            # Apply the same clipping coefficient there, avoiding a complete
-            # read/write pass over the FP32 gradient buffers on Hopper.
-            coefficient = (self.max_grad_norm / (grad_norm + 1e-6)).clamp(max=1.0)
-            self.optimizer.grad_scale = coefficient.reciprocal()
-        else:
-            self.optimizer.grad_scale = None
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.fp32_params, self.max_grad_norm)
+        grad_norm = self._clip_gradients()
 
         # Fused AdamW consumes this device scalar through the same path used by
         # GradScaler. A nonzero value skips parameter, moment, weight-decay, and

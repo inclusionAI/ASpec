@@ -21,19 +21,19 @@ import hashlib
 import math
 
 
-def cpu_values(value):
+def cpu_values(value, *, full_tensors=False):
     import torch
 
     if isinstance(value, torch.Tensor):
         if hasattr(value, "to_local"):
-            value = value.to_local()
+            value = value.full_tensor() if full_tensors else value.to_local()
         return value.detach().cpu().clone()
     if isinstance(value, dict):
-        return {key: cpu_values(item) for key, item in value.items()}
+        return {key: cpu_values(item, full_tensors=full_tensors) for key, item in value.items()}
     if isinstance(value, list):
-        return [cpu_values(item) for item in value]
+        return [cpu_values(item, full_tensors=full_tensors) for item in value]
     if isinstance(value, tuple):
-        return tuple(cpu_values(item) for item in value)
+        return tuple(cpu_values(item, full_tensors=full_tensors) for item in value)
     return value
 
 
@@ -80,8 +80,12 @@ def compare_checkpoint(trainer, directory):
 
     candidate_model = ModelState(trainer.model).state_dict()
     candidate_optimizer = OptimizerState(trainer.model, trainer.optimizer).state_dict()
-    original_model = cpu_values(candidate_model)
-    original_optimizer = cpu_values(candidate_optimizer)
+    # Core compute parameters are ordinary local tensors, while its DCP state
+    # describes logical TP tensors. Read full independent CPU references rather
+    # than treating a local shard as the checkpoint's complete destination.
+    logical_tp = getattr(trainer, "execution_backend", "fsdp") == "megatron"
+    original_model = cpu_values(candidate_model, full_tensors=logical_tp)
+    original_optimizer = cpu_values(candidate_optimizer, full_tensors=logical_tp)
     dcp.load({"model_state": original_model}, checkpoint_id=str(directory / "model"))
     dcp.load({"optim_state": original_optimizer}, checkpoint_id=str(directory / "optimizer"))
     statistics = {
@@ -91,6 +95,8 @@ def compare_checkpoint(trainer, directory):
     worst_parameters = {key: {"relative_l2": 0, "name": None} for key in statistics}
 
     def compare(key, name, reference, actual):
+        if logical_tp and hasattr(actual, "full_tensor"):
+            actual = actual.full_tensor()
         reference = reference.reshape(-1)
         actual = actual.reshape(-1)
         if reference.shape != actual.shape:
@@ -127,16 +133,25 @@ def compare_checkpoint(trainer, directory):
     }
 
 
+def backend_rng_identity(state):
+    return {"backend": state["backend"],
+            "cuda_tracker": tensor_hash(sorted(state["cuda_tracker"].items()))}
+
+
 def audit_state(trainer):
     import torch
 
-    return {
+    result = {
         "global_step": trainer.global_step,
         "state": state_hashes(trainer),
         "scheduler": cpu_values(trainer.lr_scheduler.state_dict()),
         "torch_rng_sha256": hashlib.sha256(torch.random.get_rng_state().numpy().tobytes()).hexdigest(),
         "cuda_rng_sha256": hashlib.sha256(torch.cuda.get_rng_state().cpu().numpy().tobytes()).hexdigest(),
     }
+    snapshot = getattr(trainer, "_checkpoint_backend_rng", None)
+    if snapshot is not None:
+        result["backend_rng"] = backend_rng_identity(snapshot())
+    return result
 
 
 def add_statistics(total, reference, actual):

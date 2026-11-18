@@ -140,6 +140,7 @@ class TrainingConfig:
     # Attention backend and context parallelism are independent execution
     # dimensions. CP>1 currently requires the FA4 backend.
     draft_context_parallel_size: int = 1
+    draft_tensor_parallel_size: int = 1
     colocate: bool = False
     continual_training: bool = False
     # A weights-only phase transition normally starts a fresh data stream. Set
@@ -364,10 +365,11 @@ def _validate_current_scope(config: DictConfig) -> None:
     """Reject backend selections outside ASpec's current executable path."""
     engine_type = config.inference.inference_engine_type
     target_backend = config.model.target_model_backend
-    if engine_type not in {"sgl", "offline"} or target_backend != "sglang":
+    supported = {"sgl": "sglang", "offline": "sglang", "megatron": "megatron"}
+    if supported.get(engine_type) != target_backend:
         raise NotImplementedError(
-            "ASpec currently supports inference.inference_engine_type=sgl or offline with "
-            "model.target_model_backend=sglang; "
+            "ASpec currently supports sgl/offline with model.target_model_backend=sglang, "
+            "or megatron with model.target_model_backend=megatron; "
             f"got engine_type={engine_type!r}, target_backend={target_backend!r}"
         )
 
@@ -849,19 +851,20 @@ def _validate_execution_capabilities(config: DictConfig, *, source_context_paral
     if not config.inference.target_prefill_memory_optimized:
         return
 
-    if config.inference.inference_engine_type != "sgl":
+    if config.inference.inference_engine_type not in {"sgl", "megatron"}:
         raise NotImplementedError(
-            "target_prefill_memory_optimized currently supports SGLang only"
+            "target_prefill_memory_optimized requires a live Target backend"
         )
     if config.training.train_with_decode:
         raise NotImplementedError(
             "target_prefill_memory_optimized requires prefill-only Target execution"
         )
-    if config.inference.inference_num_gpus_per_engine != 1:
+    if config.inference.inference_engine_type == "sgl" and config.inference.inference_num_gpus_per_engine != 1:
         raise NotImplementedError(
             "target_prefill_memory_optimized currently requires one GPU per Target engine"
         )
-    if config.inference.sglang.tp_size != 1 or config.inference.sglang.pp_size != 1:
+    if (config.inference.inference_engine_type == "sgl"
+            and (config.inference.sglang.tp_size != 1 or config.inference.sglang.pp_size != 1)):
         raise NotImplementedError(
             "target_prefill_memory_optimized currently requires SGLang TP1/PP1"
         )
@@ -930,6 +933,10 @@ def _validate_execution_capabilities(config: DictConfig, *, source_context_paral
     logical_dp_size = world_size // cp_size if is_direct_cp_backend(
         config.training.attention_backend
     ) else world_size
+    tp_size = config.training.draft_tensor_parallel_size if config.training.train_backend == "megatron" else 1
+    if type(tp_size) is not int or tp_size < 1:
+        raise ValueError("training.draft_tensor_parallel_size must be a positive integer")
+    logical_dp_size //= tp_size
     dispatch_batch_size = config.training.micro_batch_size * logical_dp_size
     inference_gpus = config.inference.inference_num_gpus
     if not isinstance(inference_gpus, int) or inference_gpus < 1:
@@ -937,15 +944,16 @@ def _validate_execution_capabilities(config: DictConfig, *, source_context_paral
             "target_prefill_memory_optimized requires a positive inference_num_gpus"
         )
     if node_local_features:
-        engine_count = config.inference.inference_num_gpus_per_node
+        engine_count = (config.inference.inference_num_gpus_per_node
+                        // config.inference.inference_num_gpus_per_engine)
         dispatch_batch_size = (
             config.training.micro_batch_size
             * config.training.training_num_gpus_per_node
-            // cp_size
+            // cp_size // tp_size
         )
         capacity_scope = "per node"
     else:
-        engine_count = inference_gpus
+        engine_count = inference_gpus // config.inference.inference_num_gpus_per_engine
         capacity_scope = "across the run"
     resident_sample_capacity = direct_output_sample_capacity(
         engine_count=engine_count,
@@ -1045,6 +1053,7 @@ _PREFIXED_SECTIONS = {
     "mooncake": "mooncake_",
     "offline": "offline_",
     "sglang": "sglang_",
+    "megatron": "megatron_",
     "vllm": "vllm_",
     "trtllm": "trtllm_",
     "tokenspeed": "tokenspeed_",

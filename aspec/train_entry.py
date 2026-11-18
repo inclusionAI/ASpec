@@ -302,9 +302,9 @@ def _validate_and_configure_dflash(args, draft_model_config) -> None:
     algo = "DSpark" if is_dspark else "DFlash"
 
     engine_type = getattr(args, "inference_engine_type", "sgl")
-    if engine_type not in {"sgl", "offline"}:
+    if engine_type not in {"sgl", "megatron", "offline"}:
         raise NotImplementedError(
-            f"{algo} currently supports inference_engine_type='sgl' or 'offline', got '{engine_type}'."
+            f"{algo} requires inference_engine_type=sgl, megatron or offline; got {engine_type!r}"
         )
     if getattr(args, "defer_tokenization", False):
         raise NotImplementedError(f"{algo} does not support defer_tokenization=True.")
@@ -489,7 +489,7 @@ def train_async_no_generation(args, evidence: RunEvidenceRecorder | None = None)
         timer.log_summary()
 
     except BaseException:
-        if args.inference_engine_type == "sgl":
+        if args.inference_engine_type in {"sgl", "megatron"}:
             rollback_unused_targets(inference_engines)
         raise
 
