@@ -2,15 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Adapted by ASpec Authors from NVIDIA cuDNN Frontend cb8cec8.
-# ASpec modifications Copyright (c) 2026 Ant Group Co., Ltd.
 
 """ASpec-owned CuTeDSL kernel for DSpark Q/K RMSNorm and indexed RoPE.
 
 The kernel reads draft Q plus separate context/draft K planes and writes compact
 Q and logical ``[context, draft]`` K outputs without materializing a K concat.
-The legacy path rounds once after FP32 normalization and rotation. The optional
-intermediate-rounding mode preserves the eager input-dtype arithmetic boundaries.
-Normalization reductions remain FP32 in both modes.
+RMSNorm and RoPE arithmetic stay in FP32 and round once to the input dtype.
 """
 
 from typing import NamedTuple, Optional
@@ -127,7 +124,6 @@ def frost_qk_norm_rope(
     const_head_counts: cutlass.Constexpr[bool],
     batch_one: cutlass.Constexpr[bool],
     use_pdl: cutlass.Constexpr[bool],
-    round_intermediates: cutlass.Constexpr[bool] = False,
 ) -> None:
     """``rows_per_group`` consecutive rows per lane group: ALL loads issued
     first, then the reductions and stores.
@@ -359,13 +355,7 @@ def frost_qk_norm_rope(
         ys = []
         for c in cutlass.range_constexpr(chunks):
             if cutlass.const_expr(apply_norm):
-                if cutlass.const_expr(round_intermediates):
-                    normalized = [(xs[r][c][i] * rstd).to(mQ.element_type).to(cutlass.Float32)
-                                  for i in range(ELEMS_PER_ACCESS)]
-                    ys.append([(normalized[i] * ws[r][c][i]).to(mQ.element_type).to(cutlass.Float32)
-                               for i in range(ELEMS_PER_ACCESS)])
-                else:
-                    ys.append([xs[r][c][i] * rstd * ws[r][c][i] for i in range(ELEMS_PER_ACCESS)])
+                ys.append([xs[r][c][i] * rstd * ws[r][c][i] for i in range(ELEMS_PER_ACCESS)])
             else:
                 ys.append(list(xs[r][c]))
 
@@ -378,12 +368,7 @@ def frost_qk_norm_rope(
             for i in cutlass.range_constexpr(ELEMS_PER_ACCESS):
                 partner = cutlass.Float32(nvvm.shfl_sync(0xFFFFFFFF, ys[0][i], cutlass.Int32(half_lanes), 31, kind=nvvm.Shfl.BFLY))
                 signed = -partner if lane < cutlass.Int32(half_lanes) else partner
-                if cutlass.const_expr(round_intermediates):
-                    direct = (ys[0][i] * cs[r][i]).to(mQ.element_type).to(cutlass.Float32)
-                    other = (signed * ss[r][i]).to(mQ.element_type).to(cutlass.Float32)
-                    rotated.append(direct + other)
-                else:
-                    rotated.append(cute.math.fma(ys[0][i], cs[r][i], signed * ss[r][i]))
+                rotated.append(cute.math.fma(ys[0][i], cs[r][i], signed * ss[r][i]))
             for i in cutlass.range_constexpr(ELEMS_PER_ACCESS):
                 ys[0][i] = rotated[i] if in_rope else ys[0][i]
 
@@ -472,7 +457,6 @@ def qk_norm_rope_launch(
     batch_one: cutlass.Constexpr[bool],
     use_pdl: cutlass.Constexpr[bool],
     stream: cuda.CUstream,
-    round_intermediates: cutlass.Constexpr[bool] = False,
 ):
     frost_qk_norm_rope(
         q,
@@ -506,7 +490,6 @@ def qk_norm_rope_launch(
         const_head_counts,
         batch_one,
         use_pdl,
-        round_intermediates,
     ).launch(grid=(n_blocks, 1, 1), block=(threads_per_cta, 1, 1), stream=stream, use_pdl=use_pdl)
 
 
@@ -529,7 +512,6 @@ class DSparkQkNormRopeRecipe(NamedTuple):
     eps: float
     rows_per_cta: int
     batch_one: bool = False
-    round_intermediates: bool = False
 
 
 def _fake(dtype, shape, stride_order):
@@ -556,7 +538,6 @@ def compile_dspark_qk_norm_rope(
     const_head_counts: bool = DEFAULT_CONST_HEAD_COUNTS,
     batch_one: bool = False,
     use_pdl: bool = False,
-    round_intermediates: bool = False,
 ) -> DSparkQkNormRopeRecipe:
     """Compile the DSpark asymmetric, indexed-RoPE training specialization."""
 
@@ -576,7 +557,6 @@ def compile_dspark_qk_norm_rope(
         bool(const_head_counts),
         bool(batch_one),
         bool(use_pdl),
-        bool(round_intermediates),
         torch.cuda.current_device(),
     )
     if key not in compiled_cache:
@@ -626,7 +606,6 @@ def compile_dspark_qk_norm_rope(
             bool(batch_one),
             bool(use_pdl),
             _FAKE_STREAM,
-            bool(round_intermediates),
             options="--enable-tvm-ffi",
         )
     return DSparkQkNormRopeRecipe(
@@ -638,7 +617,6 @@ def compile_dspark_qk_norm_rope(
         eps=float(eps),
         rows_per_cta=(threads_per_cta // lanes_per_row(d)) * rows_per_group,
         batch_one=bool(batch_one),
-        round_intermediates=bool(round_intermediates),
     )
 
 

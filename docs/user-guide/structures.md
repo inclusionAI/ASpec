@@ -36,9 +36,7 @@ The adapter also supports width-128 GQA and materialized MLA with query/key widt
 
 The optional internal joint-GQA backward has a separate contract: head width 128
 and four query heads per KV head. Native MHA64 does not use that specialization.
-Its fused Q/K normalization and RoPE preserve the eager FP16/BF16 intermediate
-rounding boundaries while retaining FP32 normalization reductions. Keep the
-attention backend fixed when reproducing or resuming a training run: identical-state
+Keep the attention backend fixed when reproducing or resuming a training run: identical-state
 loss/gradient comparisons and independent optimizer trajectories are different checks.
 
 Run the MHA64 and retained attention/kernel regressions in the Linux Draft environment:

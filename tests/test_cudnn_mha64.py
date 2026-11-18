@@ -47,7 +47,7 @@ def run_mha64_training(context_length, *, hidden_size=128, vocab_size=1024,
     )
     initial = DSparkDraftModel(config).bfloat16()
     initial.freeze_embedding()
-    # Non-unit Q/K scales exercise the intermediate-rounding boundaries.
+    # Non-unit Q/K scales exercise learned normalization weights.
     with torch.no_grad():
         scale = torch.linspace(0.7, 1.3, 64)
         for layer in initial.layers:
@@ -196,44 +196,47 @@ def test_mha64_rejects_unvalidated_gqa_modes(kv_heads, mode, error):
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-@pytest.mark.parametrize("batch", [1, 2])
-def test_mha64_fused_qk_preserves_eager_rounding(dtype, batch):
-    from aspec.kernels.cutedsl.dspark_qk_norm_rope import compile_dspark_qk_norm_rope
-    from aspec.kernels.cutedsl.dspark_qk_norm_rope_bwd import compile_dspark_qk_norm_rope_bwd
-    from aspec.models.draft.dflash import _prepare_dflash_qk
-    from aspec.models.ops.dspark_qk_norm_rope import dspark_qk_norm_rope
+def test_mha64_native_attention_matches_flex(dtype):
+    from aspec.models.dflash import _create_dflash_mask_mod
+    from aspec.models.ops.cudnn_flex_attention import build_dspark_mla_mask, cudnn_flex_attention
+    from aspec.models.ops.flex_attention import (
+        compile_friendly_create_block_mask,
+        compile_friendly_flex_attention,
+    )
 
-    torch.manual_seed(93)
-    heads, dim, queries, context = 4, 64, 7, 33
-    # Compile both modes for one geometry to verify cache isolation.
-    geometry = dict(dtype=dtype, h_q=heads, h_kv=heads, d=dim, rope_dim=dim,
-                    eps=1e-5, batch_one=batch == 1)
-    compile_dspark_qk_norm_rope(**geometry, defer_secondary_loads=False)
-    compile_dspark_qk_norm_rope_bwd(**geometry)
-    shapes = ((batch, queries, heads * dim), (batch, context, heads * dim),
-              (batch, queries, heads * dim), (dim,), (dim,))
-    data = [torch.randn(shape, device="cuda", dtype=dtype) for shape in shapes]
-    data[3].copy_(torch.linspace(0.3, 1.7, dim, device="cuda"))
-    data[4].copy_(data[3].flip(0))
-    angles = torch.randn(257, dim // 2, device="cuda")
-    angles = torch.cat((angles, angles), dim=-1)
-    cos, sin = angles.cos()[None, None].to(dtype), angles.sin()[None, None].to(dtype)
-    positions = [torch.randint(257, (batch, n), device="cuda") for n in (queries, context)]
-    gradients = [torch.randn(batch, n, heads, dim, device="cuda", dtype=dtype)
-                 for n in (queries, context + queries)]
-    values = []
-    for fused in (False, True):
-        q, k, kd, wq, wk = [t.clone().requires_grad_() for t in data]
-        if fused:
-            output = dspark_qk_norm_rope(q, k, kd, wq, wk, 1e-5, cos, sin,
-                                        positions[0], positions[1], positions[0], heads, heads, dim)
+    generator = torch.Generator(device="cuda").manual_seed(93)
+    context_length, block_size, heads, dim = 71, 8, 4, 64
+    anchors = torch.tensor([[17, 63]], device="cuda")
+    keep = torch.ones_like(anchors, dtype=torch.bool)
+    queries = block_size * anchors.shape[1]
+    mask_options = dict(is_causal=True, context_window=32)
+    mask_mod = _create_dflash_mask_mod(anchors, keep, context_length, block_size, **mask_options)
+    flex_mask = compile_friendly_create_block_mask(
+        mask_mod, B=1, H=None, Q_LEN=queries, KV_LEN=context_length + queries,
+        device=torch.device("cuda"),
+    )
+    cudnn_mask = build_dspark_mla_mask(
+        anchor_positions=anchors, block_keep_mask=keep, context_length=context_length,
+        block_size=block_size, **mask_options,
+    )
+    inputs = [torch.randn(1, n, heads, dim, device="cuda", dtype=dtype, generator=generator)
+              for n in (queries, context_length + queries, context_length + queries)]
+    dout = torch.randn(inputs[0].shape, device="cuda", dtype=dtype, generator=generator)
+    results = []
+    for native in (False, True):
+        q, k, v = [x.detach().clone().requires_grad_() for x in inputs]
+        if native:
+            out = cudnn_flex_attention(q, k, v, mask=cudnn_mask, scale=dim ** -0.5,
+                                       gqa_mode="native")
         else:
-            output = _prepare_dflash_qk(q, k, kd, wq, wk, 1e-5, cos, sin,
-                                        positions[0], torch.cat((positions[1], positions[0]), dim=1),
-                                        heads, heads, dim)
-        grads = torch.autograd.grad(output, (q, k, kd, wq, wk), gradients)
-        values.append((output, grads))
-    for actual, expected in zip(values[1][0], values[0][0], strict=True):
-        assert _relative_l2([actual], [expected]) < 1e-4
-    for actual, expected in zip(values[1][1], values[0][1], strict=True):
-        assert _relative_l2([actual], [expected]) < 1e-3
+            out = compile_friendly_flex_attention(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                block_mask=flex_mask, scale=dim ** -0.5,
+            ).transpose(1, 2)
+        gradients = torch.autograd.grad(out, (q, k, v), dout)
+        assert torch.isfinite(out).all()
+        assert all(torch.isfinite(g).all() for g in gradients)
+        results.append((out, gradients))
+    assert _relative_l2([results[1][0]], [results[0][0]]) < 0.01
+    for actual, expected in zip(results[1][1], results[0][1], strict=True):
+        assert _relative_l2([actual], [expected]) < 0.01
