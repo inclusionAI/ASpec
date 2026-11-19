@@ -21,6 +21,10 @@ _ASPEC_ENV_KEYS = [
     # compatibility directory. Ray runtime_env workers do not reliably retain
     # the driver's process loader path, so forward the resolved value exactly.
     "LD_LIBRARY_PATH",
+    "CUDA_HOME",
+    "CUDNN_HOME",
+    "CUDNN_FRONTEND_CUDART_LIB_NAME",
+    "CUDA_DEVICE_MAX_CONNECTIONS",
     # Source snapshots and explicitly selected backend adapters must resolve to
     # the same code in the driver and every Ray actor.
     "PYTHONPATH",
@@ -81,6 +85,9 @@ def get_aspec_env_vars(args=None) -> dict[str, str]:
         **{k: "1" for k in _RAY_NOSET_VISIBLE_DEVICES_KEYS},
     }
     env.update({k: os.environ[k] for k in _ASPEC_ENV_KEYS if k in os.environ})
+    if (getattr(args, "train_backend", None) == "megatron"
+            or getattr(args, "target_model_backend", None) == "megatron"):
+        env.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
     if getattr(args, "cluster_mode", "single_node") == "static_multi_node":
         # Ray is started from each node's own venv/environment. A driver's
         # library/cache paths must not overwrite another node's local layout.

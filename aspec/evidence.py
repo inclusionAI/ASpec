@@ -34,6 +34,7 @@ from typing import Any, Mapping, Sequence
 from aspec.planning import ExecutionPlan
 from aspec.runtime_control import is_termination_exception
 from aspec.runtime_identity import (
+    MEGATRON_RUNTIME_RELATIVE_PATHS,
     SGLANG_RUNTIME_RELATIVE_PATHS,
     module_runtime_identity,
 )
@@ -43,6 +44,9 @@ _PACKAGE_NAMES = (
     "ling-aspec",
     "ling-aspec-runtime",
     "ling-aspec-target",
+    "ling-aspec-megatron",
+    "megatron-core",
+    "transformer-engine",
     "torch",
     "ray",
     "sglang",
@@ -208,7 +212,8 @@ def _module_source_identity(module: str) -> dict[str, Any]:
     runtime_identity = module_runtime_identity(
         module,
         relative_paths=(
-            SGLANG_RUNTIME_RELATIVE_PATHS if module == "sglang" else None
+            SGLANG_RUNTIME_RELATIVE_PATHS if module == "sglang" else
+            MEGATRON_RUNTIME_RELATIVE_PATHS if module == "megatron.core" else None
         ),
     )
     identity: dict[str, Any] = {
@@ -306,7 +311,9 @@ class RunEvidenceRecorder:
                 "aspec": _source_identity(),
                 "packages": _package_versions(),
                 "package_scope": "draft_driver",
-                "backends": {"sglang": _module_source_identity("sglang")},
+                "backends": ({"megatron": _module_source_identity("megatron.core")}
+                             if plan.policy.backends["target_features"] == "megatron" else
+                             {"sglang": _module_source_identity("sglang")}),
                 "host": {
                     "hostname": platform.node(),
                     "system": platform.system(),
@@ -433,13 +440,16 @@ class RunEvidenceRecorder:
         target_runtimes = [dict(status["runtime"]) for status in (inference_engine_statuses or ())
                            if isinstance(status.get("runtime"), Mapping)]
         if target_runtimes:
+            target_backend = self._plan.policy.backends["target_features"]
             backend_identities = [item.get("backend_identity") for item in target_runtimes]
             if (len(target_runtimes) != inference_engine_count
+                    or any(item.get("backend", "sglang") != target_backend for item in target_runtimes)
                     or any(not isinstance(item, Mapping) or not item.get("effective_tree_sha256")
                            or item.get("missing_files") for item in backend_identities)
                     or len({item["effective_tree_sha256"] for item in backend_identities}) != 1):
-                raise RuntimeError("Target workers reported incomplete or different SGLang identities")
-            self._data["source"]["backends"]["sglang"] = dict(backend_identities[0])
+                name = "SGLang" if target_backend == "sglang" else "Megatron"
+                raise RuntimeError(f"Target workers reported incomplete or different {name} identities")
+            self._data["source"]["backends"][target_backend] = dict(backend_identities[0])
             self._data["source"]["target_runtimes"] = target_runtimes
 
         prior_runtime = self._data["observations"]["runtime"]
@@ -500,12 +510,12 @@ class RunEvidenceRecorder:
                 capacity = status.get("token_capacity")
                 if not isinstance(capacity, Mapping):
                     raise RuntimeError(
-                        f"SGLang engine {status.get('rank')} did not report token capacity"
+                        f"Target engine {status.get('rank')} did not report token capacity"
                     )
                 observed_context = capacity.get("context")
                 if observed_context != planned_context:
                     raise RuntimeError(
-                        "Observed SGLang context contract does not match the Plan: "
+                        "Observed Target context contract does not match the Plan: "
                         f"rank={status.get('rank')}, planned={planned_context}, "
                         f"observed={observed_context}"
                     )
@@ -513,7 +523,7 @@ class RunEvidenceRecorder:
                     "backend_context_length"
                 ]:
                     raise RuntimeError(
-                        "Observed SGLang context length does not match the Plan: "
+                        "Observed Target context length does not match the Plan: "
                         f"rank={status.get('rank')}, "
                         f"planned={backend_tokens['backend_context_length']}, "
                         f"observed={capacity.get('context_length')}"
@@ -570,7 +580,7 @@ class RunEvidenceRecorder:
             {
                  "predicate": ("all_planned_offline_replay_initializers_completed"
                               if self._plan.policy.backends["target_features"] == "offline_replay"
-                              else "all_planned_sglang_engine_initializers_completed"),
+                              else f"all_planned_{self._plan.policy.backends['target_features']}_engine_initializers_completed"),
                 "observed_engine_count": inference_engine_count,
             },
         )
@@ -599,6 +609,18 @@ class RunEvidenceRecorder:
 
         training = [dict(item) for item in (training_actor_statuses or ())]
         inference = [dict(item) for item in (inference_engine_statuses or ())]
+        if self._plan.policy.backends["training"] == "megatron":
+            expected_tp = self._plan.policy.parallelism["training"]["tensor_parallel"]
+            expected_dp = self._plan.policy.parallelism["training"]["data_parallel"]
+            if (not training or any(item.get("backend") != "megatron"
+                                    or item.get("tensor_parallel_size") != expected_tp
+                                    or item.get("data_parallel_size") != expected_dp
+                                    or not item.get("initialized") for item in training)):
+                raise RuntimeError("Megatron trainer/backend TP was not observed as planned")
+            identities = [item.get("runtime", {}).get("backend_identity", {}) for item in training]
+            if (any(not item.get("effective_tree_sha256") or item.get("missing_files") for item in identities)
+                    or len({item.get("effective_tree_sha256") for item in identities}) != 1):
+                raise RuntimeError("Megatron trainers reported incomplete or different Core identities")
         if training and len(training) != self._plan.policy.resources["training"]["world_size"]:
             raise RuntimeError("trainer placement status count does not match the Plan")
         if inference and len(inference) != self._plan.policy.resources["inference"]["engines"]:
@@ -833,7 +855,7 @@ class RunEvidenceRecorder:
             transfer_observation = {
                  "predicate": ("optimizer_step_consumed_validated_offline_features_via_mooncake"
                               if self._plan.policy.backends["target_features"] == "offline_replay"
-                              else "optimizer_step_consumed_validated_sglang_features_via_mooncake"),
+                              else f"optimizer_step_consumed_validated_{self._plan.policy.backends['target_features']}_features_via_mooncake"),
                 "optimizer_steps_observed": training["optimizer_steps_observed"],
                 "feature_contract_id": planned_contract_id,
                 "producer_count": feature_contract["producer_count"],

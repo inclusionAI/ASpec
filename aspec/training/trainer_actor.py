@@ -127,7 +127,14 @@ class TrainerActor(RayActor):
         if draft_model_config is None and getattr(args, "draft_model_config", None):
             draft_model_config = AutoDraftModelConfig.from_file(args.draft_model_config)
 
-        trainer_class = _trainer_class_for_config(draft_model_config)
+        if getattr(args, "train_backend", "fsdp") == "megatron":
+            from aspec.training.megatron_trainer import MegatronDSparkTrainer
+
+            if not isinstance(draft_model_config, DSparkConfig):
+                raise ValueError("Megatron Draft currently requires DSpark")
+            trainer_class = MegatronDSparkTrainer
+        else:
+            trainer_class = _trainer_class_for_config(draft_model_config)
         self._trainer = trainer_class(args)
 
         target_model_path = getattr(args, "target_model_path", None)
@@ -194,7 +201,8 @@ class TrainerActor(RayActor):
         import aspec
         from aspec.inference.target_runtime import code_identity, dependency_versions
 
-        return {
+        trainer = getattr(self, "_trainer", None)
+        result = {
             "rank": self._rank,
             "world_size": self._world_size,
             "node_ip": self.get_node_ip(),
@@ -204,11 +212,26 @@ class TrainerActor(RayActor):
             "assigned_gpu_ids": [int(float(value)) for value in ray.get_gpu_ids()],
             "local_gpu_id": int(os.environ["LOCAL_RANK"]),
             "initialized": hasattr(self, "_trainer"),
+            "backend": getattr(trainer, "execution_backend", None),
+            "tensor_parallel_size": getattr(trainer, "tp_size", 1),
+            "tensor_parallel_rank": getattr(trainer, "tp_rank", 0),
+            "data_parallel_rank": getattr(trainer, "dp_rank", None),
+            "data_parallel_size": getattr(trainer, "dp_size", None),
             "runtime": {**code_identity(), "python": sys.executable, "prefix": sys.prefix,
                         "aspec": aspec.__file__, "ray": ray.__file__,
                         "torch": torch.__version__, "cuda": torch.version.cuda,
-                        "dependencies": dependency_versions("nvidia-cutlass-dsl", "quack-kernels")},
+                        "dependencies": dependency_versions("nvidia-cutlass-dsl", "quack-kernels",
+                                                            "megatron-core", "transformer-engine")},
         }
+        if getattr(trainer, "execution_backend", None) == "megatron":
+            from aspec.runtime_identity import (
+                MEGATRON_RUNTIME_RELATIVE_PATHS,
+                module_runtime_identity,
+            )
+
+            result["runtime"]["backend_identity"] = module_runtime_identity(
+                "megatron.core", relative_paths=MEGATRON_RUNTIME_RELATIVE_PATHS)
+        return result
 
     def save_model(self, step: int, force_sync: bool = False) -> None:
         self._trainer.save_model(step, force_sync)

@@ -33,10 +33,13 @@ def build_release(directory):
     subprocess.run([sys.executable, "-m", "build", "--outdir", str(directory)],
                    cwd=root, check=True)
     project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
-    for role, manifest in (("draft", "draft.txt"), ("target", "sglang-v0.5.21.txt")):
+    for role, manifest, name, python_min in (
+        ("draft", "draft.txt", "ling-aspec", "3.11"),
+        ("target", "sglang-v0.5.21.txt", "ling-aspec-target", "3.11"),
+        ("megatron", "megatron-v0.20.0.txt", "ling-aspec-megatron", "3.12"),
+    ):
         with tempfile.TemporaryDirectory(prefix="aspec-role-") as staging:
             stage = Path(staging)
-            name = "ling-aspec" if role == "draft" else "ling-aspec-target"
             dependencies = [f"ling-aspec-runtime=={project['version']}"]
             dependencies += [line.strip() for line in (root / "requirements" / manifest).read_text().splitlines()
                              if line.strip() and not line.lstrip().startswith("#")]
@@ -45,7 +48,7 @@ def build_release(directory):
                         f"name = {json.dumps(name)}\nversion = {json.dumps(project['version'])}\n"
                         f"description = {json.dumps('ASpec ' + role + ' environment')}\n"
                         "readme = \"README.md\"\nlicense = \"Apache-2.0\"\n"
-                        "license-files = [\"LICENSE\"]\nrequires-python = \">=3.11\"\n"
+                        f"license-files = [\"LICENSE\"]\nrequires-python = \">={python_min}\"\n"
                         f"dependencies = {json.dumps(dependencies)}\n\n"
                         "[project.urls]\nHomepage = \"https://github.com/inclusionAI/ASpec\"\n"
                         "\n[tool.setuptools]\npackages = []\n")
@@ -59,7 +62,7 @@ def build_release(directory):
         print(f"PASS {artifact}: {count} reviewed members", flush=True)
     runtime = directory / "runtime"
     runtime.mkdir()
-    for name in ("sglang-v0.5.21.txt", "draft.txt"):
+    for name in ("sglang-v0.5.21.txt", "draft.txt", "megatron-v0.20.0.txt", "megatron-build.txt"):
         shutil.copyfile(root / "requirements" / name, runtime / name)
     files = sorted(path for path in directory.rglob("*") if path.is_file())
     (directory / "SHA256SUMS").write_text("".join(

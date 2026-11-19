@@ -49,7 +49,9 @@ class BuildPackage(build_py):
                   ROOT / "examples/data/sample_conversations.jsonl",
                   ROOT / "tools/recipe_catalog.json",
                   ROOT / "requirements/sglang-v0.5.21.txt",
-                  ROOT / "requirements/draft.txt"]
+                  ROOT / "requirements/draft.txt",
+                  ROOT / "requirements/megatron-v0.20.0.txt",
+                  ROOT / "requirements/megatron-build.txt"]
         for source in assets:
             destination = package / "resources" / source.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)

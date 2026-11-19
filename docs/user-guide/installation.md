@@ -5,6 +5,8 @@ GPUs and a CUDA 13-compatible driver. The Target package supplies its matching C
 the host still needs the C++20 compiler and native libraries listed below.
 See [native prerequisites](installation-advanced.md#requirements) for the compiler, glibc and RDMA
 library requirements, or use the [container](containers.md).
+The experimental [Megatron profile](megatron.md) uses Python >=3.12, a separate environment
+package and staged Transformer Engine build; follow that guide when choosing Megatron for either role.
 
 ## Install from PyPI
 

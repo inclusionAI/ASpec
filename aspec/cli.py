@@ -48,7 +48,10 @@ def main():
     else:
         module = "aspec.train_entry"
     help_requested = arguments in (["--help"], ["-h"])
-    if module == "aspec.inference.service" and not help_requested and not is_target_environment():
+    megatron_target = ("--backend=megatron" in arguments or any(
+        a == "--backend" and b == "megatron" for a, b in zip(arguments, arguments[1:])
+    ))
+    if module == "aspec.inference.service" and not help_requested and not is_target_environment() and not megatron_target:
         raise SystemExit("Start aspec target in the Target environment (pip install ling-aspec-target)")
     try:
         execute([sys.executable, "-m", module, *arguments])

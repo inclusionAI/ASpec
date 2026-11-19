@@ -146,6 +146,30 @@ class _RealAdamBF16Surface:
         self.optimizer.load_state_dict(value)
 
 
+def test_restore_preserves_dtensor_master_weights(tmp_path):
+    import torch.distributed as dist
+    from torch.distributed.device_mesh import init_device_mesh
+    from torch.distributed.tensor import Shard, distribute_tensor
+
+    dist.init_process_group("gloo", init_method=(tmp_path / "rendezvous").as_uri(),
+                            rank=0, world_size=1)
+    try:
+        model = nn.Linear(4, 2, bias=False)
+        mesh = init_device_mesh("cpu", (1,))
+        model.weight = nn.Parameter(distribute_tensor(model.weight.detach(), mesh, [Shard(0)]))
+        optimizer = _StubBF16Optimizer(model)
+        state = OptimizerState(model, optimizer)
+        saved = state.state_dict()
+        expected = saved["fp32_params"]["weight"].clone()
+        saved["fp32_params"]["weight"] = expected
+        optimizer.fp32_params[0].zero_()
+
+        state.load_state_dict(saved)
+        torch.testing.assert_close(optimizer.fp32_params[0].to_local(), expected.to_local(), rtol=0, atol=0)
+    finally:
+        dist.destroy_process_group()
+
+
 def test_dcp_exact_resume_restores_lazy_adam_moments_without_an_extra_update(tmp_path):
     original = _RealAdamBF16Surface(nn.Linear(3, 2))
     original.fp32_params[0].grad = torch.ones_like(original.fp32_params[0])

@@ -24,6 +24,18 @@ from typing import Any
 
 # Patched files and their native v0.5.21 request/capture/runner dependencies.
 # A bounded set catches divergent checkouts without hashing the entire repo.
+MEGATRON_RUNTIME_RELATIVE_PATHS = (
+    "package_info.py",
+    "models/hybrid/hybrid_model.py",
+    "models/hybrid/hybrid_block.py",
+    "models/hybrid/hybrid_layer_allocation.py",
+    "tensor_parallel/layers.py",
+    "tensor_parallel/mappings.py",
+    "distributed/distributed_data_parallel.py",
+    "transformer/spec_utils.py",
+    "transformer/transformer_block.py",
+)
+
 SGLANG_RUNTIME_RELATIVE_PATHS = (
     "kernels/ops/attention/triton_gdn_fused_proj.py",
     "kernels/ops/attention/fla/chunk_delta_h.py",

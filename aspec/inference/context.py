@@ -269,6 +269,13 @@ def configure_sglang_context_override(contract: Mapping[str, Any]) -> bool:
     return enabled
 
 
+def compile_megatron_context_contract(**kwargs):
+    """Frozen prefill consumes exactly the requested sequence, without decode reserve."""
+    contract = compile_offline_context_contract(**kwargs)
+    contract["backend_context_length"] = contract["effective_training_max_sequence_length"]
+    return contract
+
+
 def compile_offline_context_contract(
     *, max_sequence_length, context_parallel_size, model_config,
     native_context_length, allow_context_length_override, context_shard_alignment=1,

@@ -67,6 +67,7 @@ def build_target_feature_contract(
     target_num_hidden_layers: int,
     aux_hidden_state_layers: list[int],
     store_last_hidden_states: bool,
+    producer_backend: str = "sglang",
     mtp: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the payload contract without starting a backend.
@@ -76,6 +77,8 @@ def build_target_feature_contract(
     differences still produce distinct identities.
     """
 
+    if producer_backend not in {"sglang", "megatron"}:
+        raise FeatureContractError(f"Unsupported Target producer backend: {producer_backend!r}")
     if not isinstance(target_hidden_size, int) or target_hidden_size <= 0:
         raise FeatureContractError(
             f"draft target_hidden_size must be a positive integer, got {target_hidden_size!r}"
@@ -168,7 +171,7 @@ def build_target_feature_contract(
 
     contract: dict[str, Any] = {
         "schema_version": FEATURE_CONTRACT_SCHEMA_VERSION,
-        "producer": {"backend": "sglang", "mode": "prefill_only"},
+        "producer": {"backend": producer_backend, "mode": "prefill_only"},
         "consumer": {
             "target_distribution": target_distribution,
         },
@@ -197,7 +200,10 @@ def validate_feature_contract(contract: Mapping[str, Any]) -> None:
         raise FeatureContractError(
             f"Target feature contract identity mismatch: {observed_id!r} != {expected_id!r}"
         )
-    if contract.get("producer") != {"backend": "sglang", "mode": "prefill_only"}:
+    if contract.get("producer") not in (
+        {"backend": "sglang", "mode": "prefill_only"},
+        {"backend": "megatron", "mode": "prefill_only"},
+    ):
         raise FeatureContractError(
             f"Unsupported target feature producer contract: {contract.get('producer')!r}"
         )

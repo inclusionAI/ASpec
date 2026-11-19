@@ -1,0 +1,10 @@
+# Install before building native Megatron/TE extensions, in the same venv.
+torch==2.13.0
+cuda-toolkit[cccl,nvcc]==13.0.3.0
+numpy<2.4
+setuptools>=80
+wheel
+packaging>=24.2
+pybind11
+cmake
+ninja

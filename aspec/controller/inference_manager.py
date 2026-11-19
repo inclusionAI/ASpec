@@ -1216,7 +1216,7 @@ class AsyncInferenceManager:
                     multimodal_inputs=kwargs["multimodal_inputs"],
                 )
                 if (
-                    getattr(self.args, "inference_engine_type", "sgl") == "sgl"
+                    getattr(self.args, "inference_engine_type", "sgl") in {"sgl", "megatron"}
                     and not self._train_with_decode
                 ):
                     generate_kwargs["request_ids"] = request_ids

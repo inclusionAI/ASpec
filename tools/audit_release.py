@@ -75,6 +75,8 @@ SDIST_REQUIRED = {
     "aspec/compat/patches/sglang-v0.5.21.patch",
     "requirements/sglang-v0.5.21.txt",
     "requirements/draft.txt",
+    "requirements/megatron-v0.20.0.txt",
+    "requirements/megatron-build.txt",
     "tools/audit_release.py",
     "tools/recipe_catalog.json",
     "tools/build_release.py",
@@ -107,9 +109,19 @@ WHEEL_REQUIRED = {
     "aspec/commands/convert_pretokenized_jsonl.py",
     "aspec/commands/_recipe_smoke.py",
     "aspec/commands/_checkpoint_audit.py",
+    "aspec/config/megatron.py",
+    "aspec/models/megatron.py",
+    "aspec/models/megatron_target.py",
+    "aspec/models/megatron_draft.py",
+    "aspec/training/megatron_trainer.py",
+    "aspec/training/megatron_optimizer.py",
+    "aspec/training/tp_source_prefetch.py",
+    "aspec/inference/engine/megatron_engine.py",
     "aspec/commands/_recipe_capacity.py",
     "aspec/resources/requirements/sglang-v0.5.21.txt",
     "aspec/resources/requirements/draft.txt",
+    "aspec/resources/requirements/megatron-v0.20.0.txt",
+    "aspec/resources/requirements/megatron-build.txt",
     "aspec/resources/tools/recipe_catalog.json",
     "aspec/resources/examples/data/sample_conversations.jsonl",
 }
@@ -146,7 +158,7 @@ def _identity(raw: bytes, artifact: Path) -> tuple[str, str]:
     version = metadata.get("Version")
     if not name or not version:
         raise ValueError(f"{artifact.name}: package metadata lacks Name or Version")
-    if name not in {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime"}:
+    if name not in {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime", "ling-aspec-megatron"}:
         raise ValueError(f"{artifact.name}: unexpected distribution name {name!r}")
     if name != "ling-aspec-runtime":
         requirements = {value.replace(" ", "") for value in metadata.get_all("Requires-Dist", [])}
@@ -198,7 +210,7 @@ def _sdist_members(path: Path) -> tuple[set[str], tuple[str, str]]:
     missing = SDIST_REQUIRED - names if root.startswith("ling_aspec_runtime-") else {"PKG-INFO", "LICENSE", "README.md", "pyproject.toml"} - names
     if missing:
         raise ValueError(f"{path.name}: missing source members {sorted(missing)}")
-    if not root.startswith(("ling_aspec-", "ling_aspec_target-", "ling_aspec_runtime-")):
+    if not root.startswith(("ling_aspec-", "ling_aspec_target-", "ling_aspec_runtime-", "ling_aspec_megatron-")):
         raise ValueError(f"{path.name}: unexpected source root {root!r}")
     with tarfile.open(path, mode="r:gz") as source:
         metadata_member = source.getmember(f"{root}/PKG-INFO")
@@ -212,19 +224,19 @@ def _sdist_members(path: Path) -> tuple[set[str], tuple[str, str]]:
 def audit(directory: Path) -> dict[str, int]:
     wheels = sorted(directory.glob("*.whl"))
     sdists = sorted(directory.glob("*.tar.gz"))
-    if len(wheels) != 3 or len(sdists) != 3:
-        raise ValueError(f"{directory}: expected exactly three wheels and three sdists")
+    if len(wheels) != 4 or len(sdists) != 4:
+        raise ValueError(f"{directory}: expected exactly four wheels and four sdists")
     result, identities = {}, {}
     for artifact in [*wheels, *sdists]:
         members, identity = (_wheel_members(artifact) if artifact.suffix == ".whl"
                              else _sdist_members(artifact))
         result[artifact.name] = len(members)
         identities.setdefault(identity, []).append(artifact.suffix == ".whl")
-    expected = {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime"}
+    expected = {"ling-aspec", "ling-aspec-target", "ling-aspec-runtime", "ling-aspec-megatron"}
     if ({name for name, version in identities} != expected
             or len({version for name, version in identities}) != 1
             or any(sorted(kinds) != [False, True] for kinds in identities.values())):
-        raise ValueError("wheel identity does not match the three version-aligned source identities")
+        raise ValueError("wheel identity does not match the four version-aligned source identities")
     return result
 
 

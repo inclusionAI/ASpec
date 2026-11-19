@@ -47,12 +47,14 @@ from aspec.config.draft_execution import (
     resolve_draft_execution_capability,
 )
 from aspec.config.draft_structure import resolve_draft_structure
+from aspec.config.megatron import resolve_megatron_gradient_precision, validate_megatron_execution
 from aspec.config.mooncake_config import MooncakeConfig, resolve_rdma_routes
 from aspec.config.train_config import config_to_flat_args
 from aspec.feature_contract import FeatureContractError, build_target_feature_contract
 from aspec.inference.concurrency import direct_output_sample_capacity
 from aspec.inference.context import (
     ContextContractError,
+    compile_megatron_context_contract,
     compile_offline_context_contract,
     compile_sglang_context_contract,
 )
@@ -841,7 +843,16 @@ def _resolve_batch_size(args: argparse.Namespace) -> None:
     )
     args.attention_backend = execution.attention_backend
     args.draft_context_parallel_size = execution.context_parallel_size
-    if execution.direct_cp_backend:
+    if getattr(args, "train_backend", "fsdp") == "megatron":
+        tp_size = getattr(args, "draft_tensor_parallel_size", 1)
+        if type(tp_size) is not int or tp_size < 1 or world_size % tp_size:
+            raise PlanCompileError("Draft world size must be divisible by positive draft_tensor_parallel_size")
+        dp_size = world_size // tp_size
+        args.dp_size = dp_size
+        args.sp_size = 1
+        args.per_dp_rank_batch_size = args.micro_batch_size
+        sp_size = 1
+    elif execution.direct_cp_backend:
         cp_size = execution.context_parallel_size
         if world_size % cp_size != 0:
             raise PlanCompileError(
@@ -936,10 +947,14 @@ def _validate_usp_args(args: argparse.Namespace) -> None:
 
 
 def _validate_scope(args: argparse.Namespace, draft: Mapping[str, Any]) -> None:
-    if getattr(args, "train_backend", None) != "fsdp":
+    if getattr(args, "train_backend", None) not in {"fsdp", "megatron"}:
         raise PlanCompileError(
-            f"The current training backend is fsdp; got {getattr(args, 'train_backend', None)!r}"
+            f"Training backend must be fsdp or megatron; got {getattr(args, 'train_backend', None)!r}"
         )
+    try:
+        validate_megatron_execution(args, draft)
+    except ValueError as exc:
+        raise PlanCompileError(str(exc)) from exc
     cluster_mode = getattr(args, "cluster_mode", "single_node")
     if cluster_mode not in {"single_node", "static_multi_node"}:
         raise PlanCompileError(f"Unsupported cluster.mode {cluster_mode!r}")
@@ -1042,7 +1057,10 @@ def _validate_scope(args: argparse.Namespace, draft: Mapping[str, Any]) -> None:
             raise PlanCompileError("static_multi_node requires cluster.shared_root")
 
     expected_tp = getattr(args, "sglang_nnodes", 1) * gpus_per_engine
-    if not offline and getattr(args, "sglang_tp_size", None) != expected_tp:
+    target_tp = (getattr(args, "megatron_tp_size", 1)
+                 if getattr(args, "target_model_backend", "sglang") == "megatron"
+                 else getattr(args, "sglang_tp_size", None))
+    if not offline and target_tp != expected_tp:
         raise PlanCompileError(
             "inference.sglang.tp_size must equal sglang.nnodes * "
             f"inference_num_gpus_per_engine ({expected_tp})"
@@ -1195,15 +1213,16 @@ def _validate_scope(args: argparse.Namespace, draft: Mapping[str, Any]) -> None:
         getattr(args, "target_prefill_memory_optimized", False)
     )
     if direct_target_output:
-        if getattr(args, "inference_engine_type", "sgl") != "sgl":
+        if getattr(args, "inference_engine_type", "sgl") not in {"sgl", "megatron"}:
             raise PlanCompileError(
-                "target_prefill_memory_optimized currently requires SGLang"
+                "target_prefill_memory_optimized requires a live Target backend"
             )
         if getattr(args, "train_with_decode", False):
             raise PlanCompileError(
                 "target_prefill_memory_optimized requires prefill-only Target execution"
             )
-        if gpus_per_engine != 1 or getattr(args, "sglang_tp_size", 1) != 1:
+        if (getattr(args, "inference_engine_type", "sgl") == "sgl"
+                and (gpus_per_engine != 1 or getattr(args, "sglang_tp_size", 1) != 1)):
             raise PlanCompileError(
                 "target_prefill_memory_optimized currently requires Target TP1"
             )
@@ -1265,6 +1284,7 @@ def _validate_scope(args: argparse.Namespace, draft: Mapping[str, Any]) -> None:
             dispatch_batch_size = (
                 int(getattr(args, "training_num_gpus_per_node", 0))
                 // int(getattr(args, "draft_context_parallel_size", 1))
+                // int(getattr(args, "draft_tensor_parallel_size", 1))
                 * args.per_dp_rank_batch_size
             )
             capacity_scope = "per node"
@@ -1565,6 +1585,7 @@ def _workload(
             target_num_hidden_layers=draft["target_num_hidden_layers"],
             aux_hidden_state_layers=list(draft["target_layer_ids"]),
             store_last_hidden_states=store_last,
+            producer_backend=_select(config, "model.target_model_backend", "sglang"),
             **({"mtp": {"native_config": draft["mtp_conditioning"]["native_config"],
                          "embedding_key": _select(config, "model.embedding_key")}}
                if draft.get("mtp_conditioning") and draft["mtp_conditioning"]["mode"] == "hidden"
@@ -1691,6 +1712,22 @@ def _policy(
             _select(config, "inference.inference_batch_size"),
         ),
     )
+    megatron_input_memory = None
+    if runtime.get("train_backend") == "megatron":
+        # Receive/collate copies on the consumer thread. Leader source prefetch
+        # borrows registered destination slots, counted separately as rings.
+        resident_batches = 2
+        feature_width = int(_select(config, "mooncake.hidden_dim", 4096))
+        feature_bytes_per_token = 2 * feature_width * (
+            len(runtime["aux_hidden_states_layers"]) + int(runtime.get("store_last_hidden_states", False)))
+        # Token IDs plus masks/positions alongside the captured feature ABI.
+        bytes_per_batch = (feature_bytes_per_token + 40) * int(runtime["max_seq_length"]) * int(runtime["micro_batch_size"])
+        megatron_input_memory = {
+            "storage": "consumer_cuda_payloads_replicated_over_tp",
+            "resident_batch_bound_per_rank": resident_batches,
+            "payload_bytes_bound_per_rank": resident_batches * bytes_per_batch,
+            "excludes": "registered_rings_model_activations_and_projection_caches",
+        }
     cluster_nodes: list[dict[str, Any]] = []
     locality_domains: list[dict[str, Any]] = []
     ready_watermark_by_domain: dict[str, int] = {}
@@ -1807,7 +1844,8 @@ def _policy(
 
     return ExecutionPolicy(
         backends={
-            "target_features": "offline_replay" if runtime["inference_engine_type"] == "offline" else "sglang",
+            "target_features": ("offline_replay" if runtime["inference_engine_type"] == "offline"
+                                else _select(config, "model.target_model_backend")),
             "training": _select(config, "training.train_backend"),
             "transport": "mooncake",
         },
@@ -1836,7 +1874,7 @@ def _policy(
                 "world_size": runtime["world_size"],
             },
             "inference": {
-                "gpu_owner": "target_service" if runtime["inference_engine_type"] == "sgl" else None,
+                "gpu_owner": "target_service" if runtime["inference_engine_type"] != "offline" else None,
                 "nodes": (
                     len(_select(config, "inference.inference_node_ips") or ())
                     if cluster_mode == "static_multi_node"
@@ -1857,15 +1895,22 @@ def _policy(
         parallelism={
             "training": {
                 "data_parallel": runtime["dp_size"],
+                "tensor_parallel": _select(config, "training.draft_tensor_parallel_size", 1),
                 "sequence_parallel": runtime["sp_size"],
                 "context_parallel": _select(
                     config, "training.draft_context_parallel_size", 1
                 ),
                 "attention_backend": _select(config, "training.attention_backend"),
-                "fsdp_strategy": _select(config, "training.fsdp_strategy"),
+                "fsdp_strategy": (None if runtime["train_backend"] == "megatron"
+                                  else _select(config, "training.fsdp_strategy")),
+                **({**resolve_megatron_gradient_precision(argparse.Namespace(**runtime)),
+                    "vocabulary": "replicated"}
+                   if runtime["train_backend"] == "megatron" else {}),
             },
             "inference": {
-                "tensor_parallel": _select(config, "inference.sglang.tp_size"),
+                "tensor_parallel": (_select(config, "inference.megatron.tp_size")
+                                    if runtime["inference_engine_type"] == "megatron"
+                                    else _select(config, "inference.sglang.tp_size")),
                 "pipeline_parallel": _select(config, "inference.sglang.pp_size"),
                 "source_context_parallel_size": runtime["source_context_parallel_size"],
             },
@@ -1909,15 +1954,18 @@ def _policy(
         },
         capacity={
             "device_memory": {
+                **({"megatron_input_staging": megatron_input_memory} if megatron_input_memory else {}),
                 **({"mtp_conditioning": conditioning_memory} if conditioning_memory else {}),
                 **({"target_mtp_features": target_mtp_memory} if target_mtp_memory else {}),
-                "sglang_static_fraction": (None if runtime["inference_engine_type"] == "offline"
+                "sglang_static_fraction": (None if runtime["inference_engine_type"] != "sgl"
                                            else _select(config, "inference.sglang.mem_fraction_static"))
             },
             "backend_tokens": {
                 **copy.deepcopy(dict(context_contract)),
                 "profiled_max_total_tokens": None,
-                "state": "not_applicable_offline" if runtime["inference_engine_type"] == "offline" else "pending_backend_probe",
+                "state": ("not_applicable_offline" if runtime["inference_engine_type"] == "offline"
+                          else "no_persistent_kv_pool" if runtime["inference_engine_type"] == "megatron"
+                          else "pending_backend_probe"),
             },
             "transfer_storage": {
                 "data_plane": data_plane,
@@ -2049,9 +2097,18 @@ def compile_execution_plan(
     source["resolved_config_sha256"] = _resolved_config_sha256(config)
     draft = _load_draft_descriptor(config)
     target_family = _resolve_target_family(target_path)
+    if (_select(config, "training.train_backend") == "megatron"
+            or _select(config, "model.target_model_backend") == "megatron"):
+        target_raw = _read_local_target_config(target_path)
+        if target_family != "qwen3" or target_raw and target_raw.get("model_type") != "qwen3":
+            raise PlanCompileError("Megatron integration currently requires dense Qwen3 Target weights")
     runtime = _runtime_values(config, draft, source_context_parallel_size=source_context_parallel_size)
     try:
-        context_compiler = compile_offline_context_contract if offline else compile_sglang_context_contract
+        context_compiler = (
+            compile_offline_context_contract if offline else
+            compile_megatron_context_contract if runtime["inference_engine_type"] == "megatron"
+            else compile_sglang_context_contract
+        )
         context_contract = context_compiler(
             max_sequence_length=_select(config, "training.max_seq_length"),
             context_parallel_size=int(
@@ -2139,7 +2196,8 @@ def compile_execution_plan(
             name="target_feature_engine",
             requirement="required",
             requested=_select(config, "inference.inference_engine_type"),
-            resolved="offline_replay" if offline else "sglang",
+            resolved=("offline_replay" if offline else
+                      _select(config, "model.target_model_backend", "sglang")),
         ),
         CapabilityDecision(
             name="draft_trainer",
@@ -2151,7 +2209,7 @@ def compile_execution_plan(
             name="training_backend",
             requirement="required",
             requested=_select(config, "training.train_backend"),
-            resolved="fsdp",
+            resolved=_select(config, "training.train_backend", "fsdp"),
         ),
         CapabilityDecision(
             name="static_multi_node_execution",

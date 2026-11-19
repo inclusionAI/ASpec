@@ -139,8 +139,18 @@ class MooncakeDataset(IterableDataset):
         packing_enabled: bool = False,
         feature_affinity: str = "any",
         consumer_node_ip: str | None = None,
+        tensor_parallel_group=None,
+        tensor_parallel_control_group=None,
     ):
         self.ray_queue = ray_queue
+        if (tensor_parallel_group is None) != (tensor_parallel_control_group is None):
+            raise ValueError("TP input requires paired GPU-data and CPU-control groups")
+        self.tensor_parallel_group = tensor_parallel_group
+        self.tensor_parallel_control_group = tensor_parallel_control_group
+        self._tensor_parallel_device = (torch.cuda.current_device()
+                                        if tensor_parallel_group is not None else None)
+        self._tp_source_prefetch = None
+        self._tensor_parallel_samples = self._tensor_parallel_payload_bytes = 0
         self.mooncake_store = mooncake_store
         self.device = device
         self.prefetch_factor = prefetch_factor
@@ -186,10 +196,20 @@ class MooncakeDataset(IterableDataset):
         ):
             raise ValueError("packing requires non-USP training and positive max_seq_length")
         self._init_sp_context()
+        if tensor_parallel_group is not None and prefetch_factor > 0 and dist.get_rank(tensor_parallel_group) == 0:
+            from aspec.training.tp_source_prefetch import TPSourcePrefetch
+
+            self._tp_source_prefetch = TPSourcePrefetch(
+                self._read_tp_source, lambda item: _release_p2p_receive_leases(item[1]), depth=prefetch_factor)
 
     def request_stop(self) -> None:
         """Cancel future queue reads without interrupting a native transfer."""
         self._stop_requested.set()
+
+    def close(self):
+        self.request_stop()
+        if self._tp_source_prefetch is not None:
+            self._tp_source_prefetch.close()
 
     def _next_queue_item(self):
         # Poll only the queue wait, not Mooncake itself: close must be able to
@@ -540,8 +560,14 @@ class MooncakeDataset(IterableDataset):
 
             logger.debug(f"__iter__: waiting for item from ray_queue (yield_count={yield_count})")
             try:
-                item = self._next_queue_item()
+                if self.tensor_parallel_group is not None:
+                    item, data = self._tensor_parallel_item()
+                else:
+                    item = self._next_queue_item()
+                    data = None
             except Exception as e:
+                if self.tensor_parallel_group is not None:
+                    raise
                 logger.warning(f"__iter__: Exception waiting for data: {e}, timeout={self.timeout}")
                 break
 
@@ -550,7 +576,8 @@ class MooncakeDataset(IterableDataset):
                 break
 
             logger.debug(f"__iter__: got item, mooncake_key={item.mooncake_key}")
-            data = self._load_from_mooncake(item)
+            if self.tensor_parallel_group is None:
+                data = self._load_from_mooncake(item)
 
             neutralized_count = self._resolve_and_neutralize_loss_mask(
                 data, item.mooncake_key, neutralized_count
@@ -583,6 +610,86 @@ class MooncakeDataset(IterableDataset):
             yield_count += 1
             logger.debug(f"__iter__: yielding batch {yield_count}, keys={list(data.keys())}")
             yield data
+
+    def _tensor_parallel_item(self):
+        with torch.cuda.device(self._tensor_parallel_device):
+            return self._tensor_parallel_item_on_device()
+
+    def _read_tp_source(self):
+        # No collation, GPU clones or collectives run on this producer thread.
+        # P2P GET writes preallocated destination slots; leases bound prefetch.
+        with torch.cuda.device(self._tensor_parallel_device):
+            item = self._next_queue_item()
+            return item, self._load_from_mooncake(item) if item is not None else {}
+
+    def _tensor_parallel_item_on_device(self):
+        """Read a source lease once, then broadcast its full CP1 payload over TP.
+
+        Source release and work-ledger acknowledgement belong to the TP leader.
+        Source GET may be prefetched by the leader. Every TP broadcast executes
+        on the consumer thread between microbatches, in model collective order.
+        Its destination lease remains attached through the consumer microbatch.
+        """
+        group = self.tensor_parallel_group
+        leader = dist.get_global_rank(group, 0)
+        is_leader = dist.get_rank(group) == 0
+        control, data, leases = [None], None, []
+        if is_leader:
+            try:
+                if self._tp_source_prefetch is not None:
+                    item, data = self._tp_source_prefetch.next()
+                else:
+                    item, data = self._read_tp_source()
+                leases = _take_p2p_receive_leases(data)
+                control[0] = {
+                    "item": item,
+                    "values": {k: v for k, v in data.items() if not isinstance(v, torch.Tensor)},
+                    "tensors": [(k, tuple(v.shape), v.dtype, v.device.type)
+                                for k, v in data.items() if isinstance(v, torch.Tensor)],
+                }
+            except BaseException as error:
+                control[0] = {"error": f"{type(error).__name__}: {error}"}
+        try:
+            # Waiting for the next queue item must never launch a waiting GPU
+            # collective on followers: CUDA allocation/synchronization in the
+            # current model step could otherwise wait for undispatched input.
+            dist.broadcast_object_list(control, src=leader, group=self.tensor_parallel_control_group)
+            message = control[0]
+            if "error" in message:
+                raise RuntimeError("TP input leader failed: " + message["error"])
+            item = message["item"]
+            if item is None:
+                return None, None
+            if not is_leader:
+                data = dict(message["values"])
+                self._feature_contract_runtime.validate_metadata(
+                    tensor_shapes=item.tensor_shapes, tensor_dtypes=item.tensor_dtypes,
+                    metadata=item.metadata,
+                )
+            for key, shape, dtype, original_device in message["tensors"]:
+                buffer = (data[key].to(device="cuda").contiguous() if is_leader
+                          else torch.empty(shape, device="cuda", dtype=dtype))
+                dist.broadcast(buffer, src=leader, group=group)
+                if not is_leader:
+                    data[key] = buffer.cpu() if original_device == "cpu" else buffer
+            if not is_leader:
+                names = self._feature_contract_runtime.contract["tensors"]
+                self._validate_received_feature_tensors(
+                    {name: data[name] for name in names}, expected_shapes=item.tensor_shapes,
+                    expected_dtypes={name: data[name].dtype for name in names},
+                )
+            if leases:
+                data["_mooncake_p2p_receive_leases"] = leases
+                leases = []
+            self._tensor_parallel_samples += 1
+            self._tensor_parallel_payload_bytes += sum(
+                data[key].numel() * data[key].element_size()
+                for key, _shape, _dtype, _device in message["tensors"]
+            )
+            return item, data
+        finally:
+            for lease in leases:
+                lease.release()
 
     def _direct_cp_get_sharded_item(
         self, neutralized_count: int
@@ -957,6 +1064,14 @@ class MooncakeDataset(IterableDataset):
             status["data_admission"] = {
                 "neutralized_rank_samples": self._neutralized_rank_samples,
             }
+        if getattr(self, "tensor_parallel_group", None) is not None:
+            status["tensor_parallel_input"] = {
+                "rank": dist.get_rank(self.tensor_parallel_group),
+                "size": dist.get_world_size(self.tensor_parallel_group),
+                "broadcast_samples": self._tensor_parallel_samples,
+                "broadcast_payload_bytes": self._tensor_parallel_payload_bytes,
+                "source_read_owner": dist.get_rank(self.tensor_parallel_group) == 0,
+            }
         get_transport_status = getattr(self.mooncake_store, "get_p2p_status", None)
         transport = (
             get_transport_status() if callable(get_transport_status) else None
@@ -1011,6 +1126,8 @@ def create_mooncake_dataloader(
     packing_enabled: bool = False,
     feature_affinity: str = "any",
     consumer_node_ip: str | None = None,
+    tensor_parallel_group=None,
+    tensor_parallel_control_group=None,
 ) -> DataLoader:
     """Create a DataLoader that fetches from mooncake via queue.
 
@@ -1028,7 +1145,7 @@ def create_mooncake_dataloader(
         collator: Collator for padding and batching samples.
         device: Target device for tensors.
         batch_size: Number of samples per batch (= per_dp_rank_batch_size).
-        prefetch_factor: Unused, kept for API compatibility.
+        prefetch_factor: Source GET queue depth for TP input; unused by other paths.
         timeout: Timeout in seconds for waiting on queue. None means wait forever.
         assistant_header_ids: Token IDs for assistant header (for loss mask skip check).
         end_token_ids: Token IDs for end of turn (for loss mask skip check).
@@ -1061,6 +1178,8 @@ def create_mooncake_dataloader(
         packing_enabled=packing_enabled,
         feature_affinity=feature_affinity,
         consumer_node_ip=consumer_node_ip,
+        tensor_parallel_group=tensor_parallel_group,
+        tensor_parallel_control_group=tensor_parallel_control_group,
     )
 
     def dataloader_collator(samples):
@@ -1128,6 +1247,8 @@ class MooncakeDataFetcher:
         packing_enabled: bool = False,
         feature_affinity: str = "any",
         consumer_node_ip: str | None = None,
+        tensor_parallel_group=None,
+        tensor_parallel_control_group=None,
     ):
         self.batch_size = batch_size
         self._dataloader = create_mooncake_dataloader(
@@ -1154,6 +1275,8 @@ class MooncakeDataFetcher:
             packing_enabled=packing_enabled,
             feature_affinity=feature_affinity,
             consumer_node_ip=consumer_node_ip,
+            tensor_parallel_group=tensor_parallel_group,
+            tensor_parallel_control_group=tensor_parallel_control_group,
         )
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
@@ -1164,6 +1287,9 @@ class MooncakeDataFetcher:
 
     def request_stop(self) -> None:
         self._dataloader.dataset.request_stop()
+
+    def close(self):
+        self._dataloader.dataset.close()
 
 
 class PrefetchedDataFetcher:

@@ -61,7 +61,7 @@ def _artifacts(
             link.type = tarfile.SYMTYPE
             link.linkname = "target"
             output.addfile(link)
-    for role in ("ling-aspec", "ling-aspec-target"):
+    for role in ("ling-aspec", "ling-aspec-target", "ling-aspec-megatron"):
         normalized = role.replace("-", "_")
         metadata = (f"Name: {role}\nVersion: {wheel_version}\n"
                     f"Requires-Dist: ling-aspec-runtime=={wheel_version}\n")
@@ -81,7 +81,7 @@ def test_release_audit_accepts_complete_artifact_pair(tmp_path):
     result = audit(tmp_path)
     assert result[wheel.name] == len(WHEEL_REQUIRED) + 1
     assert result[source.name] == len(SDIST_REQUIRED)
-    assert len(result) == 6
+    assert len(result) == 8
 
 
 @pytest.mark.parametrize("member", ["aspec/compat/sglang_patch.py",
@@ -119,7 +119,7 @@ def test_release_audit_rejects_non_source_members(tmp_path, member):
 
 
 def test_release_audit_requires_one_wheel_and_one_sdist(tmp_path):
-    with pytest.raises(ValueError, match="exactly three wheels and three sdists"):
+    with pytest.raises(ValueError, match="exactly four wheels and four sdists"):
         audit(tmp_path)
 
 
