@@ -8,6 +8,8 @@ loss landed first; this page describes the current training scope.
 
 ## Reference and configuration
 
+- Recipe: `configs/recipes/medusa_qwen3_8b.yaml` (three passes, held-out eval, checkpoints); use
+  `aspec recipes plan medusa` / `aspec recipes train medusa`.
 - Draft config: `aspec/config/medusa_qwen3_8b_draft_config.json` (Qwen3-8B Target, `K=5` heads).
 - Example: `configs/examples/medusa_qwen3_8b_4k_tcp.yaml` (one Target GPU + one Draft GPU, 4K,
   SDPA, CP1, non-packing, REPLICATE, Store/TCP transport; no NVLink required). Set
@@ -15,7 +17,9 @@ loss landed first; this page describes the current training scope.
   `model.target_model_path`) and run from the repository root so the relative draft-config path
   resolves.
 - The heads are the only trainable parameters; the Target is frozen and its post-norm final
-  state is the only feature the Draft consumes.
+  state is the only feature the Draft consumes. At startup the trainer resolves the Target
+  config and rejects a draft projection width that differs from its `vocab_size`, including for
+  Hub IDs that Plan could not read locally.
 
 ## Inputs and prediction semantics
 
@@ -44,5 +48,37 @@ The current path fails closed outside the following:
 - `fsdp_strategy: REPLICATE`, one node. Anchored training, MTP conditioning and whole-model
   compile are rejected.
 
-Export, a maintained recipe, per-head held-out observations and candidate-tree acceptance are not
-part of this scope.
+## Export and strict reload
+
+Export a trained checkpoint as an ASpec-native asset:
+
+```bash
+python -m tools.convert_to_hf \
+  --input-dir outputs/qwen3-8b-medusa/checkpoints/iter_0000001 \
+  --output-dir outputs/medusa-export --format aspec --verify
+```
+
+`--format aspec` is required: the SGLang serving format is rejected because no verified
+candidate-tree Medusa loader exists. The artifact contains `config.json`,
+`model.safetensors` and `export_manifest.json`; `--verify` reloads it through
+`aspec.draft_artifact.load_native_draft` (strict, no dropped tensors) and compares every tensor
+with the exported bytes.
+
+## Held-out per-head observations
+
+The training eval loop reports `eval/ploss_{i}` and `eval/acc_{i}` when `dataset.eval_data_path`
+is set. To report the same observations from an exported asset against a materialized offline
+feature dataset:
+
+```bash
+python -m tools.evaluate_medusa \
+  --draft outputs/medusa-export --dataset /path/to/offline-dataset \
+  --split eval --output outputs/medusa-eval.json
+```
+
+The report records the artifact and dataset identities, per-head token counts, token-weighted
+mean CE and token accuracy, and the sum of the per-head means. These are held-out training
+observations, not candidate-tree acceptance.
+
+Candidate-tree acceptance and decode-equality under a Medusa evaluator are not part of this
+scope; they require a verified consumer adapter.

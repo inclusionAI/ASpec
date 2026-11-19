@@ -164,6 +164,6 @@ post-norm final state; head `i` at position `t` is supervised by token `t+2+i`. 
 the sum of per-head mean cross-entropies (assistant tokens only): each head's CE is averaged
 within a microbatch, and microbatches are weighted equally by gradient accumulation rather than
 pooled by token count. The heads own trainable full-vocabulary projections. Start from
-`configs/examples/medusa_qwen3_8b_4k_tcp.yaml` (SDPA, CP1, MBS1, non-packing, REPLICATE,
-Store/TCP). Export, a maintained recipe, per-head held-out observations and candidate-tree
-acceptance remain future work; see [details](medusa.md).
+`configs/recipes/medusa_qwen3_8b.yaml` (SDPA, CP1, MBS1, non-packing, REPLICATE, Store/TCP).
+Native export, strict reload and per-head held-out reporting are implemented; candidate-tree
+acceptance remains future work; see [details](medusa.md).

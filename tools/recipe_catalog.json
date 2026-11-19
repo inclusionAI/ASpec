@@ -146,5 +146,16 @@
     "target_gpus": 4,
     "draft_gpus": 4,
     "native_only_export": true
+  },
+  "medusa": {
+    "configs": [
+      "configs/recipes/medusa_qwen3_8b.yaml"
+    ],
+    "model": "Qwen3-8B",
+    "nodes": 1,
+    "gpus": 2,
+    "target_gpus": 1,
+    "draft_gpus": 1,
+    "native_only_export": true
   }
 }

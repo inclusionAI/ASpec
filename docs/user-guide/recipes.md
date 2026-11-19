@@ -3,10 +3,11 @@
 Choose a recipe for your Target, Draft algorithm and available resources. EAGLE4 uses two successive
 stages. See [supported combinations](../support.md) before combining algorithms and structures.
 
-Qwen and Ling DSpark/DFlash paths are the main optimization and recipe priorities. EAGLE3/4 and
-native MTP have their own documented training and asset contracts; DFlash2 remains an experimental
-example outside this recipe catalog. A listed recipe is a maintained starting configuration, not
-a claim that every algorithm/structure combination has the same quality or performance evidence.
+Qwen and Ling DSpark/DFlash paths are the main optimization and recipe priorities. EAGLE3/4,
+native MTP and Medusa heads have their own documented training and asset contracts; DFlash2
+remains an experimental example outside this recipe catalog. A listed recipe is a maintained
+starting configuration, not a claim that every algorithm/structure combination has the same
+quality or performance evidence.
 
 The table shows each recipe's configured starting allocation, not a minimum requirement or optimal
 Target/Draft split. T = Target GPU; D = Draft GPU. Check memory fit and the required node-local NVLink
@@ -17,6 +18,7 @@ connections on your hardware before training.
 | `quickstart` | Qwen3-8B / DSpark | 1 node, 2 GPUs: 1T + 1D; 1K | Try training, recovery and export with bundled data |
 | `dspark` | Qwen3-8B / Dense DSpark | 1 node, 8 GPUs: 4T + 4D; 4K | Train on your data with packing and NVLink |
 | `dflash` | Qwen3-8B / DFlash | 1 node, 3 GPUs: 1T + 2D; 4K | Train a block-parallel DFlash Draft |
+| `medusa` | Qwen3-8B / heads-only Medusa | 1 node, 2 GPUs: 1T + 1D; 4K | Train parallel future-token heads and export a native heads asset |
 | `eagle3` | Qwen3-8B / EAGLE3 | 1 node, 3 GPUs: 1T + 2D; 4K | Train a recurrent EAGLE3 Draft |
 | `eagle4` | Qwen3-8B / EAGLE4 | 1 node, 3 GPUs: 1T + 2D; 4K; sequential stages | Train a Draft, then candidate retrieval projections |
 | `dmtp` | Qwen3.5-9B / MTP-conditioned DSpark | 1 node, 8 GPUs: 4T + 4D; 4K, CP1 | Train a Draft conditioned on the frozen native predictor; native assets |
