@@ -57,8 +57,18 @@ def test_glm_config_and_capture_coordinates(tmp_path):
     ]
 
 
-@pytest.mark.parametrize("layer_type", ["sliding_attention", "full_attention"])
-def test_draft_assets_and_exact_resume_compare_effective_block_attention(tmp_path, layer_type):
+@pytest.mark.parametrize("architecture,algorithm", [
+    ("DSparkDraftModel", "dspark"), ("DFlashDraftModel", "dflash"),
+])
+@pytest.mark.parametrize("layer_types", [
+    ["full_attention"] * 5,
+    ["sliding_attention"] * 5,
+    ["sliding_attention", "full_attention", "sliding_attention", "full_attention", "full_attention"],
+])
+@pytest.mark.parametrize("non_causal", [False, True])
+def test_draft_assets_and_exact_resume_compare_effective_block_attention(
+    tmp_path, architecture, algorithm, layer_types, non_causal,
+):
     from types import SimpleNamespace
 
     from safetensors.torch import save_file
@@ -72,12 +82,15 @@ def test_draft_assets_and_exact_resume_compare_effective_block_attention(tmp_pat
     )
 
     configured = json.loads(CONFIG.read_text())
-    configured["layer_types"] = [layer_type] * configured["num_hidden_layers"]
+    configured.update(architectures=[architecture], layer_types=layer_types,
+                      sliding_window_non_causal=non_causal)
+    if algorithm == "dflash":
+        configured["model_type"] = "dflash"
     default = dict(configured)
-    del default["sliding_window_non_causal"]
-    assert resolve_draft_attention(default) == resolve_draft_attention({
-        **default, "sliding_window_non_causal": True,
-    })
+    if non_causal:
+        default["sliding_window_non_causal"] = False
+    else:
+        del default["sliding_window_non_causal"]
     saved_attention = resolve_draft_attention(configured)
 
     config_path = tmp_path / "config.json"
@@ -86,7 +99,7 @@ def test_draft_assets_and_exact_resume_compare_effective_block_attention(tmp_pat
     save_file({"embed_tokens.weight": torch.zeros(1, 1)}, weights_path)
     (tmp_path / "export_manifest.json").write_text(json.dumps({
         "storage_format": "aspec_native",
-        "algorithm": "dspark",
+        "algorithm": algorithm,
         "config_sha256": _sha256(config_path),
         "model_sha256": _sha256(weights_path),
         "draft_structure": {"attention": saved_attention},
@@ -94,7 +107,7 @@ def test_draft_assets_and_exact_resume_compare_effective_block_attention(tmp_pat
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     args = SimpleNamespace(
-        draft_algorithm="dspark", draft_model_config_obj=configured,
+        draft_algorithm=algorithm, draft_model_config_obj=configured,
         dflash_block_size=configured["block_size"], world_size=1,
     )
     metadata = {"world_size": 1, "training_topology": _logical_training_topology(args, 1)}
@@ -104,7 +117,7 @@ def test_draft_assets_and_exact_resume_compare_effective_block_attention(tmp_pat
     _validate_exact_resume_topology(args, metadata)
 
     args.draft_model_config_obj = default
-    if layer_type == "full_attention":
+    if all(kind == "full_attention" for kind in layer_types):
         validate_native_asset(tmp_path, expected_config=default, weights_only=True)
         _checkpoint_training_contract(model_dir, default)
         _validate_exact_resume_topology(args, metadata)
@@ -237,12 +250,17 @@ def test_published_sliding_policy_uses_speculators_defaults(tmp_path, published_
         load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
     del published["sample_from_anchor"]
     config_path.write_text(json.dumps(published))
+    load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+    config_path.write_text(json.dumps({**published, "sample_from_anchor": False}))
     with pytest.raises(ValueError, match="capture"):
         load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
 
 
 @pytest.mark.parametrize("config", [None, {"speculators_model_type": "dflash"}])
-def test_bound_glm_warmstart_requires_speculators_config(tmp_path, published_dspark, config):
+@pytest.mark.parametrize("bare_file", [False, True])
+def test_bound_glm_warmstart_requires_speculators_config(
+    tmp_path, published_dspark, config, bare_file, monkeypatch,
+):
     from safetensors.torch import save_file
 
     draft, _, embedding, _, _, bindings = published_dspark
@@ -254,9 +272,12 @@ def test_bound_glm_warmstart_requires_speculators_config(tmp_path, published_dsp
 
     weights_path = tmp_path / "model.safetensors"
     weights_path.write_bytes(b"unreadable checkpoint")
-    with pytest.raises(ValueError, match=r"requires the original Speculators DSpark config.json"):
-        load_initial_draft_weights(draft, str(weights_path), target_bindings=bindings,
-                                   require_speculators_config=True)
+    with monkeypatch.context() as context:
+        context.setattr("aspec.training.checkpoint.safe_open",
+                        lambda *a, **kw: pytest.fail("Tensors opened before published config validation"))
+        with pytest.raises(ValueError, match=r"requires the original Speculators DSpark config.json"):
+            load_initial_draft_weights(draft, str(weights_path if bare_file else tmp_path),
+                                       target_bindings=bindings, require_speculators_config=True)
 
     save_file({"embed_tokens.weight": embedding}, weights_path)
     load_initial_draft_weights(draft, str(weights_path), target_bindings=bindings)

@@ -869,8 +869,8 @@ def _bind_speculators_dspark(published, config, tensors, target_bindings):
         "sample_from_anchor": True,
         "sliding_window_non_causal": getattr(config, "sliding_window_non_causal", True),
     }
-    # An omitted flag means causal sliding blocks in the Speculators schema.
-    published = {"sliding_window_non_causal": False, **published}
+    # DSpark overrides DFlash's anchor-sampling default in the pinned schema.
+    published = {"sliding_window_non_causal": False, "sample_from_anchor": True, **published}
     if any(published.get(k) != expected for k, expected in policies.items()):
         raise ValueError("Speculators DSpark capture, mask, block or attention policy mismatch")
     geometry = published["transformer_layer_config"]
