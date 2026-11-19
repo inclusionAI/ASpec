@@ -117,7 +117,9 @@ def load_native_draft(path, *, device="cpu", dtype=None):
     state = load_file(str(path / "model.safetensors"), device="cpu")
     if len(state) != manifest.get("tensor_count"):
         raise ValueError("Native artifact tensor count mismatch")
-    checkpoint_dtype = state["embed_tokens.weight"].dtype
+    checkpoint_dtype = (
+        state["embed_tokens.weight"].dtype if "embed_tokens.weight" in state
+        else next(iter(state.values())).dtype)
     model = AutoEagle3DraftModel.from_config(config, torch_dtype=dtype or checkpoint_dtype)
     # Establish mixed precision BEFORE load; casting FP32 compressors through
     # BF16 and back would silently destroy the checkpoint's retained precision.
@@ -132,6 +134,22 @@ def load_native_draft(path, *, device="cpu", dtype=None):
     if manifest.get("algorithm") == "eagle4":
         validate_eagle4_native_state(config, model.state_dict(), manifest)
     return model
+
+
+def verify_native_export(path):
+    """Strictly reload a native artifact and prove every tensor roundtripped."""
+    path = Path(path)
+    model = load_native_draft(path)
+    imported = load_file(str(path / "model.safetensors"))
+    reloaded = model.state_dict()
+    if set(reloaded) != set(imported):
+        raise ValueError("Native reload changed the exported tensor set")
+    for key, value in reloaded.items():
+        if value.shape != imported[key].shape or value.dtype != imported[key].dtype:
+            raise ValueError(f"Native reload changed {key} shape/dtype")
+        if not torch.equal(value, imported[key]):
+            raise ValueError(f"Native reload changed {key} values")
+    return {"method": "strict_load_and_tensor_equality", "tensors": len(reloaded)}
 
 
 class BlockDraftConsumer:
