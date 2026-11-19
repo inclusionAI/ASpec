@@ -17,6 +17,25 @@ class MedusaTrainer(Eagle3Trainer):
             gradient_checkpointing=getattr(self.args, "gradient_checkpointing", False),
         )
 
+    def _load_algorithm_weights(self, draft_model, target_model_path):
+        # Plan can only bind the vocabulary when the Target config is local.
+        # Resolve the effective config here as well so a Hub ID cannot skip it.
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(
+            target_model_path,
+            trust_remote_code=getattr(self.args, "trust_remote_code", False),
+        )
+        config = getattr(config, "text_config", config)
+        target_vocab_size = getattr(config, "vocab_size", None)
+        if not isinstance(target_vocab_size, int) or isinstance(target_vocab_size, bool):
+            raise ValueError("Medusa requires the Target config to declare vocab_size")
+        if draft_model.vocab_size != target_vocab_size:
+            raise ValueError(
+                "Medusa heads project the full Target vocabulary: "
+                f"draft vocab_size {draft_model.vocab_size} != "
+                f"Target vocab_size {target_vocab_size}")
+
     def _prepare_algorithm_training(self, draft_model):
         if getattr(self.args, "freeze_lm_head", False):
             raise ValueError("Medusa heads own trainable vocabulary projections")
