@@ -136,18 +136,25 @@ def load_native_draft(path, *, device="cpu", dtype=None):
     return model
 
 
-def verify_native_export(path):
-    """Strictly reload a native artifact and prove every tensor roundtripped."""
+def verify_native_export(path, *, expected=None):
+    """Strictly reload a native artifact and compare it with the exported values.
+
+    ``expected`` is the state that was written; comparing the reloaded model with
+    it catches loader-side casts or drops. Without it the artifact's own bytes are
+    re-read, which only proves the loader is idempotent, not that it roundtripped
+    the exported tensors.
+    """
     path = Path(path)
     model = load_native_draft(path)
-    imported = load_file(str(path / "model.safetensors"))
     reloaded = model.state_dict()
-    if set(reloaded) != set(imported):
+    if expected is None:
+        expected = load_file(str(path / "model.safetensors"))
+    if set(reloaded) != set(expected):
         raise ValueError("Native reload changed the exported tensor set")
     for key, value in reloaded.items():
-        if value.shape != imported[key].shape or value.dtype != imported[key].dtype:
+        if value.shape != expected[key].shape or value.dtype != expected[key].dtype:
             raise ValueError(f"Native reload changed {key} shape/dtype")
-        if not torch.equal(value, imported[key]):
+        if not torch.equal(value, expected[key]):
             raise ValueError(f"Native reload changed {key} values")
     return {"method": "strict_load_and_tensor_equality", "tensors": len(reloaded)}
 

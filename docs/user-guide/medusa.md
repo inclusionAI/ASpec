@@ -54,15 +54,15 @@ Export a trained checkpoint as an ASpec-native asset:
 
 ```bash
 python -m tools.convert_to_hf \
-  --input-dir outputs/qwen3-8b-medusa/checkpoints/iter_0000001 \
+  --input-dir outputs/qwen3-8b-medusa/checkpoints/iter_00000100 \
   --output-dir outputs/medusa-export --format aspec --verify
 ```
 
 `--format aspec` is required: the SGLang serving format is rejected because no verified
 candidate-tree Medusa loader exists. The artifact contains `config.json`,
 `model.safetensors` and `export_manifest.json`; `--verify` reloads it through
-`aspec.draft_artifact.load_native_draft` (strict, no dropped tensors) and compares every tensor
-with the exported bytes.
+`aspec.draft_artifact.load_native_draft` (strict, no dropped tensors) and compares every
+reloaded tensor with the values the export wrote.
 
 ## Held-out per-head observations
 

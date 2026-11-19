@@ -364,6 +364,8 @@ def convert_checkpoint(
     raw_config = json.loads(config_path.read_text(encoding="utf-8"))
     if artifact_format not in {"sglang", "aspec"}:
         raise ValueError("artifact_format must be sglang or aspec")
+    if verify and artifact_format != "aspec":
+        raise ValueError("--verify requires --format aspec")
     if resolve_draft_algorithm(raw_config) in {"mtp", "medusa"}:
         raw_config = AutoDraftModelConfig.from_dict(raw_config).to_dict()
     training_contract = _checkpoint_training_contract(model_dir, raw_config)
@@ -509,11 +511,9 @@ def convert_checkpoint(
         encoding="utf-8",
     )
     if verify:
-        if artifact_format != "aspec":
-            raise ValueError("--verify requires --format aspec")
         from aspec.draft_artifact import verify_native_export
 
-        manifest["verified"] = verify_native_export(output_dir)
+        manifest["verified"] = verify_native_export(output_dir, expected=tensors)
         (output_dir / "export_manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

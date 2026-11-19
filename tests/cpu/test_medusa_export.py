@@ -77,6 +77,57 @@ def test_verify_detects_a_changed_tensor(tmp_path, monkeypatch):
         verify_native_export(output)
 
 
+def test_verify_compares_reload_with_the_exported_tensors(tmp_path, monkeypatch):
+    source, checkpoint = _checkpoint(tmp_path, monkeypatch)
+    output = tmp_path / "asset"
+    convert_to_hf.convert_checkpoint(
+        input_dir=checkpoint, output_dir=output, artifact_format="aspec")
+
+    from safetensors.torch import load_file, save_file
+
+    tensors = load_file(str(output / "model.safetensors"))
+    first = next(iter(tensors))
+    tensors[first] = tensors[first] + 1
+    save_file(tensors, str(output / "model.safetensors"))
+    # Keep the artifact internally consistent so only the exported values differ.
+    manifest_path = output / "export_manifest.json"
+    recorded = json.loads(manifest_path.read_text())
+    recorded["model_sha256"] = convert_to_hf._sha256_file(output / "model.safetensors")
+    manifest_path.write_text(
+        json.dumps(recorded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed .* values"):
+        verify_native_export(output, expected=source.state_dict())
+
+
+def test_verify_requires_native_format_before_writing(tmp_path, monkeypatch):
+    _, checkpoint = _checkpoint(tmp_path, monkeypatch)
+    output = tmp_path / "serving"
+    with pytest.raises(ValueError, match="--verify requires --format aspec"):
+        convert_to_hf.convert_checkpoint(
+            input_dir=checkpoint, output_dir=output, artifact_format="sglang", verify=True)
+    assert not output.exists()
+
+
+def test_export_verify_compares_with_the_tensors_it_wrote(tmp_path, monkeypatch):
+    source, checkpoint = _checkpoint(tmp_path, monkeypatch)
+    from aspec import draft_artifact
+
+    captured = {}
+
+    def fake_verify(path, *, expected=None):
+        captured["expected"] = expected
+        return {"method": "stub", "tensors": len(expected or {})}
+
+    monkeypatch.setattr(draft_artifact, "verify_native_export", fake_verify)
+    manifest = convert_to_hf.convert_checkpoint(
+        input_dir=checkpoint, output_dir=tmp_path / "asset", artifact_format="aspec",
+        verify=True)
+
+    assert set(captured["expected"]) == set(source.state_dict())
+    assert manifest["verified"] == {"method": "stub", "tensors": len(source.state_dict())}
+
+
 def test_sglang_format_is_rejected_for_medusa(tmp_path, monkeypatch):
     _, checkpoint = _checkpoint(tmp_path, monkeypatch)
     with pytest.raises(NotImplementedError, match="format aspec"):
