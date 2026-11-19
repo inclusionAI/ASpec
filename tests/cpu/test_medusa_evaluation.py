@@ -9,7 +9,13 @@ import pytest
 import torch
 from torch.nn import functional as F
 
-from aspec.commands.evaluate_medusa import _record_batch, evaluate_records
+from aspec.commands.evaluate_medusa import (
+    _record_batch,
+    _serialize_report,
+    _validate_binding,
+    evaluate_records,
+)
+from aspec.feature_contract import build_target_feature_contract
 from aspec.models.draft import AutoDraftModelConfig, AutoEagle3DraftModel
 
 
@@ -90,3 +96,36 @@ def test_record_validation_rejects_missing_mask_and_length_drift():
             "input_ids": torch.arange(4), "hidden_states": torch.randn(5, 8),
             "packed_loss_mask": torch.ones(4),
         })
+
+
+def _medusa_contract():
+    return build_target_feature_contract(
+        drafter_family="medusa", target_hidden_size=8, target_num_hidden_layers=4,
+        aux_hidden_state_layers=[3], store_last_hidden_states=False)
+
+
+def test_binding_requires_the_final_post_norm_state():
+    contract = _validate_binding({
+        "feature_contract": _medusa_contract(), "target_identity": {"config.json": "x"}})
+    assert contract["tensors"]["hidden_states"]["value_stage"] == "post_norm"
+    eagle = build_target_feature_contract(
+        drafter_family="eagle3", target_hidden_size=8, target_num_hidden_layers=4,
+        aux_hidden_state_layers=[1, 3], store_last_hidden_states=True)
+    with pytest.raises(ValueError, match="final post-norm"):
+        _validate_binding({"feature_contract": eagle})
+
+
+def test_record_hidden_width_must_match_the_contract():
+    with pytest.raises(ValueError, match="hidden width"):
+        _record_batch({
+            "input_ids": torch.arange(4), "hidden_states": torch.randn(4, 8),
+            "packed_loss_mask": torch.ones(4),
+        }, expected_hidden_size=16)
+
+
+def test_report_serialization_rejects_non_finite_metrics():
+    assert '"loss": null' in _serialize_report({"loss": None})
+    with pytest.raises(ValueError, match="non-finite"):
+        _serialize_report({"loss": float("nan")})
+    with pytest.raises(ValueError, match="non-finite"):
+        _serialize_report({"loss": float("inf")})

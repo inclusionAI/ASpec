@@ -20,8 +20,8 @@ _RAW = {
 }
 
 
-def _checkpoint(tmp_path, monkeypatch):
-    config = AutoDraftModelConfig.from_dict(_RAW)
+def _checkpoint(tmp_path, monkeypatch, raw=_RAW):
+    config = AutoDraftModelConfig.from_dict(raw)
     torch.manual_seed(0)
     source = AutoEagle3DraftModel.from_config(config, torch_dtype=torch.float32)
     checkpoint = tmp_path / "iter_0000002"
@@ -98,6 +98,26 @@ def test_verify_compares_reload_with_the_exported_tensors(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="changed .* values"):
         verify_native_export(output, expected=source.state_dict())
+
+
+def test_depth_two_shared_blocks_export_and_reload(tmp_path, monkeypatch):
+    source, checkpoint = _checkpoint(
+        tmp_path, monkeypatch, {**_RAW, "medusa_num_layers": 2})
+    output = tmp_path / "asset"
+    manifest = convert_to_hf.convert_checkpoint(
+        input_dir=checkpoint, output_dir=output, artifact_format="aspec", verify=True)
+    assert manifest["verified"]["tensors"] == len(source.state_dict())
+
+    from safetensors.torch import load_file
+
+    tensors = load_file(str(output / "model.safetensors"))
+    for head in range(2):
+        first = tensors[f"medusa_head.{head}.0.linear.weight"]
+        second = tensors[f"medusa_head.{head}.1.linear.weight"]
+        assert torch.equal(first, second)
+    imported = load_native_draft(output)
+    for key, value in source.state_dict().items():
+        assert torch.equal(imported.state_dict()[key], value)
 
 
 def test_verify_requires_native_format_before_writing(tmp_path, monkeypatch):

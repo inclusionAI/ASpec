@@ -8,19 +8,25 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import torch
 
 from aspec.data.utils import unpack_loss_mask
 from aspec.draft_artifact import load_native_draft
+from aspec.feature_contract import validate_feature_contract
 from aspec.models.medusa import MedusaModel
 
 
-def _record_batch(record):
+def _record_batch(record, *, expected_hidden_size=None):
     ids = record["input_ids"].reshape(-1).long()
     hidden = record["hidden_states"]
     hidden = hidden.reshape(-1, hidden.shape[-1])
+    if expected_hidden_size is not None and hidden.shape[-1] != expected_hidden_size:
+        raise ValueError(
+            "Held-out hidden width differs from the dataset feature contract: "
+            f"{hidden.shape[-1]} != {expected_hidden_size}")
     packed = record.get("packed_loss_mask")
     if packed is None:
         raise ValueError("Held-out Medusa records require packed_loss_mask")
@@ -30,7 +36,35 @@ def _record_batch(record):
     return ids.unsqueeze(0), hidden.unsqueeze(0), mask.unsqueeze(0)
 
 
-def evaluate_records(draft, records, *, device="cpu"):
+def _validate_binding(binding):
+    """Medusa consumes only the Target's final post-norm state from the dataset binding."""
+    if not isinstance(binding, Mapping):
+        raise ValueError("Offline dataset has no Target feature binding")
+    contract = binding.get("feature_contract")
+    try:
+        validate_feature_contract(contract)
+    except Exception as exc:
+        raise ValueError("Offline dataset feature contract is invalid") from exc
+    tensors = contract["tensors"]
+    hidden = tensors.get("hidden_states") or {}
+    if (hidden.get("semantic") != "target_final_hidden_state"
+            or hidden.get("value_stage") != "post_norm"):
+        raise ValueError(
+            "Medusa requires the Target's final post-norm hidden state")
+    depth = contract.get("target_num_hidden_layers")
+    hidden_size = contract.get("target_hidden_size")
+    layers = contract.get("aux_hidden_state_layers")
+    if (not isinstance(depth, int) or depth < 1
+            or not isinstance(hidden_size, int) or hidden_size < 1
+            or not isinstance(layers, list) or layers != [depth - 1]):
+        raise ValueError(
+            "Medusa features must come from the final Target decoder layer")
+    if "last_hidden_states" in tensors or "mtp_hidden_states" in tensors:
+        raise ValueError("Medusa does not consume duplicate teacher tensors")
+    return contract
+
+
+def evaluate_records(draft, records, *, device="cpu", expected_hidden_size=None):
     """Aggregate each head's token-weighted CE and accuracy over held-out records."""
     model = MedusaModel(draft).to(device).eval()
     dtype = next(model.parameters()).dtype
@@ -41,7 +75,8 @@ def evaluate_records(draft, records, *, device="cpu"):
     samples = 0
     with torch.no_grad():
         for record in records:
-            ids, hidden, mask = _record_batch(record)
+            ids, hidden, mask = _record_batch(
+                record, expected_hidden_size=expected_hidden_size)
             ids, hidden, mask = ids.to(device), hidden.to(device, dtype), mask.to(device)
             losses, _, accuracy, head_counts, _ = model(
                 ids, hidden, mask, torch.ones_like(ids))
@@ -77,6 +112,13 @@ def evaluate_records(draft, records, *, device="cpu"):
     }
 
 
+def _serialize_report(report):
+    try:
+        return json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
+    except ValueError as exc:
+        raise ValueError("Held-out report contains non-finite metrics") from exc
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--draft", type=Path, required=True)
@@ -93,6 +135,8 @@ def main():
     from aspec.offline.dataset import OfflineDataset
 
     dataset = OfflineDataset(args.dataset)
+    binding = dataset.metadata.get("binding") or {}
+    contract = _validate_binding(binding)
     rows = dataset.rows(args.split)
     if args.limit is not None:
         if args.limit < 1:
@@ -100,18 +144,22 @@ def main():
         rows = rows[: args.limit]
     draft = load_native_draft(args.draft, device=args.device)
     report = evaluate_records(
-        draft, (dataset.load(row) for row in rows), device=args.device)
+        draft, (dataset.load(row) for row in rows), device=args.device,
+        expected_hidden_size=int(contract["target_hidden_size"]))
     report.update({
         "draft_manifest_sha256": hashlib.sha256(
             (args.draft / "export_manifest.json").read_bytes()).hexdigest(),
         "dataset_identity": dataset.identity,
+        "feature_contract_id": contract["contract_id"],
+        "target_identity": binding.get("target_identity"),
         "split": args.split,
         "medusa_num_heads": draft.medusa_num_heads,
         "medusa_num_layers": draft.medusa_num_layers,
     })
+    serialized = _serialize_report(report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(report, indent=2, sort_keys=True))
+    args.output.write_text(serialized + "\n")
+    print(serialized)
 
 
 if __name__ == "__main__":

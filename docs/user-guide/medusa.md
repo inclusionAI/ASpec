@@ -9,7 +9,7 @@ loss landed first; this page describes the current training scope.
 ## Reference and configuration
 
 - Recipe: `configs/recipes/medusa_qwen3_8b.yaml` (three passes, held-out eval, checkpoints); use
-  `aspec recipes plan medusa` / `aspec recipes train medusa`.
+  `aspec recipes plan medusa` / `aspec recipes train medusa --output outputs/qwen3-8b-medusa`.
 - Draft config: `aspec/config/medusa_qwen3_8b_draft_config.json` (Qwen3-8B Target, `K=5` heads).
 - Example: `configs/examples/medusa_qwen3_8b_4k_tcp.yaml` (one Target GPU + one Draft GPU, 4K,
   SDPA, CP1, non-packing, REPLICATE, Store/TCP transport; no NVLink required). Set

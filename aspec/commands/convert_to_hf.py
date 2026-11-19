@@ -105,6 +105,23 @@ def _aspec_version() -> str:
         return "unknown"
 
 
+def _export_tensors(serving_state):
+    """Detach state tensors, cloning repeated storage so safetensors accepts it."""
+    tensors = {}
+    seen_storage = set()
+    for key, value in serving_state.items():
+        tensor = value.detach().cpu().contiguous()
+        storage = tensor.untyped_storage().data_ptr()
+        if storage in seen_storage:
+            # Shared residual-block depths repeat one module, so several state
+            # keys alias one storage. Keep every key but give the file real copies.
+            tensor = tensor.clone()
+        else:
+            seen_storage.add(storage)
+        tensors[key] = tensor
+    return tensors
+
+
 def _detect_model_dir(input_dir: Path) -> Path:
     model_dir = input_dir / "model"
     return model_dir if model_dir.is_dir() else input_dir
@@ -426,10 +443,7 @@ def convert_checkpoint(
         model.state_dict_for_serving() if hasattr(model, "state_dict_for_serving")
         else to_export_keys(model.state_dict())
     )
-    tensors = {
-        key: value.detach().cpu().contiguous()
-        for key, value in serving_state.items()
-    }
+    tensors = _export_tensors(serving_state)
 
     eagle4_asset = None
     if resolve_draft_algorithm(raw_config) == "eagle4":
