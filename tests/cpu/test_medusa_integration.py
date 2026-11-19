@@ -131,6 +131,20 @@ def test_heads_only_policies():
     assert layout["type"] == "heads_only"
     assert layout["head_dim"] is None
     assert resolve_draft_structure(raw) == {"ffn_type": "heads_only"}
+    for override in (
+        {"compress_ratios": [0, 0, 4]},
+        {"csa_training_stage": "dense"},
+        {"qsa_training_stage": "dense"},
+        {"dsa_training_stage": "dense"},
+    ):
+        with pytest.raises(ValueError, match="compressed or sparse attention"):
+            resolve_draft_attention({**raw, **override})
+    for override in (
+        {"router_z_loss_coef": 0.1},
+        {"moe_router_enable_expert_bias": True},
+    ):
+        with pytest.raises(ValueError, match="expert routing"):
+            resolve_draft_structure({**raw, **override})
 
 
 def test_feature_contract_requests_one_post_norm_state():
@@ -202,6 +216,25 @@ def test_plan_rejects_draft_target_vocabulary_mismatch(tmp_path):
     target = f"model.target_model_path={_fake_qwen_target(tmp_path, vocab_size=151935)}"
     args = [target]
     with pytest.raises(PlanCompileError, match="Target vocabulary"):
+        config = load_config(config_path=str(_EXAMPLE), cli_args=args)
+        compile_execution_plan(config, config_path=str(_EXAMPLE), cli_args=args)
+
+
+@pytest.mark.parametrize("key, value, message", [
+    ("compress_ratios", [0, 0, 0, 4], "compressed or sparse attention"),
+    ("dsa_training_stage", "dense", "compressed or sparse attention"),
+    ("router_z_loss_coef", 0.1, "FFN or expert routing"),
+])
+def test_plan_rejects_heads_only_ignored_settings(tmp_path, key, value, message):
+    raw = json.loads(_DRAFT_JSON.read_text(encoding="utf-8"))
+    raw[key] = value
+    draft = tmp_path / "medusa_ignored_settings.json"
+    draft.write_text(json.dumps(raw), encoding="utf-8")
+    args = [
+        f"model.target_model_path={_fake_qwen_target(tmp_path)}",
+        f"model.draft_model_config={draft}",
+    ]
+    with pytest.raises(PlanCompileError, match=message):
         config = load_config(config_path=str(_EXAMPLE), cli_args=args)
         compile_execution_plan(config, config_path=str(_EXAMPLE), cli_args=args)
 

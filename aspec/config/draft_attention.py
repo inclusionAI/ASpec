@@ -121,6 +121,16 @@ def resolve_draft_head_layout(raw: Mapping) -> dict:
 
 def resolve_draft_attention(raw: Mapping) -> dict:
     if raw.get("architectures") == ["MedusaDraftModel"]:
+        ignored = sorted(
+            key for key, value in raw.items()
+            if value is not None and (
+                key == "compress_ratios" or key.startswith(("csa_", "qsa_", "dsa_"))
+            )
+        )
+        if ignored:
+            raise ValueError(
+                "Medusa heads have no compressed or sparse attention; remove "
+                + ", ".join(ignored))
         return {"sliding_window": None, "layer_types": [], "compress_ratios": None,
                 "csa": None, "qsa": None, "context_windows": [],
                 "window_semantics": "none", "draft_block_attention": "parallel_heads"}
