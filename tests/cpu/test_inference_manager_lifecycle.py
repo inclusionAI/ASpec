@@ -59,6 +59,24 @@ def _manager():
     return manager
 
 
+def test_shared_multinode_refill_uses_admission_audience_instead_of_global_maximum():
+    async def scenario():
+        manager = _manager()
+        manager.args = SimpleNamespace(aspec_shared_source=True)
+        manager._sample_budget, manager._scheduled_samples = None, 0
+        manager._prompt_buffer = deque()
+        manager._buffer_low_watermark = manager._refill_size = 4
+        manager._max_pool_size = 4
+        manager._node_ready_watermarks = {'a': 2, 'b': 2}
+        manager.controller.get_ready_pool_size_by_node = _AsyncRemote({'a': 2, 'b': 2})
+        manager.controller.get_prompts = _AsyncRemote([InferenceInput('row')])
+        await manager._refill_buffer()
+        assert list(manager._prompt_buffer)[0].data_id == 'row'
+        assert manager.controller.get_prompts.calls == [((4,), {})]
+        assert manager.controller.get_ready_pool_size_by_node.calls == []
+    asyncio.run(scenario())
+
+
 def test_forward_results_preserves_success_prefix_then_fails_closed():
     async def scenario():
         manager = _manager()
@@ -336,7 +354,8 @@ def test_admission_uses_ready_queue_not_lifecycle_residency():
     asyncio.run(scenario())
 
 
-def test_node_local_admission_skips_saturated_node_and_preserves_healthy_progress():
+@pytest.mark.parametrize("shared", [False, True])
+def test_node_local_admission_skips_saturated_node_and_preserves_healthy_progress(shared):
     async def scenario():
         manager = _manager()
         manager._max_pool_size = 8
@@ -377,7 +396,11 @@ def test_node_local_admission_skips_saturated_node_and_preserves_healthy_progres
             ]
         )
 
-        async def ready_by_node():
+        async def ready_by_node(execution_ids=None):
+            if shared:
+                assert execution_ids == [manager._prompt_buffer[0].metadata["aspec_execution_id"]]
+            else:
+                assert execution_ids is None
             return {"node-a": 4, "node-b": 0}
 
         manager.controller.get_ready_pool_size_by_node = SimpleNamespace(
@@ -390,12 +413,15 @@ def test_node_local_admission_skips_saturated_node_and_preserves_healthy_progres
                 observed_nodes.append(lease.node)
                 return [(entries[0], ValueError("injected producer failure"))]
 
+        manager.args = SimpleNamespace(aspec_shared_source=shared)
+        if shared:
+            manager._prompt_buffer[0].metadata["shared_source_node"] = "node-b"
         manager._dispatch_batch = dispatch
         await manager._dispatch_ready_batches()
         await asyncio.sleep(0)
 
         assert observed_nodes == ["node-b"]
-        assert manager._capacity_rejections_by_node == {"node-a": 1, "node-b": 0}
+        assert manager._capacity_rejections_by_node == {"node-a": 0 if shared else 1, "node-b": 0}
         assert manager._inflight_samples_by_node == {"node-a": 0, "node-b": 1}
         assert manager._scheduled_samples_by_node == {"node-a": 0, "node-b": 1}
         with pytest.raises(RuntimeError, match="injected producer failure"):

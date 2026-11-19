@@ -56,7 +56,7 @@ from aspec.locality import (
 )
 from aspec.utils.logging import logger
 from aspec.utils.types import InferenceInput, InferenceOutput
-from aspec.work_lifecycle import WORK_IDENTITY_KEYS, require_work_identity
+from aspec.work_lifecycle import EXECUTION_ID_KEY, WORK_IDENTITY_KEYS, require_work_identity
 
 MOONCAKE_BACKPRESSURE_POLL_INTERVAL = 0.5  # seconds
 MOONCAKE_BACKPRESSURE_LOG_INTERVAL = 5.0  # seconds
@@ -774,6 +774,11 @@ class AsyncInferenceManager:
         if self._node_ready_watermarks:
             status.update(
                 {
+                    "ready_credit_scope": (
+                        "shared_admission_audience"
+                        if getattr(getattr(self, "args", None), "aspec_shared_source", False)
+                        else "controller"
+                    ),
                     "ready_watermark_by_node": dict(self._node_ready_watermarks),
                     "sample_budget_by_node": dict(self._sample_budget_by_node),
                     "scheduled_samples_by_node": dict(
@@ -868,6 +873,15 @@ class AsyncInferenceManager:
             if inflight + dispatch_size
             > self._batch_size * self._engines.capacity_by_node[node]
         } if self._node_ready_watermarks else set()
+        pinned_source = bool(getattr(getattr(self, "args", None), "aspec_shared_source", False)) and bool(self._node_ready_watermarks)
+        if pinned_source:
+            for node in self._node_ready_watermarks:
+                available = sum(
+                    entry.metadata.get("shared_source_node") == node
+                    for entry in self._prompt_buffer
+                )
+                if available < dispatch_size:
+                    excluded_nodes.add(node)
         while True:
             lease = self._engines.acquire_nowait(excluded_nodes=excluded_nodes)
             if lease is None:
@@ -883,9 +897,13 @@ class AsyncInferenceManager:
                     excluded_nodes.add(node)
                     continue
             try:
-                admitted = await self._reserve_pool_capacity(
-                    dispatch_size, node=node
-                )
+                source_execution_ids = [
+                    entry.metadata[EXECUTION_ID_KEY]
+                    for entry in self._prompt_buffer
+                    if entry.metadata.get("shared_source_node") == node
+                ][:dispatch_size] if pinned_source else None
+                admission_options = {"source_execution_ids": source_execution_ids} if pinned_source else {}
+                admitted = await self._reserve_pool_capacity(dispatch_size, node=node, **admission_options)
             except BaseException:
                 lease.release()
                 raise
@@ -894,7 +912,17 @@ class AsyncInferenceManager:
             lease.release()
             excluded_nodes.add(lease.node)
 
-        entries = self._take_batch(dispatch_size)
+        if pinned_source:
+            entries = []
+            remaining = deque()
+            for entry in self._prompt_buffer:
+                if len(entries) < dispatch_size and entry.metadata.get("shared_source_node") == node:
+                    entries.append(entry)
+                else:
+                    remaining.append(entry)
+            self._prompt_buffer = remaining
+        else:
+            entries = self._take_batch(dispatch_size)
         self._scheduled_samples += len(entries)
         if node is not None and self._sample_budget_by_node:
             self._scheduled_samples_by_node[node] += len(entries)
@@ -972,7 +1000,11 @@ class AsyncInferenceManager:
         if len(self._prompt_buffer) >= self._buffer_low_watermark:
             return
 
-        if self._max_pool_size > 0:
+        # Shared readers can have opposite node pressures. The global maximum
+        # can be full everywhere while a particular admission still has credit.
+        # Fetch bounded prompts here and gate their actual audiences at dispatch.
+        pinned_source = bool(getattr(getattr(self, "args", None), "aspec_shared_source", False)) and bool(self._node_ready_watermarks)
+        if self._max_pool_size > 0 and not pinned_source:
             if self._node_ready_watermarks:
                 pool_sizes = await self.controller.get_ready_pool_size_by_node.remote()
                 pool_full = all(
@@ -1018,6 +1050,7 @@ class AsyncInferenceManager:
         incoming_samples: int,
         *,
         node: str | None = None,
+        source_execution_ids: list[str] | None = None,
     ) -> bool:
         """Gate on ready outputs while accounting for independently bounded requests.
 
@@ -1041,7 +1074,10 @@ class AsyncInferenceManager:
                     raise RuntimeError(
                         f"engine lease has no planned locality credit: node={node!r}"
                     )
-                pool_sizes = await self.controller.get_ready_pool_size_by_node.remote()
+                if source_execution_ids is None:
+                    pool_sizes = await self.controller.get_ready_pool_size_by_node.remote()
+                else:
+                    pool_sizes = await self.controller.get_ready_pool_size_by_node.remote(source_execution_ids)
                 unknown_nodes = set(pool_sizes) - set(self._node_ready_watermarks)
                 if unknown_nodes:
                     raise RuntimeError(

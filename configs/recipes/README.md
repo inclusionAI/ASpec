@@ -11,6 +11,8 @@ whose supported export boundary is native-only; `false` does not disable the nat
 Use each recipe's documented inputs and check capacity on your own hardware.
 The [shared Target walkthrough](../../examples/qwen3-8b-shared-target/README.md) uses
 the recipe for experiment comparison, separate curves and recovery from different checkpoints.
+The `multinode-shared` workflow has a complete
+[startup and independent recovery example](../../docs/user-guide/sharing.md#start-two-drafts-and-resume-from-different-checkpoints).
 Supplemental variants belong under `configs/examples/`; benchmark comparisons remain under
 `configs/benchmarks/`.
 

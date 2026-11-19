@@ -37,14 +37,14 @@ def test_catalog_plans(name, monkeypatch):
     monkeypatch.setenv("ASPEC_NODE_0_IP", "192.0.2.1")
     monkeypatch.setenv("ASPEC_NODE_1_IP", "192.0.2.2")
     monkeypatch.setenv("ASPEC_SHARED_ROOT", "/tmp/aspec-test")
-    if name == "multinode":
+    if name.startswith("multinode"):
         monkeypatch.setenv("ASPEC_SHARED_ROOT", str(recipes.ROOT.parent))
         monkeypatch.setenv("ASPEC_TARGET_MODEL", str(recipes.ROOT.parent / "models/Qwen3-8B"))
         monkeypatch.setenv("ASPEC_TRAIN_DATA", str(recipes.ROOT.parent / "train.parquet"))
         monkeypatch.setenv("ASPEC_EVAL_DATA", str(recipes.ROOT.parent / "eval.parquet"))
     for path in recipes.catalog()[name]["configs"]:
         config = load_config(str(recipes.ROOT / path))
-        if name == "shared-target":
+        if config.experiments:
             from aspec.multi_draft import compile_multi_draft_plan
 
             compile_multi_draft_plan(config)
@@ -73,7 +73,7 @@ def test_qwen8b_recipes_plan_without_target_override(name, monkeypatch):
     for path in recipes.catalog()[name]["configs"]:
         config = load_config(str(recipes.ROOT / path))
         assert config.model.target_model_path == "Qwen/Qwen3-8B"
-        if name == "shared-target":
+        if config.experiments:
             from aspec.multi_draft import compile_multi_draft_plan
 
             compile_multi_draft_plan(config)
@@ -83,7 +83,7 @@ def test_qwen8b_recipes_plan_without_target_override(name, monkeypatch):
 
 def test_catalog_exactly_covers_formal_files():
     entries = recipes.catalog()
-    assert len(entries) == 13
+    assert len(entries) == 14
     declared = {p for entry in entries.values() for p in entry["configs"]}
     assert declared == {
         str(p.relative_to(recipes.ROOT)) for p in (recipes.ROOT / "configs/recipes").glob("*.yaml")
