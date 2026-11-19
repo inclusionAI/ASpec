@@ -155,9 +155,13 @@ class DFlashTrainer(Trainer):
                     getattr(self.args, "embedding_key", "model.embed_tokens.weight"),
                     getattr(self.args, "lm_head_key", "lm_head.weight"),
                 )
+                is_dspark = config.model_type == "qwen3_dspark"
                 checkpoint.load_initial_draft_weights(
                     draft_model, initial_path, allow_target_embedding=True,
-                    target_bindings=target_bindings if config.model_type == "qwen3_dspark" else None,
+                    target_bindings=target_bindings if is_dspark else None,
+                    require_speculators_config=(
+                        is_dspark and getattr(self.args, "aspec_target_family", None) == "glm5_3_flash"
+                    ),
                 )
             draft_model.load_embedding(
                 target_model_path,

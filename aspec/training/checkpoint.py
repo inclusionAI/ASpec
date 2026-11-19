@@ -269,11 +269,19 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
 
         saved_topology = dict(saved_topology)
         saved_topology["draft_model_semantics"] = draft_model_semantics(saved_topology["draft_model_semantics"])
+    saved_policy = saved_topology.get("draft_attention_policy") or {}
+    if (current_topology.get("draft_algorithm") in {"dspark", "dflash"}
+            and "draft_block_attention" in saved_policy and "draft_block_attention" in current_policy):
+        from aspec.config.draft_attention import draft_block_attention_matches
+
+        if draft_block_attention_matches(saved_policy["draft_block_attention"], current_policy):
+            saved_topology = {**saved_topology, "draft_attention_policy": {
+                **saved_policy, "draft_block_attention": current_policy["draft_block_attention"],
+            }}
     # Early native MTP checkpoints used the generic Draft policy label even
     # though their only decoder path was official causal, teacher-forced MTP.
     # Normalize that known serialization error at this boundary; never accept
     # a genuinely different attention policy or rewrite the stored checkpoint.
-    saved_policy = saved_topology.get("draft_attention_policy") or {}
     saved_semantics = saved_topology.get("draft_model_semantics") or {}
     objective = saved_topology.get("training_objective") or {}
     if (saved_topology.get("draft_algorithm") == current_topology.get("draft_algorithm") == "mtp"
@@ -851,15 +859,8 @@ def _speculators_dspark_rope_policy(config):
     return (*policy, tuple(frequencies.tolist()), float(attention_scale))
 
 
-def _bind_speculators_dspark(directory, config, tensors, target_bindings):
+def _bind_speculators_dspark(published, config, tensors, target_bindings):
     """Validate the published Draft's layout and replace its frozen head with the Target binding."""
-    config_path = directory / "config.json"
-    if not config_path.is_file():
-        return
-    published = json.loads(config_path.read_text())
-    if published.get("speculators_model_type") != "dspark":
-        return
-
     # Speculators captures before a layer; ASpec numbers completed layer outputs.
     policies = {
         "aux_hidden_state_layer_ids": [layer + 1 for layer in config.target_layer_ids],
@@ -868,6 +869,8 @@ def _bind_speculators_dspark(directory, config, tensors, target_bindings):
         "sample_from_anchor": True,
         "sliding_window_non_causal": getattr(config, "sliding_window_non_causal", True),
     }
+    # An omitted flag means causal sliding blocks in the Speculators schema.
+    published = {"sliding_window_non_causal": False, **published}
     if any(published.get(k) != expected for k, expected in policies.items()):
         raise ValueError("Speculators DSpark capture, mask, block or attention policy mismatch")
     geometry = published["transformer_layer_config"]
@@ -895,6 +898,7 @@ def _bind_speculators_dspark(directory, config, tensors, target_bindings):
 def load_initial_draft_weights(
     draft_model: torch.nn.Module, path: str, *, allow_target_embedding: bool = False,
     target_bindings: tuple[str, str, str] | None = None,
+    require_speculators_config: bool = False,
 ) -> Path:
     """Load a published draft checkpoint into a freshly constructed draft model.
 
@@ -904,14 +908,26 @@ def load_initial_draft_weights(
     would otherwise leave part of the model randomly initialised for a whole run.
     """
     checkpoint_path = resolve_initial_draft_checkpoint(path)
+    manifest_path = checkpoint_path.parent / "export_manifest.json"
+    native = manifest_path.is_file() and json.loads(manifest_path.read_text()).get("storage_format") == "aspec_native"
+    published = None
+    if target_bindings and not native:
+        config_path = checkpoint_path.parent / "config.json"
+        if config_path.is_file():
+            candidate = json.loads(config_path.read_text())
+            if candidate.get("speculators_model_type") == "dspark":
+                published = candidate
+        if require_speculators_config and published is None:
+            raise ValueError(
+                "GLM DSpark warm-start requires the original Speculators DSpark config.json "
+                "for capture policy and frozen Target binding validation"
+            )
     with safe_open(checkpoint_path, framework="pt", device="cpu") as f:
         tensors = {key: f.get_tensor(key) for key in f.keys()}
 
-    manifest_path = checkpoint_path.parent / "export_manifest.json"
-    native = manifest_path.is_file() and json.loads(manifest_path.read_text()).get("storage_format") == "aspec_native"
     conditioning = getattr(draft_model.config, "mtp_conditioning", None)
-    if target_bindings and not native:
-        _bind_speculators_dspark(checkpoint_path.parent, draft_model.config, tensors, target_bindings)
+    if published is not None:
+        _bind_speculators_dspark(published, draft_model.config, tensors, target_bindings)
     transition = False
     if conditioning:
         saved_config_path = checkpoint_path.parent / "config.json"

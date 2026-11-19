@@ -181,6 +181,7 @@ class ExecutionPlan:
     def to_runtime_args(self) -> argparse.Namespace:
         values = copy.deepcopy(dict(self._runtime_values))
         values["aspec_plan_id"] = self.plan_id
+        values["aspec_target_family"] = self.workload.models.get("target", {}).get("family")
         values["aspec_feature_contract"] = copy.deepcopy(dict(self.workload.features))
         values["aspec_locality_domains"] = copy.deepcopy(
             list(self.policy.resources.get("locality_domains", ()))

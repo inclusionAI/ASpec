@@ -430,6 +430,15 @@ def resolve_draft_attention(raw: Mapping) -> dict:
     }
 
 
+def draft_block_attention_matches(saved: str | list[str], current: Mapping) -> bool:
+    """Compare scalar and per-layer serializations over the same layer schedule."""
+    policy = current["draft_block_attention"]
+    layers = len(current["layer_types"])
+    return ([saved] * layers if isinstance(saved, str) else saved) == (
+        [policy] * layers if isinstance(policy, str) else policy
+    )
+
+
 def draft_context_shard_alignment(attention: Mapping) -> int:
     """Derive the minimum context-shard alignment from active sparse structures."""
 

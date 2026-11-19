@@ -51,7 +51,9 @@ def test_catalog_plans(name, monkeypatch):
 
             compile_multi_draft_plan(config)
         else:
-            compile_execution_plan(config)
+            plan = compile_execution_plan(config)
+            if name == "glm5-flash":
+                assert plan.to_runtime_args().aspec_target_family == "glm5_3_flash"
         if name != "quickstart":
             assert config.training.num_train_steps is None
             assert config.training.lr_total_steps is None

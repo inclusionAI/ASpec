@@ -263,9 +263,12 @@ def _checkpoint_training_contract(model_dir: Path, raw_config: dict) -> dict:
                 raise ValueError("Export model semantics conflict with the checkpoint; use its saved draft_config.json")
         saved_block_attention = (topology.get("draft_attention_policy") or {}).get("draft_block_attention")
         if algorithm in {"dspark", "dflash"} and saved_block_attention is not None:
-            from aspec.config.draft_attention import resolve_draft_attention
+            from aspec.config.draft_attention import (
+                draft_block_attention_matches,
+                resolve_draft_attention,
+            )
 
-            if resolve_draft_attention(raw_config)["draft_block_attention"] != saved_block_attention:
+            if not draft_block_attention_matches(saved_block_attention, resolve_draft_attention(raw_config)):
                 raise ValueError("Export Draft block attention conflicts with the checkpoint; use its saved draft_config.json")
     from aspec.config.draft_structure import checkpoint_ffn_policy, resolve_draft_structure
 

@@ -57,24 +57,31 @@ def test_glm_config_and_capture_coordinates(tmp_path):
     ]
 
 
-def test_native_asset_and_checkpoint_export_bind_sliding_block_causality(tmp_path):
+@pytest.mark.parametrize("layer_type", ["sliding_attention", "full_attention"])
+def test_draft_assets_and_exact_resume_compare_effective_block_attention(tmp_path, layer_type):
+    from types import SimpleNamespace
+
     from safetensors.torch import save_file
 
     from aspec.commands.convert_to_hf import _checkpoint_training_contract
-    from aspec.config.draft_algorithm import draft_model_semantics
     from aspec.config.draft_attention import resolve_draft_attention
     from aspec.draft_artifact import _sha256, validate_native_asset
+    from aspec.training.checkpoint import (
+        _logical_training_topology,
+        _validate_exact_resume_topology,
+    )
 
-    causal = json.loads(CONFIG.read_text())
-    default = dict(causal)
+    configured = json.loads(CONFIG.read_text())
+    configured["layer_types"] = [layer_type] * configured["num_hidden_layers"]
+    default = dict(configured)
     del default["sliding_window_non_causal"]
     assert resolve_draft_attention(default) == resolve_draft_attention({
         **default, "sliding_window_non_causal": True,
     })
-    saved_attention = resolve_draft_attention(causal)
+    saved_attention = resolve_draft_attention(configured)
 
     config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(causal))
+    config_path.write_text(json.dumps(configured))
     weights_path = tmp_path / "model.safetensors"
     save_file({"embed_tokens.weight": torch.zeros(1, 1)}, weights_path)
     (tmp_path / "export_manifest.json").write_text(json.dumps({
@@ -84,20 +91,30 @@ def test_native_asset_and_checkpoint_export_bind_sliding_block_causality(tmp_pat
         "model_sha256": _sha256(weights_path),
         "draft_structure": {"attention": saved_attention},
     }))
-    validate_native_asset(tmp_path, expected_config=causal, weights_only=True)
-    with pytest.raises(ValueError, match="Native artifact Draft block attention"):
-        validate_native_asset(tmp_path, expected_config=default, weights_only=True)
-
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    (tmp_path / "meta.json").write_text(json.dumps({"training_topology": {
-        "draft_algorithm": "dspark",
-        "draft_model_semantics": draft_model_semantics(causal),
-        "draft_attention_policy": saved_attention,
-    }}))
-    _checkpoint_training_contract(model_dir, causal)
-    with pytest.raises(ValueError, match="Export Draft block attention"):
+    args = SimpleNamespace(
+        draft_algorithm="dspark", draft_model_config_obj=configured,
+        dflash_block_size=configured["block_size"], world_size=1,
+    )
+    metadata = {"world_size": 1, "training_topology": _logical_training_topology(args, 1)}
+    (tmp_path / "meta.json").write_text(json.dumps(metadata))
+    validate_native_asset(tmp_path, expected_config=configured, weights_only=True)
+    _checkpoint_training_contract(model_dir, configured)
+    _validate_exact_resume_topology(args, metadata)
+
+    args.draft_model_config_obj = default
+    if layer_type == "full_attention":
+        validate_native_asset(tmp_path, expected_config=default, weights_only=True)
         _checkpoint_training_contract(model_dir, default)
+        _validate_exact_resume_topology(args, metadata)
+    else:
+        with pytest.raises(ValueError, match="Native artifact Draft block attention"):
+            validate_native_asset(tmp_path, expected_config=default, weights_only=True)
+        with pytest.raises(ValueError, match="Export Draft block attention"):
+            _checkpoint_training_contract(model_dir, default)
+        with pytest.raises(RuntimeError, match="draft_attention_policy"):
+            _validate_exact_resume_topology(args, metadata)
 
 
 class Tokenizer:
@@ -205,6 +222,45 @@ def test_speculators_published_head_binding(tmp_path, published_dspark):
     (tmp_path / "config.json").write_text(json.dumps(published))
     with pytest.raises(ValueError, match="capture"):
         load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+
+
+def test_published_sliding_policy_uses_speculators_defaults(tmp_path, published_dspark):
+    draft, published, embedding, _, _, bindings = published_dspark
+    config_path = tmp_path / "config.json"
+    del published["sliding_window_non_causal"]
+    config_path.write_text(json.dumps(published))
+    load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+    torch.testing.assert_close(draft.embed_tokens.weight, embedding)
+
+    config_path.write_text(json.dumps({**published, "sliding_window_non_causal": True}))
+    with pytest.raises(ValueError, match="attention policy"):
+        load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+    del published["sample_from_anchor"]
+    config_path.write_text(json.dumps(published))
+    with pytest.raises(ValueError, match="capture"):
+        load_initial_draft_weights(draft, str(tmp_path), target_bindings=bindings)
+
+
+@pytest.mark.parametrize("config", [None, {"speculators_model_type": "dflash"}])
+def test_bound_glm_warmstart_requires_speculators_config(tmp_path, published_dspark, config):
+    from safetensors.torch import save_file
+
+    draft, _, embedding, _, _, bindings = published_dspark
+    config_path = tmp_path / "config.json"
+    if config is None:
+        config_path.unlink()
+    else:
+        config_path.write_text(json.dumps(config))
+
+    weights_path = tmp_path / "model.safetensors"
+    weights_path.write_bytes(b"unreadable checkpoint")
+    with pytest.raises(ValueError, match=r"requires the original Speculators DSpark config.json"):
+        load_initial_draft_weights(draft, str(weights_path), target_bindings=bindings,
+                                   require_speculators_config=True)
+
+    save_file({"embed_tokens.weight": embedding}, weights_path)
+    load_initial_draft_weights(draft, str(weights_path), target_bindings=bindings)
+    torch.testing.assert_close(draft.embed_tokens.weight, embedding)
 
 
 @pytest.mark.parametrize("published_rope,configured_rope", [
