@@ -171,7 +171,8 @@ def test_nan_propagates_through_forward_and_input_gradient():
     assert hidden.grad[:2].isfinite().all()
 
 
-def test_native_dspark_losses_keep_teacher_and_validation_bf16(monkeypatch):
+@pytest.mark.parametrize("loss_recipe", ["deepspec", "speculators_redhat_v1"])
+def test_native_dspark_losses_keep_teacher_and_validation_bf16(monkeypatch, loss_recipe):
     from types import SimpleNamespace
 
     from aspec.models.draft.dspark import AcceptRatePredictor, VanillaMarkov
@@ -184,7 +185,7 @@ def test_native_dspark_losses_keep_teacher_and_validation_bf16(monkeypatch):
     draft.markov_head = VanillaMarkov(vocab_size=256, markov_rank=16)
     draft.confidence_head = AcceptRatePredictor(144)
     draft.confidence_head_with_markov = True
-    model = DSparkModel(draft).cuda().to(torch.bfloat16)
+    model = DSparkModel(draft, loss_recipe=loss_recipe).cuda().to(torch.bfloat16)
     hidden = torch.randn(1, 3, 7, 128, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     teacher = torch.randn_like(hidden, requires_grad=False)
     weight = torch.randn(256, 128, device="cuda", dtype=torch.bfloat16) * 0.02

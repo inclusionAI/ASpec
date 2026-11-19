@@ -84,6 +84,9 @@ def validate_native_asset(path, *, expected_config=None, weights_only=False):
         expected_attention = resolve_draft_attention(
             expected_config if isinstance(expected_config, dict) else expected_config.to_dict()
         )
+        if (manifest["algorithm"] in {"dspark", "dflash"}
+                and attention["draft_block_attention"] != expected_attention["draft_block_attention"]):
+            raise ValueError("Native artifact Draft block attention disagrees with the requested Draft")
         if attention.get("dsa") is not None or expected_attention.get("dsa") is not None:
             def dsa_semantics(policy, *, phase_transition):
                 dsa = policy.get("dsa")

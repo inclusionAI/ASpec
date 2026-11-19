@@ -146,8 +146,10 @@ def test_ce_only_speculators_requires_teacher():
     assert model.uses_target_hidden_states
 
 
-def test_recipe_plan_wrapper_and_exact_resume(monkeypatch):
-    overrides = ["training.attention_backend=flex_attention"]
+@pytest.mark.parametrize("precision", ["bf16", "fp8"])
+def test_recipe_plan_wrapper_and_exact_resume(monkeypatch, precision):
+    overrides = ["training.attention_backend=flex_attention",
+                 f"training.dspark_lm_head_precision={precision}"]
     base = load_config(str(CONFIG), cli_args=overrides)
     config = load_config(
         str(CONFIG), cli_args=[*overrides, f"training.dspark_loss_recipe={RECIPE}"]
@@ -156,6 +158,7 @@ def test_recipe_plan_wrapper_and_exact_resume(monkeypatch):
     plan = compile_execution_plan(config)
     assert default.workload.objective["loss_recipe"] == "deepspec"
     assert plan.workload.objective["loss_recipe"] == RECIPE
+    assert plan.workload.objective["lm_head_precision"] == precision
     assert plan.plan_id != default.plan_id
     args = config_to_flat_args(config)
     args.draft_algorithm, args.world_size = "dspark", 1

@@ -57,6 +57,49 @@ def test_glm_config_and_capture_coordinates(tmp_path):
     ]
 
 
+def test_native_asset_and_checkpoint_export_bind_sliding_block_causality(tmp_path):
+    from safetensors.torch import save_file
+
+    from aspec.commands.convert_to_hf import _checkpoint_training_contract
+    from aspec.config.draft_algorithm import draft_model_semantics
+    from aspec.config.draft_attention import resolve_draft_attention
+    from aspec.draft_artifact import _sha256, validate_native_asset
+
+    causal = json.loads(CONFIG.read_text())
+    default = dict(causal)
+    del default["sliding_window_non_causal"]
+    assert resolve_draft_attention(default) == resolve_draft_attention({
+        **default, "sliding_window_non_causal": True,
+    })
+    saved_attention = resolve_draft_attention(causal)
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(causal))
+    weights_path = tmp_path / "model.safetensors"
+    save_file({"embed_tokens.weight": torch.zeros(1, 1)}, weights_path)
+    (tmp_path / "export_manifest.json").write_text(json.dumps({
+        "storage_format": "aspec_native",
+        "algorithm": "dspark",
+        "config_sha256": _sha256(config_path),
+        "model_sha256": _sha256(weights_path),
+        "draft_structure": {"attention": saved_attention},
+    }))
+    validate_native_asset(tmp_path, expected_config=causal, weights_only=True)
+    with pytest.raises(ValueError, match="Native artifact Draft block attention"):
+        validate_native_asset(tmp_path, expected_config=default, weights_only=True)
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (tmp_path / "meta.json").write_text(json.dumps({"training_topology": {
+        "draft_algorithm": "dspark",
+        "draft_model_semantics": draft_model_semantics(causal),
+        "draft_attention_policy": saved_attention,
+    }}))
+    _checkpoint_training_contract(model_dir, causal)
+    with pytest.raises(ValueError, match="Export Draft block attention"):
+        _checkpoint_training_contract(model_dir, default)
+
+
 class Tokenizer:
     roles = {"<|system|>": 7, "<|user|>": 8, "<|assistant|>": 9}
 
