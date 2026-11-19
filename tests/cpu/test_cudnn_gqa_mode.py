@@ -65,6 +65,46 @@ def test_pinned_frontend_fails_closed(monkeypatch):
     joint._validate_version.cache_clear()
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_native_cudnn_propagates_deterministic_algorithms(monkeypatch, enabled):
+    import sys
+    from types import SimpleNamespace
+
+    import torch
+
+    from aspec.models.ops.cudnn_flex_attention import CudnnFlexMask, cudnn_flex_attention
+
+    query = SimpleNamespace(is_cuda=True, dtype=torch.bfloat16, ndim=4, shape=(1, 8, 64, 64))
+    mask = CudnnFlexMask(torch.zeros(1, 3, 8, dtype=torch.int32))
+    plan, seen = object(), []
+    monkeypatch.setattr(CudnnFlexMask, "plan_for", lambda *args, **kwargs: plan)
+    monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled", lambda: enabled)
+
+    def execute(q, k, v, **kwargs):
+        seen.append(kwargs)
+        return q
+
+    monkeypatch.setitem(sys.modules, "cudnn.flex_attention", SimpleNamespace(flex_attn_func=execute))
+    assert cudnn_flex_attention(query, query, query, mask=mask, scale=0.125) is query
+    assert seen == [{"mask_plan": plan, "softmax_scale": 0.125,
+                     "deterministic": enabled, "return_lse": False}]
+
+
+def test_internal_cudnn_determinism_fails_closed(monkeypatch):
+    from types import SimpleNamespace
+
+    import torch
+
+    from aspec.models.ops.cudnn_flex_attention import CudnnFlexMask, cudnn_flex_attention
+
+    query = SimpleNamespace(is_cuda=True, dtype=torch.bfloat16, ndim=4, shape=(1, 8, 4, 128))
+    key = SimpleNamespace(is_cuda=True, dtype=torch.bfloat16, ndim=4, shape=(1, 8, 1, 128))
+    mask = CudnnFlexMask(torch.zeros(1, 3, 8, dtype=torch.int32))
+    monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled", lambda: True)
+    with pytest.raises(NotImplementedError, match="Deterministic backward"):
+        cudnn_flex_attention(query, key, key, mask=mask, scale=0.125, gqa_mode="internal")
+
+
 @pytest.mark.parametrize("mode", ["native", "external", "internal"])
 @pytest.mark.parametrize("backend", ["cudnn_flex_attention", "math"])
 def test_direct_cp_propagates_explicit_route_and_observation(monkeypatch, mode, backend):

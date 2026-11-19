@@ -133,9 +133,9 @@ or inference timing.
 
 ## GLM-5.3-Flash DSpark
 
-The recipe uses the official FP8 Target on four GPUs and trains a BF16 Draft with FA4 attention
-on a fifth GPU. Set `training.attention_backend=flex_attention` to use FlexAttention instead;
-this choice is independent of the DSpark loss recipe.
+The recipe uses the official FP8 Target on four GPUs and trains a BF16 Draft with native cuDNN
+MHA64 attention (`training.attention_backend=cudnn_flex_attention`) on a fifth GPU.
+Attention selection is independent of the DSpark loss recipe.
 Keep the attention backend fixed when reproducing or resuming a run: changing it can alter
 BF16 rounding and the training trajectory.
 Use the checkpoint's chat template with text-only `system`, `user` and `assistant` messages
