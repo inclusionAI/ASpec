@@ -19,14 +19,17 @@
 # SOFTWARE.
 
 from aspec.data.renderers.base import DEFAULT_CACHE_VERSION, ConversationRenderer
+from aspec.data.renderers.glm5 import Glm5FlashRenderer
 from aspec.data.renderers.kimi_k3 import K3Renderer
 from aspec.data.renderers.registry import RENDERER_REGISTRY, RendererRegistry
 
+RENDERER_REGISTRY.register("glm5_3_flash", Glm5FlashRenderer)
 RENDERER_REGISTRY.register("kimi-k3", K3Renderer)
 
 __all__ = [
     "DEFAULT_CACHE_VERSION",
     "ConversationRenderer",
+    "Glm5FlashRenderer",
     "K3Renderer",
     "RENDERER_REGISTRY",
     "RendererRegistry",

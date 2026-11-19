@@ -382,7 +382,10 @@ def cudnn_flex_attention(
         raise ValueError("materialized MLA currently requires Hq=Hkv")
 
     effective_mode = resolve_cudnn_gqa_mode(gqa_mode, physical_gqa=physical_gqa)
+    deterministic = torch.are_deterministic_algorithms_enabled()
     if effective_mode == "internal":
+        if deterministic:
+            raise NotImplementedError("Deterministic backward is unavailable for internal cuDNN GQA")
         from aspec.models.ops.cudnn_gqa_backward import internal_gqa_attention
 
         return internal_gqa_attention(
@@ -423,6 +426,7 @@ def cudnn_flex_attention(
         value,
         mask_plan=plan,
         softmax_scale=scale,
+        deterministic=deterministic,
         return_lse=return_lse,
     )
     if return_lse:

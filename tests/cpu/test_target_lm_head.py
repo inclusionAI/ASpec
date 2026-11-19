@@ -190,8 +190,8 @@ def _patch_dist(monkeypatch, rank: int, peer_failed: bool = False) -> _Recording
 def _patch_follower_config(monkeypatch) -> None:
     monkeypatch.setattr(
         target_utils,
-        "AutoConfig",
-        SimpleNamespace(from_pretrained=lambda *args, **kwargs: _multimodal_config()),
+        "load_target_config",
+        lambda *args, **kwargs: _multimodal_config(),
     )
 
 

@@ -25,6 +25,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -87,6 +88,7 @@ def _logical_training_topology(args: Any, world_size: int) -> dict[str, Any]:
                   "ce_loss_alpha", "l1_loss_alpha")
         if prefix == "dspark":
             topology["training_objective"]["lm_head_precision"] = getattr(args, "dspark_lm_head_precision", "bf16")
+            topology["training_objective"]["loss_recipe"] = getattr(args, "dspark_loss_recipe", "deepspec")
             fields += ("confidence_head_alpha",)
             for side in ("target", "draft"):
                 for name, default in (("temperature", 1.0), ("top_p", 1.0), ("top_k", -1)):
@@ -163,6 +165,8 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
         saved_objective = (saved_topology or {}).get("training_objective") or {}
         if saved_objective.get("lm_head_precision", "bf16") != getattr(args, "dspark_lm_head_precision", "bf16"):
             raise RuntimeError("Exact resume cannot change dspark_lm_head_precision; use weights-only initialization")
+        if saved_objective.get("loss_recipe", "deepspec") != current_topology["training_objective"]["loss_recipe"]:
+            raise RuntimeError("Exact resume cannot change dspark_loss_recipe; use weights-only initialization")
         for side in ("target", "draft"):
             for name, default in (("temperature", 1.0), ("top_p", 1.0), ("top_k", -1)):
                 key = f"l1_{side}_{name}"
@@ -265,11 +269,19 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
 
         saved_topology = dict(saved_topology)
         saved_topology["draft_model_semantics"] = draft_model_semantics(saved_topology["draft_model_semantics"])
+    saved_policy = saved_topology.get("draft_attention_policy") or {}
+    if (current_topology.get("draft_algorithm") in {"dspark", "dflash"}
+            and "draft_block_attention" in saved_policy and "draft_block_attention" in current_policy):
+        from aspec.config.draft_attention import draft_block_attention_matches
+
+        if draft_block_attention_matches(saved_policy["draft_block_attention"], current_policy):
+            saved_topology = {**saved_topology, "draft_attention_policy": {
+                **saved_policy, "draft_block_attention": current_policy["draft_block_attention"],
+            }}
     # Early native MTP checkpoints used the generic Draft policy label even
     # though their only decoder path was official causal, teacher-forced MTP.
     # Normalize that known serialization error at this boundary; never accept
     # a genuinely different attention policy or rewrite the stored checkpoint.
-    saved_policy = saved_topology.get("draft_attention_policy") or {}
     saved_semantics = saved_topology.get("draft_model_semantics") or {}
     objective = saved_topology.get("training_objective") or {}
     if (saved_topology.get("draft_algorithm") == current_topology.get("draft_algorithm") == "mtp"
@@ -825,8 +837,68 @@ def resolve_initial_draft_checkpoint(path: str) -> Path:
     return checkpoint_path
 
 
+def _speculators_dspark_rope_policy(config):
+    from aspec.config.utils import resolve_dflash_rope_parameters
+
+    params = resolve_dflash_rope_parameters(config)
+    kind = params["rope_type"]
+    policy = (kind, params["rope_theta"], 1.0 if kind == "default" else params["factor"])
+    if kind != "yarn":
+        return policy
+    # Use the runtime's YaRN implementation to normalize optional defaults
+    # and compare every parameter that affects frequencies or attention scale.
+    from transformers import PretrainedConfig
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+    resolved = PretrainedConfig(
+        rope_parameters=params, head_dim=dim, hidden_size=dim, num_attention_heads=1,
+        max_position_embeddings=config.max_position_embeddings,
+    )
+    frequencies, attention_scale = ROPE_INIT_FUNCTIONS[kind](resolved, device=torch.device("cpu"))
+    return (*policy, tuple(frequencies.tolist()), float(attention_scale))
+
+
+def _bind_speculators_dspark(published, config, tensors, target_bindings):
+    """Validate the published Draft's layout and replace its frozen head with the Target binding."""
+    # Speculators captures before a layer; ASpec numbers completed layer outputs.
+    policies = {
+        "aux_hidden_state_layer_ids": [layer + 1 for layer in config.target_layer_ids],
+        "mask_token_id": config.mask_token_id,
+        "block_size": config.block_size,
+        "sample_from_anchor": True,
+        "sliding_window_non_causal": getattr(config, "sliding_window_non_causal", True),
+    }
+    # DSpark overrides DFlash's anchor-sampling default in the pinned schema.
+    published = {"sliding_window_non_causal": False, "sample_from_anchor": True, **published}
+    if any(published.get(k) != expected for k, expected in policies.items()):
+        raise ValueError("Speculators DSpark capture, mask, block or attention policy mismatch")
+    geometry = published["transformer_layer_config"]
+    fields = ("sliding_window", "layer_types", "rms_norm_eps", "num_attention_heads",
+              "num_key_value_heads", "head_dim")
+    if any(geometry.get(field) != getattr(config, field) for field in fields):
+        raise ValueError("Speculators DSpark layer geometry differs from the configured Draft")
+    published_config = SimpleNamespace(**{
+        "hidden_size": config.hidden_size,
+        "max_position_embeddings": config.max_position_embeddings,
+        **geometry,
+    })
+    if _speculators_dspark_rope_policy(published_config) != _speculators_dspark_rope_policy(config):
+        raise ValueError("Speculators DSpark RoPE policy differs from the configured Draft")
+
+    from aspec.models.draft.base import load_tensor_from_pretrained
+
+    model_path, embedding_key, lm_head_key = target_bindings
+    for name, key in (("embed_tokens.weight", embedding_key), ("lm_head.weight", lm_head_key)):
+        if name not in tensors or not torch.equal(tensors[name], load_tensor_from_pretrained(model_path, key)):
+            raise ValueError(f"Published DSpark {name} differs from the frozen Target binding")
+    del tensors["lm_head.weight"]
+
+
 def load_initial_draft_weights(
-    draft_model: torch.nn.Module, path: str, *, allow_target_embedding: bool = False
+    draft_model: torch.nn.Module, path: str, *, allow_target_embedding: bool = False,
+    target_bindings: tuple[str, str, str] | None = None,
+    require_speculators_config: bool = False,
 ) -> Path:
     """Load a published draft checkpoint into a freshly constructed draft model.
 
@@ -836,12 +908,26 @@ def load_initial_draft_weights(
     would otherwise leave part of the model randomly initialised for a whole run.
     """
     checkpoint_path = resolve_initial_draft_checkpoint(path)
+    manifest_path = checkpoint_path.parent / "export_manifest.json"
+    native = manifest_path.is_file() and json.loads(manifest_path.read_text()).get("storage_format") == "aspec_native"
+    published = None
+    if target_bindings and not native:
+        config_path = checkpoint_path.parent / "config.json"
+        if config_path.is_file():
+            candidate = json.loads(config_path.read_text())
+            if candidate.get("speculators_model_type") == "dspark":
+                published = candidate
+        if require_speculators_config and published is None:
+            raise ValueError(
+                "GLM DSpark warm-start requires the original Speculators DSpark config.json "
+                "for capture policy and frozen Target binding validation"
+            )
     with safe_open(checkpoint_path, framework="pt", device="cpu") as f:
         tensors = {key: f.get_tensor(key) for key in f.keys()}
 
-    manifest_path = checkpoint_path.parent / "export_manifest.json"
-    native = manifest_path.is_file() and json.loads(manifest_path.read_text()).get("storage_format") == "aspec_native"
     conditioning = getattr(draft_model.config, "mtp_conditioning", None)
+    if published is not None:
+        _bind_speculators_dspark(published, draft_model.config, tensors, target_bindings)
     transition = False
     if conditioning:
         saved_config_path = checkpoint_path.parent / "config.json"

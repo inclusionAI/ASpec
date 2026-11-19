@@ -25,9 +25,20 @@ import warnings
 from typing import Optional
 
 import torch
-from transformers import AutoConfig, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer, PretrainedConfig
 
 logger = logging.getLogger(__name__)
+
+
+def load_target_config(model_path, **kwargs):
+    """Read GLM text geometry even in Draft environments without SGLang's registry."""
+    try:
+        return AutoConfig.from_pretrained(model_path, **kwargs)
+    except ValueError:
+        raw, _ = PretrainedConfig.get_config_dict(model_path, **kwargs)
+        if raw.get("model_type") != "glm5_next":
+            raise
+        return PretrainedConfig.from_dict(raw["text_config"])
 
 
 def _copy_config_value(value):
@@ -114,7 +125,7 @@ def generate_draft_model_config(
     Returns:
         dict: Generated draft model config dictionary
     """
-    target_config = AutoConfig.from_pretrained(
+    target_config = load_target_config(
         target_model_path,
         cache_dir=cache_dir,
         trust_remote_code=trust_remote_code,

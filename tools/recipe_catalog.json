@@ -146,5 +146,16 @@
     "target_gpus": 4,
     "draft_gpus": 4,
     "native_only_export": true
+  },
+  "glm5-flash": {
+    "configs": [
+      "configs/recipes/glm5_3_flash_dspark.yaml"
+    ],
+    "model": "GLM-5.3-Flash",
+    "nodes": 1,
+    "gpus": 5,
+    "target_gpus": 4,
+    "draft_gpus": 1,
+    "native_only_export": true
   }
 }

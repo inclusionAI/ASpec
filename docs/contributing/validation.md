@@ -31,6 +31,22 @@ CUDA_VISIBLE_DEVICES='' ASPEC_RUN_RAY_INTEGRATION=1 \
 This verifies driver retention until reader-process fencing, including Ray's automatic exit
 cleanup. It does not certify unreturning CUDA/RDMA operations, forced driver loss or host partitions.
 
+## Native cuDNN repeatability
+
+The native cuDNN adapter forwards `torch.use_deterministic_algorithms(True)` to the Frontend's
+deterministic backward selector. A fixed RNG seed alone does not select that path. The internal
+joint-GQA path rejects deterministic mode rather than silently running a nondeterministic kernel.
+
+On an allocated GPU in the pinned Draft environment, check repeated MHA64 outputs and Q/K/V
+gradients at 8K and 256K with:
+
+```bash
+CUBLAS_WORKSPACE_CONFIG=:4096:8 ASPEC_RUN_CUDNN_FLEX_INTEGRATION=1 \
+  bash tools/run_in_env.sh python -m pytest -q tests/test_cudnn_deterministic_gpu.py
+```
+
+These checks establish repeatability of the native operator's outputs and gradients.
+
 ## Bounded GPU training, recovery and native assets
 
 Activate the installed venv, use the documented environment wrapper, and select only GPUs allocated

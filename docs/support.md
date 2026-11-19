@@ -10,6 +10,7 @@ and tests do not imply CPU training support.
 | Path | Implemented behavior | Boundary |
 | --- | --- | --- |
 | DSpark / DFlash | Training, exact recovery, evaluation and export; Dense and selected MoE/attention structures | Objectives, feature bindings and assets remain algorithm-specific |
+| GLM-5.3-Flash / DSpark | Official FP8 TP4 Target, five-layer BF16 Draft, DeepSpec and Red Hat loss recipes, checkpoint recovery and native export | Text-only, CP1, one Draft GPU. [Training workflow and scope](user-guide/recipes.md#glm-53-flash-dspark) |
 | EAGLE3 | Recurrent TTT, full/pruned vocabulary, GQA/MHA or materialized MLA; FA4 packing/CP | No EAGLE3 MoE, anchored mode or whole-model compile |
 | P-EAGLE core | Qwen3 full-vocabulary parallel model/loss, deterministic dense slots, eager/SDPA | Model/loss prerequisite only; no public trainer, COD sampler, resume, export or consumer validation; see [scope](user-guide/peagle.md) |
 | Domino | DFlash block backbone plus GRU causal correction head, mixed backbone/corrected CE, both documented label layouts; training and exact recovery with FlexAttention, CP1, padded/non-packing | No packed/CP>1, MoE, sparse attention or MTP conditioning; `lambda_base` curriculum, export and consumer acceptance pending; see [scope](user-guide/domino.md) |

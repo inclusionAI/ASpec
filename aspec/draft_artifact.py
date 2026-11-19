@@ -74,7 +74,7 @@ def validate_native_asset(path, *, expected_config=None, weights_only=False):
         raise ValueError("Native artifact MTP conditioning semantics mismatch")
     if expected_config is not None and draft_model_semantics(config) != draft_model_semantics(expected_config):
         raise ValueError("Native artifact semantics disagree with the requested Draft")
-    from aspec.config.draft_attention import resolve_draft_attention
+    from aspec.config.draft_attention import draft_block_attention_matches, resolve_draft_attention
 
     attention = resolve_draft_attention(config.to_dict())
     recorded_dsa = ((manifest.get("draft_structure") or {}).get("attention") or {}).get("dsa")
@@ -84,6 +84,9 @@ def validate_native_asset(path, *, expected_config=None, weights_only=False):
         expected_attention = resolve_draft_attention(
             expected_config if isinstance(expected_config, dict) else expected_config.to_dict()
         )
+        if (manifest["algorithm"] in {"dspark", "dflash"}
+                and not draft_block_attention_matches(attention["draft_block_attention"], expected_attention)):
+            raise ValueError("Native artifact Draft block attention disagrees with the requested Draft")
         if attention.get("dsa") is not None or expected_attention.get("dsa") is not None:
             def dsa_semantics(policy, *, phase_transition):
                 dsa = policy.get("dsa")

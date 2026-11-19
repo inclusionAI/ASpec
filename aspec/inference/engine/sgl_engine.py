@@ -984,9 +984,9 @@ class SglEngine(SglDecodeEngineMixin, InferenceEngine, RayActor):
         Returns:
             Hidden size dimension.
         """
-        from transformers import AutoConfig
+        from aspec.config.utils import load_target_config
 
-        config = AutoConfig.from_pretrained(
+        config = load_target_config(
             self.args.target_model_path,
             trust_remote_code=getattr(self.args, "trust_remote_code", False),
         )

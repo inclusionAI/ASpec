@@ -34,7 +34,7 @@ from typing import Any, Mapping, Sequence
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from aspec.config.draft_algorithm import DRAFT_ALGORITHMS
+from aspec.config.draft_algorithm import DRAFT_ALGORITHMS, DSparkLossRecipe
 from aspec.config.draft_attention import (
     draft_thd_contract,
     resolve_draft_attention,
@@ -181,6 +181,7 @@ class ExecutionPlan:
     def to_runtime_args(self) -> argparse.Namespace:
         values = copy.deepcopy(dict(self._runtime_values))
         values["aspec_plan_id"] = self.plan_id
+        values["aspec_target_family"] = self.workload.models.get("target", {}).get("family")
         values["aspec_feature_contract"] = copy.deepcopy(dict(self.workload.features))
         values["aspec_locality_domains"] = copy.deepcopy(
             list(self.policy.resources.get("locality_domains", ()))
@@ -444,6 +445,12 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
     except ValueError as exc:
         raise PlanCompileError(str(exc)) from exc
     backend = _select(config, "training.attention_backend")
+    try:
+        recipe = DSparkLossRecipe(_select(config, "training.dspark_loss_recipe", "deepspec"))
+    except ValueError as exc:
+        raise PlanCompileError(f"training.dspark_loss_recipe must be one of {list(map(str, DSparkLossRecipe))}") from exc
+    if recipe == DSparkLossRecipe.SPECULATORS_REDHAT_V1 and family != "dspark":
+        raise PlanCompileError("training.dspark_loss_recipe=speculators_redhat_v1 requires a DSpark Draft")
     l1_sampling_enabled = False
     for side in ("target", "draft"):
         prefix = f"training.dspark_l1_{side}_"
@@ -460,6 +467,8 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
             raise PlanCompileError(f"{prefix}top_k must be -1 or a positive integer")
         l1_sampling_enabled |= (temperature, top_p, top_k) != (1.0, 1.0, -1)
     if l1_sampling_enabled:
+        if recipe == DSparkLossRecipe.SPECULATORS_REDHAT_V1:
+            raise PlanCompileError("speculators_redhat_v1 requires unfiltered distributions at temperature one")
         indexer_warmup = any((attention.get(kind) or {}).get("training_stage") == "indexer_warmup"
                             for kind in ("csa", "qsa", "dsa"))
         if family != "dspark" or _select(config, "training.dspark_l1_loss_alpha") <= 0 or indexer_warmup:
@@ -785,6 +794,12 @@ def _resolve_target_family(target_path: str) -> str:
     local_config = _read_local_target_config(target_path)
     markers: list[str] = [target_path]
     if local_config is not None:
+        if (
+            local_config.get("model_type") == "glm5_next"
+            and local_config.get("architectures") == ["Glm5NextForConditionalGeneration"]
+            and (local_config.get("text_config") or {}).get("num_hidden_layers") == 45
+        ):
+            return "glm5_3_flash"
         markers.append(str(local_config.get("model_type", "")))
         architectures = local_config.get("architectures", [])
         if isinstance(architectures, list):
@@ -795,6 +810,8 @@ def _resolve_target_family(target_path: str) -> str:
             and "BailingMoeV3ForCausalLM" in architectures
         ):
             return "ling3"
+    elif target_path.lower().rstrip("/") in {"zai-org/glm-5.3-flash", "zhipuai/glm-5.3-flash"}:
+        return "glm5_3_flash"
     elif target_path.rstrip("/").split("/")[-1].lower() in {
         "ling-3.0-tiny", "ling-3.0-flash", "ling-3.1-flash",
     }:
@@ -802,7 +819,7 @@ def _resolve_target_family(target_path: str) -> str:
     if any("qwen3" in marker.lower().replace("_", "") for marker in markers):
         return "qwen3"
     raise PlanCompileError(
-        "The supported target scope is Qwen3 and Ling-3.x, but the target model family "
+        "The supported target scope includes Qwen3, Ling-3.x and GLM-5.3-Flash, but the target model family "
         f"could not be established from {target_path!r}"
     )
 
@@ -1452,6 +1469,7 @@ def _workload(
     elif family == "dspark":
         objective = {
             "family": family,
+            "loss_recipe": _select(config, "training.dspark_loss_recipe", "deepspec"),
             "block_size": _select(config, "training.dflash_block_size"),
             "num_anchors": _select(config, "training.dspark_num_anchors"),
             "num_target_layers": _select(config, "training.dspark_num_target_layers"),
@@ -2018,6 +2036,9 @@ def compile_execution_plan(
     source["resolved_config_sha256"] = _resolved_config_sha256(config)
     draft = _load_draft_descriptor(config)
     target_family = _resolve_target_family(target_path)
+    if target_family == "glm5_3_flash" and _select(config, "inference.target_prefill_memory_optimized", False):
+        raise PlanCompileError("GLM-5.3-Flash uses buffered native DFlash feature capture")
+
     runtime = _runtime_values(config, draft, source_context_parallel_size=source_context_parallel_size)
     try:
         context_compiler = compile_offline_context_contract if offline else compile_sglang_context_contract

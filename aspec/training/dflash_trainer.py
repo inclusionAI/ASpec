@@ -150,8 +150,18 @@ class DFlashTrainer(Trainer):
                 draft_model.initialize_mtp_conditioning(target_model_path)
             initial_path = getattr(self.args, "initial_draft_model_path", None)
             if initial_path:
+                target_bindings = (
+                    target_model_path,
+                    getattr(self.args, "embedding_key", "model.embed_tokens.weight"),
+                    getattr(self.args, "lm_head_key", "lm_head.weight"),
+                )
+                is_dspark = config.model_type == "qwen3_dspark"
                 checkpoint.load_initial_draft_weights(
-                    draft_model, initial_path, allow_target_embedding=True
+                    draft_model, initial_path, allow_target_embedding=True,
+                    target_bindings=target_bindings if is_dspark else None,
+                    require_speculators_config=(
+                        is_dspark and getattr(self.args, "aspec_target_family", None) == "glm5_3_flash"
+                    ),
                 )
             draft_model.load_embedding(
                 target_model_path,
@@ -205,7 +215,7 @@ class DFlashTrainer(Trainer):
             self._anchor_slot_offset = self.dflash.prediction_start
             if hasattr(self, "confidence_head_alpha"):
                 self._extra_loss_component_keys = [
-                    "ce_loss", "l1_loss", "confidence_loss",
+                    "ce_loss", self.dflash.loss_recipe.distribution_metric, "confidence_loss",
                     *(f"suffix_accept_rate@{index}" for index in range(
                         self.block_size - self.dflash.prediction_start)),
                     "suffix_tau_probabilistic",
@@ -366,6 +376,8 @@ class DFlashTrainer(Trainer):
                 }
             )
             status["execution_metadata"] = execution
+            if hasattr(self.dflash, "loss_recipe"):
+                execution["dspark_loss_recipe"] = [self.dflash.loss_recipe.value]
             status["draft_attention"] = {**observed, "forward_observed": True}
             if self._indexer_warmup_contract() is not None:
                 main_frozen = not any(

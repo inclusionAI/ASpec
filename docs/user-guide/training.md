@@ -180,9 +180,42 @@ Run `aspec --config offline.yaml --dry-run`, then `aspec --config offline.yaml`.
 
 Dataset metadata binds the Target configuration, tokenizer and weights by SHA256, plus the feature layers, dtype, layout and normalization convention. Replay validates sample checksums and tensor shapes. Set `training.max_seq_length` to cover all recorded sequences; changing preprocessing requires regenerating the dataset. The dataset identity participates in exact-resume validation.
 
-## DSpark L1 sampling distributions
+## DSpark loss recipes
 
-DSpark L1 supports independent Target and Draft sampling parameters. Both sides default to `temperature=1.0`, `top_p=1.0` and `top_k=-1` (disabled). Configure either side or both:
+Set `training.dspark_loss_recipe` in the run YAML or pass it as a CLI override.
+Omitting it selects `deepspec`.
+
+| Recipe | CE label at anchor `a`, slot `k` | Distribution term | Supervision and reduction |
+| --- | --- | --- | --- |
+| `deepspec` | Data token at `a+k+1` | Full L1 | Use the contiguous supervised prefix starting at `a+1`. Divide the decayed sum by total valid decay weight across the optimizer window. |
+| `speculators_redhat_v1` | Teacher argmax at `a+k` | Total variation (TV) | Read the mask at each `a+k` independently. Divide each row's decayed sum by its valid slot count, then average the rows. An empty row contributes zero. |
+
+Both use the observed token at `a+k` for the Markov head. The confidence head learns
+the detached probability overlap. The existing `dspark_l1_loss_alpha` weights the
+selected distribution term. Training and evaluation report it as `l1_loss` or `tv_loss`.
+The default coefficients are 0.1 for CE, 0.9 for the distribution term and 1 for confidence.
+In a packed batch the Red Hat reduction counts each physical packed row once.
+
+The Red Hat objective reimplements the GLM-5.3-Flash draft's pinned Speculators loss
+on ASpec's sampled anchors, with document-local supervision. Anchor selection, Draft
+architecture, Target feature capture and optimizer are configured separately.
+Exact resume requires the saved recipe. Checkpoints predating this field use `deepspec`.
+Use weights-only initialization to change recipes. [Upstream loss and reductions](https://github.com/vllm-project/speculators/tree/b9c51bcfc134923eae2b6a6f8246ae3500d5c42f/src/speculators/losses)
+
+On Hopper (SM90) and Blackwell (SM100), the Draft training environment runs contiguous BF16 Red Hat logits through
+CuTeDSL. The normalizer follows the pinned fused reference's FP32 reduction order: rounding can
+otherwise change which branch receives the TV gradient at equal probabilities. CE, TV and greedy
+agreement share a tiled vocabulary scan. A cached teacher can be read by position without expanding
+its vocabulary tensor. Hopper also projects only unique teacher positions in sparsely supervised
+head chunks; Blackwell skips this extra deduplication to avoid the sorting and synchronization cost.
+On eligible head chunks the Markov GEMM epilogue rounds its projection to BF16 before adding
+the base logits.
+Other devices, unsupported layouts or missing CuTeDSL/QuACK
+use the portable PyTorch loss. This does not change the DeepSpec recipe or the Target precision.
+
+### DSpark L1 sampling distributions
+
+The DeepSpec recipe supports independent Target and Draft sampling parameters. Both sides default to `temperature=1.0`, `top_p=1.0` and `top_k=-1` (disabled).
 
 ```yaml
 training:

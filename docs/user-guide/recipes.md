@@ -24,6 +24,7 @@ connections on your hardware before training.
 | `ling-tiny` | Ling-3.0-tiny / Dense DSpark | 1 node, 2 GPUs: 1T + 1D; 4K | Train a small Ling Draft |
 | `ling-flash` | Ling-3.0-flash / Dense DSpark | 1 node, 3 GPUs: 2T (TP2) + 1D; 4K | Train against a larger Ling Target |
 | `ling-flash31` | Ling-3.1-flash / MLA + LingMoE DSpark | 1 node, 8 GPUs: 4T (TP4/EP4) + 4D; 4K | Train a structured Draft against the FP8 Ling Target |
+| `glm5-flash` | GLM-5.3-Flash FP8 / DSpark | 1 node, 4T (TP4) + 1D, 8K | Train a text Draft from scratch or continue from Red Hat weights. [GLM training guide](#glm-53-flash-dspark) |
 | `shared-target` | Qwen3-8B / two independent DSpark Drafts | 1 node, 8 GPUs: 4T + 2D × 2; 4K | Compare independent Drafts sharing Target features |
 | `qwen27b-long` | Qwen3.8-27B / DSpark | 1 node, 8 GPUs: 3 × TP2 Target + 2D (CP2); 256K-class | Distribute long-context training with CP |
 | `multinode` | Qwen3-8B / DSpark | 2 nodes × 8 GPUs; each 4T + 4D; 4K | Keep features node-local and synchronize gradients across nodes |
@@ -129,6 +130,67 @@ retains the recorded quality protocol: ten passes, GBS512 and held-out Target-ge
 Set the same train/eval environment variables, then run this YAML directly with `aspec --config`.
 See [decode reproducibility](../support.md#decode-reproducibility) before interpreting acceptance
 or inference timing.
+
+## GLM-5.3-Flash DSpark
+
+The recipe uses the official FP8 Target on four GPUs and trains a BF16 Draft with native cuDNN
+MHA64 attention (`training.attention_backend=cudnn_flex_attention`) on a fifth GPU.
+Attention selection is independent of the DSpark loss recipe.
+Keep the attention backend fixed when reproducing or resuming a run: changing it can alter
+BF16 rounding and the training trajectory.
+Use the checkpoint's chat template with text-only `system`, `user` and `assistant` messages
+in disjoint conversation JSONL files. Native assistant messages must use `reasoning_content`
+for reasoning text; reasoning alias fields are rejected.
+[Official Target](https://modelscope.cn/models/ZhipuAI/GLM-5.3-Flash) · [Draft configuration](../../aspec/config/dspark_glm5_3_flash_draft_config.json)
+
+Activate the patched Target environment and start the service. DeepGEMM compiles kernels for
+the shapes used by the workload instead of precompiling its full shape range:
+
+```bash
+SGLANG_JIT_DEEPGEMM_PRECOMPILE=0 CUDA_VISIBLE_DEVICES=0,1,2,3 aspec target
+```
+
+In the Draft environment, set the inputs and choose one initialization. The first command trains
+with the default DeepSpec loss. The second loads the published BF16 Draft, verifies its frozen
+embedding and output head against the Target, and starts a new optimizer with Red Hat's loss.
+
+```bash
+export ASPEC_TARGET_MODEL=/models/GLM-5.3-Flash
+export ASPEC_TRAIN_DATA=/data/glm-train.jsonl
+export ASPEC_EVAL_DATA=/data/glm-eval.jsonl
+export CUDA_VISIBLE_DEVICES=4
+
+aspec recipes train glm5-flash --output outputs/glm-scratch
+aspec recipes train glm5-flash --output outputs/glm-warm \
+  --set model.initial_draft_model_path=/models/GLM-5.3-Flash-speculator.dspark \
+  --set training.dspark_loss_recipe=speculators_redhat_v1 \
+  --set training.learning_rate=1e-6 --set training.min_lr=1e-7
+```
+
+The published Draft directory must contain its original `config.json` and `model.safetensors`.
+Its six pre-layer captures (20, 28, 32, 36, 40, 44) correspond to ASpec's zero-based layer
+outputs (19, 27, 31, 35, 39, 43). The five Draft layers use a 2,048-token anchor-relative
+context window and causal attention within each eight-slot block.
+[Red Hat checkpoint and configuration](https://huggingface.co/RedHatAI/GLM-5.3-Flash-speculator.dspark/tree/738c283a7e860d7dafce5785161466bc556e5cae) · [Loss definitions](training.md#dspark-loss-recipes)
+
+To resume an interrupted ASpec run, use the same loss recipe, dataset and LR horizon. Pass
+`--set training.load_path=/absolute/path/to/previous-run/checkpoints` with a fresh output path.
+The checkpoint restores the optimizer, scheduler and committed work. To export one completed
+iteration, run the following from the Draft environment:
+
+```bash
+aspec export --format aspec --input-dir /path/to/checkpoints/iter_0000005 \
+  --output-dir /path/to/glm-draft-asset --target-model-path "$ASPEC_TARGET_MODEL" \
+  --embedding-key model.language_model.embed_tokens.weight
+python -c 'import sys; from aspec.draft_artifact import load_native_draft; load_native_draft(sys.argv[1])' /path/to/glm-draft-asset
+```
+
+The maintained GLM path uses text-only 8K inputs, CP1 and one Draft GPU. Warm-start
+initialization loads model weights and starts a new optimizer; it does not restore the published
+Draft's original optimizer state. Native exports preserve the Draft tensors and frozen Target
+bindings. Full-corpus convergence, reproduction of the published Draft's quality, integrated
+speculative-serving throughput, multimodal inputs and training the Target's native MTP layer
+remain outside the validated scope.
 
 ## Additional structures
 

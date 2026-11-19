@@ -27,6 +27,7 @@ forward, train step, and metric aggregation) via subclass hooks.
 
 from argparse import Namespace
 
+from aspec.config.draft_algorithm import DSparkLossRecipe
 from aspec.models.draft.dspark import (
     DSparkConfig,
     DSparkDraftModel,
@@ -58,7 +59,8 @@ class DSparkTrainer(DFlashTrainer):
         # Reuse the shared component reducer: all acceptance counts join the
         # existing batched collective and host transfer for train and eval.
         self._extra_loss_component_keys = [
-            *self._extra_loss_component_keys,
+            "ce_loss", DSparkLossRecipe(getattr(args, "dspark_loss_recipe", "deepspec")).distribution_metric,
+            "confidence_loss",
             *(f"accept_rate@{index}" for index in range(self.block_size)),
             "tau_probabilistic",
         ]
@@ -90,6 +92,7 @@ class DSparkTrainer(DFlashTrainer):
         return DSparkModel(
             draft_model=draft_model,
             block_size=self.block_size,
+            loss_recipe=getattr(self.args, "dspark_loss_recipe", "deepspec"),
             num_anchors=self.num_anchors,
             loss_decay_gamma=self.loss_decay_gamma,
             ce_loss_alpha=self.ce_loss_alpha,
