@@ -54,7 +54,7 @@ Export a trained checkpoint as an ASpec-native asset:
 
 ```bash
 python -m tools.convert_to_hf \
-  --input-dir outputs/qwen3-8b-medusa/checkpoints/iter_00000100 \
+  --input-dir outputs/qwen3-8b-medusa/checkpoints/iter_0000101 \
   --output-dir outputs/medusa-export --format aspec --verify
 ```
 
