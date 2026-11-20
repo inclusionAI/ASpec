@@ -25,6 +25,8 @@ class TorchTPLinear(torch.nn.Module):
         super().__init__()
         if original.bias is not None:
             raise ValueError("The Torch TP validation path requires bias-free projections")
+        if axis not in (0, 1) or original.weight.size(axis) % mesh.size():
+            raise ValueError("The TP projection dimension must divide evenly across ranks")
         self.mesh, self.axis = mesh, axis
         self.weight = torch.nn.Parameter(
             original.weight.chunk(mesh.size(), dim=axis)[mesh.get_local_rank()].clone(),

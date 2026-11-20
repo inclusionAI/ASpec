@@ -35,8 +35,11 @@ def main():
     args = parser.parse_args()
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl")
-    cached = torch.load(args.reference_cache, map_location="cpu", weights_only=False, mmap=True)
+    cached = torch.load(args.reference_cache, map_location="cpu", weights_only=True, mmap=True)
     identity = cached["identity"]
+    reference_tp = identity["inputs"].get("sglang_tp_size")
+    if type(reference_tp) is not int or reference_tp != dist.get_world_size():
+        raise ValueError("SGLang reference cache must declare the same TP size as the Target")
     contract = identity["inputs"]["aspec_feature_contract"]
     if contract["producer"]["backend"] != "sglang":
         raise ValueError("Reference cache must come from the existing ASpec SGLang producer")

@@ -26,6 +26,7 @@ from typing import Any
 # A bounded set catches divergent checkouts without hashing the entire repo.
 MEGATRON_RUNTIME_RELATIVE_PATHS = (
     "package_info.py",
+    "models/common/embeddings/rotary_pos_embedding.py",
     "models/hybrid/hybrid_model.py",
     "models/hybrid/hybrid_block.py",
     "models/hybrid/hybrid_layer_allocation.py",

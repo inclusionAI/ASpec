@@ -145,6 +145,8 @@ class MooncakeDataset(IterableDataset):
         self.ray_queue = ray_queue
         if (tensor_parallel_group is None) != (tensor_parallel_control_group is None):
             raise ValueError("TP input requires paired GPU-data and CPU-control groups")
+        if tensor_parallel_group is not None and (usp_enabled or direct_cp_enabled):
+            raise ValueError("TP input cannot be combined with USP or direct CP")
         self.tensor_parallel_group = tensor_parallel_group
         self.tensor_parallel_control_group = tensor_parallel_control_group
         self._tensor_parallel_device = (torch.cuda.current_device()
@@ -660,24 +662,45 @@ class MooncakeDataset(IterableDataset):
             item = message["item"]
             if item is None:
                 return None, None
-            if not is_leader:
-                data = dict(message["values"])
-                self._feature_contract_runtime.validate_metadata(
-                    tensor_shapes=item.tensor_shapes, tensor_dtypes=item.tensor_dtypes,
-                    metadata=item.metadata,
-                )
-            for key, shape, dtype, original_device in message["tensors"]:
-                buffer = (data[key].to(device="cuda").contiguous() if is_leader
-                          else torch.empty(shape, device="cuda", dtype=dtype))
-                dist.broadcast(buffer, src=leader, group=group)
+            buffers = {}
+            error = None
+            try:
                 if not is_leader:
-                    data[key] = buffer.cpu() if original_device == "cpu" else buffer
+                    data = dict(message["values"])
+                    if self._feature_contract_runtime is not None:
+                        self._feature_contract_runtime.validate_metadata(
+                            tensor_shapes=item.tensor_shapes, tensor_dtypes=item.tensor_dtypes,
+                            metadata=item.metadata,
+                        )
+                for key, shape, dtype, original_device in message["tensors"]:
+                    if is_leader:
+                        buffers[key] = data[key].to(device="cuda").contiguous()
+                    else:
+                        buffers[key] = torch.empty(shape, device="cuda", dtype=dtype)
+                        data[key] = (torch.empty(shape, dtype=dtype, device="cpu")
+                                     if original_device == "cpu" else buffers[key])
+                if not is_leader and self._feature_contract_runtime is not None:
+                    names = self._feature_contract_runtime.contract["tensors"]
+                    self._validate_received_feature_tensors(
+                        {name: data[name] for name in names}, expected_shapes=item.tensor_shapes,
+                        expected_dtypes=item.tensor_dtypes,
+                    )
+            except Exception as exc:
+                error = f"TP input rank {dist.get_rank(group)}: {type(exc).__name__}: {exc}"
+            # One small CPU collective on the normal path. Exchange diagnostics
+            # only after all participants know they must skip the NCCL payload.
+            failed = torch.tensor(int(error is not None), dtype=torch.int32, device="cpu")
+            dist.all_reduce(failed, group=self.tensor_parallel_control_group)
+            if failed.item():
+                errors = [None] * dist.get_world_size(group)
+                dist.all_gather_object(errors, error, group=self.tensor_parallel_control_group)
+                raise RuntimeError("TP input preparation failed: " + "; ".join(filter(None, errors)))
+            for buffer in buffers.values():
+                dist.broadcast(buffer, src=leader, group=group)
             if not is_leader:
-                names = self._feature_contract_runtime.contract["tensors"]
-                self._validate_received_feature_tensors(
-                    {name: data[name] for name in names}, expected_shapes=item.tensor_shapes,
-                    expected_dtypes={name: data[name].dtype for name in names},
-                )
+                for key, buffer in buffers.items():
+                    if data[key].device.type == "cpu":
+                        data[key].copy_(buffer)
             if leases:
                 data["_mooncake_p2p_receive_leases"] = leases
                 leases = []

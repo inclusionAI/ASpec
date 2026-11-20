@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 from argparse import Namespace
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -174,6 +175,8 @@ def test_tp_receive_slot_remains_owned_until_consumer_releases_it(monkeypatch):
     dataset._read_tp_source = lambda: ("sample", load("sample"))
     monkeypatch.setattr(torch.distributed, "get_global_rank", lambda *_: 0)
     monkeypatch.setattr(torch.distributed, "get_rank", lambda *_: 0)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *_, **__: None)
+
     def broadcast_control(*_, group, **__):
         assert group is dataset.tensor_parallel_control_group
 
@@ -265,3 +268,113 @@ def test_megatron_eval_cache_binds_target_worker_and_topology(tmp_path):
     assert first["producer_code"] == args.megatron_target_cache_identity
     args.megatron_tp_size = 2
     assert first != eval_cache_identity(args, "sha256:dataset", 8)
+
+
+@pytest.mark.parametrize("failure", ["prefill", "validate", "peer", None])
+def test_target_batch_defers_publication_until_all_workers_finish(failure):
+    from unittest.mock import Mock
+
+    from aspec.inference.engine.megatron_engine import _prefill_batch
+
+    first, second = Mock(), Mock()
+    calls = []
+
+    def synchronize():
+        calls.append("ready")
+        if failure == "peer":
+            raise ValueError("peer")
+
+    def generate():
+        with _prefill_batch(synchronize) as stage:
+            stage(first)
+            stage(second)
+            if failure == "prefill":
+                raise ValueError("prefill")
+            if failure == "validate":
+                second.validate_publishable.side_effect = ValueError("validate")
+            first.publish.side_effect = lambda: calls.append("published")
+
+    if failure:
+        with pytest.raises(ValueError, match=failure):
+            generate()
+        for sink in (first, second):
+            sink.publish.assert_not_called()
+            sink.abort.assert_called_once()
+    else:
+        generate()
+        assert calls == ["ready", "published"]
+        second.publish.assert_called_once()
+
+
+@pytest.mark.parametrize("released", [False, True])
+def test_target_closes_source_only_after_release(released):
+    from unittest.mock import Mock
+
+    from aspec.inference.engine.megatron_engine import _close_source
+
+    store = Mock()
+    store.config.get_retry_max_wait_seconds = 7
+    store.wait_for_p2p_source_releases.return_value = released
+    if released:
+        _close_source(store)
+        store.close.assert_called_once()
+    else:
+        with pytest.raises(TimeoutError, match="active readers"):
+            _close_source(store)
+        store.close.assert_not_called()
+    store.wait_for_p2p_source_releases.assert_called_once_with(timeout=7)
+
+
+def test_bitwise_equality_and_final_reference_policy(tmp_path):
+    from tools.validation.megatron_torch_alignment import compare_vectors, reference_state_path
+
+    reference = {"weight": torch.tensor([0.0])}
+    result = compare_vectors({"weight": torch.tensor([-0.0])}, reference, device="cpu")
+    assert result["max_absolute"] == 0 and not result["bitwise_equal"]
+    (tmp_path / "completed.json").touch()
+    milestone = tmp_path / "logical-state-step4.pt"
+    milestone.touch()
+    assert reference_state_path(tmp_path, 4, 4, 0) == milestone
+    final = tmp_path / "final-logical.pt"
+    final.touch()
+    assert reference_state_path(tmp_path, 4, 4, 0) == final
+
+
+def _tp_input_worker(rank, init_method, use_cuda):
+    import torch.distributed as dist
+
+    from aspec.training.data_fetcher import MooncakeDataset
+
+    dist.init_process_group("gloo", init_method=init_method, rank=rank, world_size=2,
+                            timeout=timedelta(seconds=60))
+    try:
+        dataset = object.__new__(MooncakeDataset)
+        dataset.tensor_parallel_control_group = dist.group.WORLD
+        if use_cuda:
+            torch.cuda.set_device(rank)
+        group = dist.new_group(backend="nccl") if use_cuda else dist.group.WORLD
+        dataset.tensor_parallel_group = group
+        dataset._tp_source_prefetch = None
+        dataset._tensor_parallel_samples = dataset._tensor_parallel_payload_bytes = 0
+        dataset._feature_contract_runtime = None
+        sample = SimpleNamespace(tensor_shapes={}, tensor_dtypes={}, metadata={})
+        dataset._read_tp_source = lambda: (sample, {"ids": torch.tensor([5])} if use_cuda else {})
+        _, data = dataset._tensor_parallel_item_on_device()
+        if use_cuda:
+            assert data["ids"].tolist() == [5]
+            assert data["ids"].device.type == "cpu"
+
+        def reject(**kwargs):
+            raise ValueError("invalid follower metadata")
+
+        dataset._feature_contract_runtime = SimpleNamespace(validate_metadata=reject)
+        with pytest.raises(RuntimeError, match="rank 1.*invalid follower metadata"):
+            dataset._tensor_parallel_item_on_device()
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("use_cuda", [False, pytest.param(True, marks=pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="requires two GPUs for the NCCL payload"))])
+def test_tp_preparation_error_reaches_both_ranks(tmp_path, use_cuda):
+    torch.multiprocessing.spawn(_tp_input_worker, args=((tmp_path / "rdzv").as_uri(), use_cuda), nprocs=2)

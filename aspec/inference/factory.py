@@ -311,9 +311,11 @@ def rollback_unused_targets(engines):
 def _init_sgl_engines(args, pg, mooncake_config=None, engine_group: int = 0) -> list:
     """Initialize SGLang engines with Ray placement groups (blocking)."""
     engines, init_handles = _prepare_sgl_engines(args, pg, mooncake_config, engine_group)
-    init_timeout = getattr(args, "sglang_init_timeout", 300)
+    from aspec.inference.service_protocol import target_init_timeout
+
+    init_timeout = target_init_timeout(args, sglang_default=300)
     try:
-        _wait_for_init(init_handles, "Sgl", timeout=init_timeout)
+        _wait_for_init(init_handles, getattr(args, "target_model_backend", "sglang"), timeout=init_timeout)
     except BaseException:
         rollback_unused_targets(engines)
         raise

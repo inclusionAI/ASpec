@@ -42,6 +42,8 @@ def inventory(backend="sglang"):
         from aspec.runtime_identity import MEGATRON_RUNTIME_RELATIVE_PATHS, module_runtime_identity
 
         require_megatron()
+        # Load the same native kernel symbols the Target worker needs before advertising readiness.
+        from aspec.models.megatron_target import Qwen3Target  # noqa: F401
         return {**code_identity(), "backend": backend, "python": sys.executable, "prefix": sys.prefix,
                 "megatron": module_runtime_identity("megatron.core", relative_paths=MEGATRON_RUNTIME_RELATIVE_PATHS),
                 "dependencies": dependency_versions("torch", "ray", "megatron-core", "transformer-engine",

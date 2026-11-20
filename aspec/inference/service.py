@@ -6,7 +6,6 @@ Inspired by SpecForge f8cc3dc external capture. JSON control messages replace
 cross-environment Ray calls; ASpec's GPU leases, feature contracts and tensor
 transport remain in use. No SpecForge server code is copied.
 """
-import argparse
 import json
 import logging
 import os
@@ -17,7 +16,6 @@ import time
 import uuid
 from argparse import Namespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import urlsplit
 
 import ray
@@ -29,6 +27,7 @@ from aspec.inference.service_protocol import (
     TARGET_ARGUMENTS,
     decode,
     encode,
+    target_service_parser,
     validate_address,
     validate_target_tp,
 )
@@ -105,6 +104,10 @@ class TargetService:
         count = value["num_gpus_per_engine"]
         if type(count) is not int or count <= 0:
             raise ValueError("Invalid Target GPU allocation")
+        if getattr(args, "target_model_backend", "sglang") == "megatron":
+            tp = getattr(args, "megatron_tp_size", 1)
+            if type(tp) is not int or tp != count:
+                raise ValueError("Megatron Target GPU allocation must equal its tensor parallel size")
         key = value["key"]
         with self.lock:
             if self.draining:
@@ -437,10 +440,7 @@ def main():
     from omegaconf import OmegaConf
 
     logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(description="Run Target in this environment; Draft connects by address.")
-    parser.add_argument("--config", type=Path)
-    parser.add_argument("--backend", choices=("sglang", "megatron"), default="sglang")
-    parser.add_argument("--address", help="Listening http://host:port; defaults to the config or localhost:30000")
+    parser = target_service_parser()
     args = parser.parse_args()
     config = OmegaConf.load(args.config) if args.config else OmegaConf.create({})
     address = validate_address(args.address or OmegaConf.select(

@@ -16,6 +16,7 @@ import json
 import math
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -172,7 +173,8 @@ def compare_vectors(actual, expected, *, device=None):
             continue
         if value.shape != reference.shape:
             raise ValueError(f"Compared tensor shapes differ: {name}")
-        a, b = value.to(device).float().flatten(), reference.to(device).float().flatten()
+        value, reference = value.to(device), reference.to(device)
+        a, b = value.float().flatten(), reference.float().flatten()
         if not (torch.isfinite(a).all() & torch.isfinite(b).all()).item():
             raise ValueError(f"Nonfinite tensor in numerical comparison: {name}")
         ad, bd = a.double(), b.double()
@@ -190,7 +192,10 @@ def compare_vectors(actual, expected, *, device=None):
         totals[10:13] = torch.maximum(totals[10:13], row[10:13])
         totals[13] += row[13]
         values = row.tolist()
-        exact = exact and value.dtype == reference.dtype and values[13] == 0
+        exact = exact and value.dtype == reference.dtype and torch.equal(
+            value.contiguous().reshape(-1).view(torch.uint8),
+            reference.contiguous().reshape(-1).view(torch.uint8),
+        )
         row_summary = summarize(values)
         per_parameter.append({"parameter": name, "squared_error": values[1],
                               "denominator_floor": floor, **row_summary,
@@ -224,6 +229,17 @@ def wait_reference(path, timeout):
         if time.monotonic() >= deadline:
             raise TimeoutError(f"Reference observation unavailable: {path}")
         time.sleep(.5)
+
+
+def reference_state_path(reference, step, final_step, timeout):
+    if step == final_step:
+        wait_reference(reference / "completed.json", timeout)
+        final = reference / "final-logical.pt"
+        if final.is_file():
+            return final
+    else:
+        wait_reference(reference / f"step{step}.json", timeout)
+    return reference / f"logical-state-step{step}.pt"
 
 
 def source_identity(trainer, expected):
@@ -288,6 +304,9 @@ def main():
     parser.add_argument("--attention-backward-deterministic", action="store_true",
                         help="Require native deterministic cuDNN-FE attention backward on every rank")
     args = parser.parse_args()
+    if args.steps < 1 or (args.phase in {"split", "checkpoint-control"}
+                          and not 1 <= args.split_step <= args.steps):
+        parser.error("Require positive steps and a split within the training horizon")
     if args.backend == "fsdp" and args.tp != 1:
         parser.error("The Torch baseline uses its existing TP1 execution")
     if args.backend != "megatron" and args.megatron_grad_dtype is not None:
@@ -298,6 +317,12 @@ def main():
     if args.attention_backend != "cudnn_flex_attention" or args.phase == "prepare":
         parser.error("The deterministic backward check requires a cuDNN training run")
 
+    with deterministic_attention_backward() as calls:
+        run(args, attention_calls=calls)
+
+
+@contextmanager
+def deterministic_attention_backward():
     from cudnn.flex_attention import autograd, flex_attn_func
 
     backward = autograd._flex_attention_backward
@@ -316,7 +341,7 @@ def main():
 
     with (patch("cudnn.flex_attention.flex_attn_func", deterministic_forward),
           patch.object(autograd, "_flex_attention_backward", checked_backward)):
-        run(args, attention_calls=calls)
+        yield calls
 
 
 def run(args, *, attention_calls=None):
@@ -428,8 +453,10 @@ def run(args, *, attention_calls=None):
     del initial_state
     saved_work = checkpoint.load_checkpoint_work_state(runtime) if args.resume else None
     committed = list(saved_work["committed_work_ids"]) if saved_work else []
-    samples = torch.load(args.teacher, map_location="cpu", weights_only=False, mmap=True)["samples"]
     fixture_sha = file_sha(args.teacher)
+    if args.resume and (saved_work or {}).get("dataset_fingerprint") != "sha256:" + fixture_sha:
+        raise ValueError("Resume teacher fixture differs from checkpoint dataset fingerprint")
+    samples = torch.load(args.teacher, map_location="cpu", weights_only=True, mmap=True)["samples"]
     manifest = {"teacher_sha256": fixture_sha, "initial_sha256": file_sha(args.initial) if args.initial else None,
                 "steps": args.steps, "length": args.length, "anchors": args.anchors,
                 "accumulation": 2, "attention_backend": args.attention_backend,
@@ -512,7 +539,9 @@ def run(args, *, attention_calls=None):
         participants = [None] * world
         dist.all_gather_object(participants, local_work)
         new_work = [item for replica in participants for item in replica]
-        if len(new_work) != 2 * trainer.dp_size or set(new_work).intersection(committed):
+        issued = [f"window-{step}/dp-{replica}/micro-{micro}"
+                  for replica in range(trainer.dp_size) for micro in range(2)]
+        if sorted(new_work) != sorted(issued) or set(new_work).intersection(committed):
             raise RuntimeError("Committed work was duplicated or omitted")
         committed.extend(new_work)
         totals = torch.stack(observation["terms"]).sum(0)
@@ -535,7 +564,7 @@ def run(args, *, attention_calls=None):
                     updates[name] = current - observation["before"][name]
         if writer:
             vectors = {"gradients": observation["gradients"], "updates": updates}
-            record = {"step": step, "loss": (totals[0] / totals[1]).item(),
+            record = {"step": step, "loss": (totals[0] / totals[1].clamp_min(1e-6)).item(),
                       "numerator": totals[0].item(), "denominator": totals[1].item(),
                       "gradient_norm": observation["norm"].item(),
                       "learning_rate_after_update": trainer.optimizer.get_learning_rate(),
@@ -567,7 +596,7 @@ def run(args, *, attention_calls=None):
                                     **expected_record["metrics"]}
                 measurements["scalars"] = {key: scalar_diff(value, expected_scalars[key])
                                             for key, value in scalar_values.items()}
-                measurements.update(loss_relative_error=abs(record["loss"] / expected_record["loss"] - 1),
+                measurements.update(loss_relative_error=measurements["scalars"]["objective"]["abs_rel_diff"],
                                     denominator_exact=record["denominator"] == expected_record["denominator"],
                                     anchors_exact=by_replica == expected_record["anchors_by_replica"],
                                     learning_rate_exact=record["learning_rate_after_update"] == expected_record["learning_rate_after_update"])
@@ -586,8 +615,8 @@ def run(args, *, attention_calls=None):
                     torch.save(logical, output / f"logical-state-step{step}.pt")
                 state_comparisons = {}
                 for reference in args.reference:
-                    wait_reference(reference / f"step{step}.json", args.reference_wait_seconds)
-                    expected = torch.load(reference / f"logical-state-step{step}.pt", weights_only=True, mmap=True)
+                    path = reference_state_path(reference, step, args.steps, args.reference_wait_seconds)
+                    expected = torch.load(path, weights_only=True, mmap=True)
                     state_comparisons[str(reference)] = {key: compare_vectors(value, expected[key])
                                                          for key, value in logical.items()}
                     del expected
@@ -618,8 +647,8 @@ def run(args, *, attention_calls=None):
                 torch.save(logical, output / "final-logical.pt")
             comparisons = {}
             for reference in args.reference:
-                wait_reference(reference / "completed.json", args.reference_wait_seconds)
-                expected = torch.load(reference / "final-logical.pt", weights_only=True, mmap=True)
+                path = reference_state_path(reference, args.steps, args.steps, args.reference_wait_seconds)
+                expected = torch.load(path, weights_only=True, mmap=True)
                 comparisons[str(reference)] = {key: compare_vectors(values, expected[key])
                                                for key, values in logical.items()}
             write_json(output / "final-logical-comparisons.json", comparisons)

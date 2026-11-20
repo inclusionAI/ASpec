@@ -5,8 +5,10 @@
 Inspired by SpecForge f8cc3dc's external capture adapter. ASpec retains its
 SglEngine, feature contracts and transport rather than copying that adapter.
 """
+import argparse
 import json
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
@@ -38,6 +40,20 @@ aspec_feature_contract aspec_context_contract aspec_run_id aspec_attempt_id
 aspec_read_owners aspec_shared_source aspec_shared_consumer_contracts
 timeline_enabled timeline_output_dir timeline_run_id timeline_flush_every output_dir cluster_mode
 """.split())
+
+
+def target_service_parser():
+    parser = argparse.ArgumentParser(description="Run Target in this environment; Draft connects by address.")
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--backend", choices=("sglang", "megatron"), default="sglang")
+    parser.add_argument("--address", help="Listening http://host:port; defaults to the config or localhost:30000")
+    return parser
+
+
+def target_init_timeout(args, *, sglang_default):
+    if getattr(args, "target_model_backend", "sglang") == "megatron":
+        return getattr(args, "megatron_init_timeout", 600)
+    return getattr(args, "sglang_init_timeout", sglang_default)
 
 
 def validate_target_tp(nnodes, node_rank=0):

@@ -16,6 +16,7 @@ import sys
 import threading
 import traceback
 import uuid
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 
 import torch
@@ -24,6 +25,32 @@ from aspec.feature_contract import FeatureContractRuntime
 from aspec.inference.target_prefill import TargetPrefillDirectSink, TargetPrefillRequest
 from aspec.ray.ray_actor import RayActor
 from aspec.utils.misc import get_current_node_ip
+
+
+@contextmanager
+def _prefill_batch(synchronize):
+    """Hold committed source slots until every TP worker finishes the batch."""
+    sinks = []
+    with ExitStack() as cleanup:
+        def stage(sink):
+            cleanup.callback(sink.abort)
+            sinks.append(sink)
+
+        yield stage
+        for sink in sinks:
+            sink.validate_publishable()
+        if synchronize is not None:
+            synchronize()
+        for sink in sinks:
+            sink.publish()
+        cleanup.pop_all()
+
+
+def _close_source(store):
+    timeout = max(float(store.config.get_retry_max_wait_seconds), 5.0)
+    if not store.wait_for_p2p_source_releases(timeout=timeout):
+        raise TimeoutError("Megatron Target source leases still have active readers")
+    store.close()
 
 
 def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port, engine_rank):
@@ -45,6 +72,9 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
             args.target_model_path, groups,
             implementation=getattr(args, "megatron_implementation", "transformer_engine"),
         )
+        planned_context = args.aspec_context_contract["backend_context_length"]
+        if max(planned_context, args.max_seq_length) > model.max_sequence_length:
+            raise ValueError("Planned Target context exceeds the loaded model's maximum sequence length")
         captures = list(args.aux_hidden_states_layers)
         runtime = FeatureContractRuntime(
             args.aspec_feature_contract, role="producer", participant=f"megatron_engine_{engine_rank}",
@@ -68,7 +98,7 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
             "tensor_parallel_size": len(gpu_ids), "local_rank": local_rank,
             "device_capability": list(torch.cuda.get_device_capability()),
             "model_implementation": getattr(args, "megatron_implementation", "transformer_engine"),
-            "model_class": type(model).__name__,
+            "model_class": type(model).__name__, "max_sequence_length": model.max_sequence_length,
             "hybrid_layer_pattern": model.hybrid_layer_pattern,
             "target_frozen": not any(p.requires_grad for p in model.parameters()),
         }
@@ -77,7 +107,7 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
             method, payload = connection.recv()
             if method == "shutdown":
                 if store is not None:
-                    store.close()
+                    _close_source(store)
                 dist.destroy_process_group()
                 connection.send({"ok": True, "value": None})
                 return
@@ -90,20 +120,21 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
             if method != "generate":
                 raise ValueError(f"Unknown Megatron Target operation: {method}")
             outputs = []
-            for sample in payload:
-                ids = torch.tensor(sample["tokens"], dtype=torch.long, device="cuda")
-                length = ids.numel()
-                if not 0 < length <= args.max_seq_length:
-                    raise ValueError("Target input length is outside the planned context")
-                request = TargetPrefillRequest(sample["request_id"], sample["data_id"], length)
-                sink = None
-                try:
+            with _prefill_batch(dist.barrier if len(gpu_ids) > 1 else None) as stage:
+                for sample in payload:
+                    ids = torch.tensor(sample["tokens"], dtype=torch.long, device="cuda")
+                    length = ids.numel()
+                    if not 0 < length <= args.max_seq_length:
+                        raise ValueError("Target input length is outside the planned context")
+                    request = TargetPrefillRequest(sample["request_id"], sample["data_id"], length)
+                    sink = None
                     if local_rank == 0:
                         sink = TargetPrefillDirectSink(
                             store=store, requests=[request], capture_layers=captures,
                             hidden_size=config.hidden_size, store_last_hidden_states=args.store_last_hidden_states,
                             source_engine=f"megatron_{engine_rank}", context_parallel_size=1,
                         )
+                        stage(sink)
                         sink.begin(input_ids=ids, request_ids=[request.request_id],
                                    sequence_lengths=[length], prefix_lengths=[0])
                     final = model.prefill(ids.unsqueeze(0), captures, sink.capture if sink is not None else None)
@@ -133,14 +164,8 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
                         if is_direct_cp_backend(args.attention_backend):
                             metadata.update(direct_cp_sharded=True, direct_cp_size=1)
                         runtime.validate_metadata(tensor_shapes=shapes, tensor_dtypes=dtypes, metadata=metadata)
-                        sink.validate_publishable()
-                        sink.publish()
                         outputs.append({"mooncake_key": key, "tensor_shapes": shapes,
                                         "tensor_dtypes": dtypes, "metadata": metadata})
-                except BaseException:
-                    if sink is not None:
-                        sink.abort()
-                    raise
             connection.send({"ok": True, "value": outputs if local_rank == 0 else None})
     except BaseException as error:
         try:
@@ -235,6 +260,8 @@ class MegatronEngine(RayActor):
             tokens = tokenizer(formatted_prompts, add_special_tokens=False)["input_ids"]
         else:
             tokens = [value.reshape(-1).tolist() for value in input_ids_ref]
+        if len(tokens) > self._mooncake_config.ring_slots_for_role("source"):
+            raise ValueError("Megatron Target batch exceeds the number of source ring slots")
         ids = ([f"{data_id}_{index}" for index in range(len(tokens))]
                if isinstance(data_id, str) else list(data_id))
         if len(ids) != len(tokens):

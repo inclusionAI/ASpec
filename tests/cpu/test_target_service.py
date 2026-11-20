@@ -811,3 +811,12 @@ def test_cross_node_tp_is_rejected_before_target_allocation(service, nnodes, nod
     with pytest.raises(ValueError, match="node-local"):
         service.create(value)
     assert not service.engines and service.idle()
+
+
+def test_megatron_create_rejects_mismatched_tp_before_allocating(service):
+    service.runtime["backend"] = "megatron"
+    payload = creation(service, count=1)
+    payload["arguments"].update(target_model_backend="megatron", megatron_tp_size=2)
+    with pytest.raises(ValueError, match="tensor parallel size"):
+        service.create(payload)
+    assert not service.engines

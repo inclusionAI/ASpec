@@ -159,43 +159,69 @@ verification tool uses a native PyTorch DTensor adapter around the existing
 DSpark trainer and optimizer. This adapter is available only in the validation
 tool. The public Torch training entry point supports TP1.
 
-A Torch TP2/DP1 reference run is:
+Run the following Bash commands from the checkout. Supply the role venvs, model,
+SGLang feature cache and an empty output root. The same backend that wrote a
+checkpoint also supplies its uninterrupted replay reference.
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 python -m aspec._environment \
-  /absolute/path/to/torch-venv/bin/torchrun --standalone --nproc_per_node=2 \
-  /absolute/path/to/tools/validation/megatron_torch_alignment.py \
-  --attention-backward-deterministic \
-  --backend torch-tp --phase checkpoint-control --tp 2 \
-  --steps 100 --split-step 50 \
-  --tensor-steps 1,2,5,10,20,30,40,50,60,70,80,90,100 \
-  --state-steps 1,10,25,50,75,100 \
-  --source /absolute/path/to/ASpec \
-  --model /absolute/path/to/Qwen3-8B \
-  --teacher /absolute/path/to/aspec-eval-cache.pt \
-  --initial /absolute/path/to/shared-initial/model.safetensors \
-  --output /tmp/torch-tp2-dp1-reference
+src=$PWD
+torch_env=/absolute/path/to/torch-draft-venv
+meg_env=/absolute/path/to/megatron-draft-venv
+model=/absolute/path/to/Qwen3-8B
+teacher=/absolute/path/to/aspec-eval-cache.pt
+out=/absolute/path/to/fresh-fixed-feature-runs
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+unset PYTHONPATH PYTHONHOME
+
+fixed_run() {
+  local env_dir=$1 devices=$2 workers=$3
+  shift 3
+  VIRTUAL_ENV="$env_dir" PATH="$env_dir/bin:$PATH" CUDA_VISIBLE_DEVICES="$devices" \
+    "$env_dir/bin/python" -m aspec._environment \
+    "$env_dir/bin/torchrun" --standalone --nproc_per_node="$workers" \
+    "$src/tools/validation/megatron_torch_alignment.py" \
+    --source "$src" --model "$model" --teacher "$teacher" "$@"
+}
+fixed_run "$torch_env" 0 1 --backend fsdp --tp 1 --phase prepare --output "$out/initial"
+
+for dp in 1 2; do
+  devices=0,1
+  milestones=1,2,5,10,20,30,40,50,60,70,80,90,100
+  if [[ $dp == 2 ]]; then
+    devices=0,1,2,3
+    milestones=1,2,5,10,11,20,30,40,50,60,70,80,90,100
+  fi
+  workers=$((2 * dp))
+  common=(--tp 2 --steps 100 --split-step 50 --attention-backward-deterministic
+          --tensor-steps "$milestones" --state-steps 1,10,25,50,75,100
+          --initial "$out/initial/model.safetensors")
+  torch_ref="$out/torch-tp2-dp$dp"
+  meg_ref="$out/megatron-tp2-dp$dp"
+  fixed_run "$torch_env" "$devices" "$workers" --backend torch-tp "${common[@]}" \
+    --phase checkpoint-control --output "$torch_ref"
+  fixed_run "$meg_env" "$devices" "$workers" --backend megatron --megatron-grad-dtype bf16 \
+    "${common[@]}" --phase checkpoint-control --reference "$torch_ref" --output "$meg_ref"
+  fixed_run "$torch_env" "$devices" "$workers" --backend torch-tp "${common[@]}" \
+    --phase resume --resume "$torch_ref/checkpoints/iter_0000051" --reference "$torch_ref" \
+    --no-save-reference-tensors --output "$torch_ref-resumed"
+  fixed_run "$meg_env" "$devices" "$workers" --backend megatron --megatron-grad-dtype bf16 \
+    "${common[@]}" --phase resume --resume "$meg_ref/checkpoints/iter_0000051" --reference "$meg_ref" \
+    --no-save-reference-tensors --output "$meg_ref-resumed"
+done
 ```
 
-For the Megatron run, use its venv and checkout, replace `--backend torch-tp`
-with `--backend megatron --megatron-grad-dtype bf16`, and add
-`--reference /tmp/torch-tp2-dp1-reference` after the reference completes. Use four
-workers and TP2 for DP2 in both roles; add update 11 to both tensor milestone lists.
-The deterministic option verifies the cuDNN-FE attention backward policy and
-writes its call counts on every rank.
-
-`checkpoint-control` saves after update 50 and continues to 100. In fresh
-processes, use `--phase resume --resume .../checkpoints/iter_0000051` to restore
-the saved state. Compare against the uninterrupted run with `--reference` and
-`--no-save-reference-tensors`. The tool records loss components, gradient norm
-and learning rate each step, plus logical gradients and optimizer state at the
-requested milestones.
+The control saves after update 50 and continues to 100. The fresh processes
+compare the remaining updates with their respective controls. Each run records
+the backward policy on every rank, the loss components and gradient norm at every
+update, and logical gradients and optimizer state at the requested milestones.
 
 For Target comparison, run `tools/validation/megatron_target_aspec_alignment.py`
 with `torchrun` in the Megatron environment:
 
 ```bash
-python -m aspec._environment /absolute/path/to/megatron-venv/bin/torchrun \
+target_env=/absolute/path/to/megatron-target-venv
+VIRTUAL_ENV="$target_env" PATH="$target_env/bin:$PATH" CUDA_VISIBLE_DEVICES=0,1 \
+  "$target_env/bin/python" -m aspec._environment "$target_env/bin/torchrun" \
   --standalone --nproc_per_node=2 \
   /absolute/path/to/tools/validation/megatron_target_aspec_alignment.py \
   --model /absolute/path/to/Qwen3-8B \
@@ -211,8 +237,8 @@ at the same TP size as the Target for the matched comparison.
 To exercise online training and recovery with pretokenized Parquet inputs:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5 python -m aspec._environment \
-  /absolute/path/to/megatron-draft-venv/bin/python \
+VIRTUAL_ENV="$meg_env" PATH="$meg_env/bin:$PATH" CUDA_VISIBLE_DEVICES=0,1,2,3,4,5 \
+  "$meg_env/bin/python" -m aspec._environment "$meg_env/bin/python" \
   -m tools.validation.megatron_pipeline_acceptance \
   --model /absolute/path/to/Qwen3-8B \
   --train-data /absolute/path/to/train.parquet \
@@ -249,6 +275,44 @@ at every topology. For TP1, set `inference.sglang.extra_args.prefill_max_request
 in the reference profile to match Megatron's single-request prefill. Batching
 requests changes the token-row count of the first MLP down projection and can
 change BF16 rounding.
+
+The two TP2 reference runs used live SGLang prefill and the validation-only
+native Torch DTensor Draft. Each run had one two-GPU Target and either two or
+four Draft GPUs. The original observer revision (SHA-256) was
+`1c5fea43a3fe6859f802bee6bc2eac2b06d70c606d5425fb18bccba024bcce64`. The run evidence identifies
+the installed ASpec source trees by digest: Torch
+`e79301553a64bfd6cf12d9e50047e9d2dc82c29ddb8b0976943c2e3d39fcd30f` and Megatron
+`26d72e38a3fc8e492a283acb7f6ba608dee3bf4ca74c9e70085a609d19458e8b`. The [per-update objectives](../benchmarks/megatron-online-tp2.csv)
+contain both measurements and their absolute relative difference. Each objective
+pools the two microbatch numerators and denominators, counting each TP replica once.
+
+The source checkout includes a portable version of that online driver. Run both
+roles sequentially with the same pretokenized training and evaluation Parquet
+files. Each invocation starts its own managed Target and writes
+`objectives.json` in a fresh directory. The Torch validation plan uses Megatron's
+TP2 scheduling topology and selects native DTensor operations in the Draft workers.
+
+```bash
+sgl_target=/absolute/path/to/sglang-target-venv/bin/python
+meg_target=/absolute/path/to/megatron-target-venv/bin/python
+train=/absolute/path/to/train.parquet
+eval_data=/absolute/path/to/eval.parquet
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+for dp in 1 2; do
+  devices=0,1,2,3
+  if [[ $dp == 2 ]]; then devices=0,1,2,3,4,5; fi
+  for draft in torch megatron; do
+    env_dir=$torch_env
+    target_python=$sgl_target
+    if [[ $draft == megatron ]]; then env_dir=$meg_env; target_python=$meg_target; fi
+    VIRTUAL_ENV="$env_dir" PATH="$env_dir/bin:$PATH" CUDA_VISIBLE_DEVICES="$devices" \
+      "$env_dir/bin/python" -m aspec._environment \
+      "$env_dir/bin/python" -m tools.validation.megatron_online_alignment \
+      --draft "$draft" --dp "$dp" --model "$model" --train-data "$train" --eval-data "$eval_data" \
+      --target-python "$target_python" --steps 100 --output "$out/online-$draft-dp$dp"
+  done
+done
+```
 
 The independent fixed-feature checks at TP2/DP1 and TP2/DP2 verified that
 restoring after update 50 reproduced the remaining 50 updates and final state

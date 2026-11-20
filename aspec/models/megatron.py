@@ -65,6 +65,16 @@ def transformer_config(config, tp_size: int):
         raise ValueError("Qwen3 heads, KV groups, FFN and vocabulary must divide Target TP")
     if config.model_type != "qwen3" or getattr(config, "num_experts", None):
         raise ValueError("Megatron Target currently requires dense Qwen3")
+    layer_types = getattr(config, "layer_types", None)
+    if layer_types is not None:
+        full_attention = all(kind == "full_attention" for kind in layer_types)
+    else:
+        full_attention = not (
+            getattr(config, "use_sliding_window", False) and getattr(config, "sliding_window", None)
+            and getattr(config, "max_window_layers", 0) < config.num_hidden_layers
+        )
+    if not full_attention:
+        raise ValueError("Megatron Qwen3 Target requires full attention in every layer")
     if getattr(config, "attention_bias", False):
         raise ValueError("Megatron Qwen3 prefill requires bias-free attention projections")
     if getattr(config, "quantization_config", None) or getattr(config, "hidden_act", "silu") != "silu":

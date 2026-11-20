@@ -19,6 +19,8 @@ def _projection_worker(rank, rendezvous):
                             timeout=timedelta(seconds=60))
     try:
         mesh = init_device_mesh("cpu", (2,))
+        with pytest.raises(ValueError, match="divide evenly"):
+            TorchTPLinear(torch.nn.Linear(4, 5, bias=False), mesh, axis=0)
         for dtype in (torch.float32, torch.bfloat16):
             for axis in (0, 1):
                 torch.manual_seed(114)
