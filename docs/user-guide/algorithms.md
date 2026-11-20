@@ -169,6 +169,6 @@ the sum of per-head mean cross-entropies (assistant tokens only): each head's CE
 within a microbatch, and microbatches are weighted equally by gradient accumulation rather than
 pooled by token count. The heads own trainable full-vocabulary projections. Start from
 `configs/recipes/medusa_qwen3_8b.yaml` (SDPA, CP1, MBS1, non-packing, REPLICATE, Store/TCP).
-Native export, strict reload and per-head held-out reporting are implemented, as is greedy
-candidate-tree acceptance through a standalone Hugging Face evaluator; SGLang integration,
-sampling acceptance and production serving remain future work; see [details](medusa.md).
+Native export, strict reload and per-head held-out reporting are implemented, as is greedy and
+typical/nucleus sampling candidate-tree acceptance through a standalone Hugging Face evaluator;
+SGLang integration and production serving remain future work; see [details](medusa.md).

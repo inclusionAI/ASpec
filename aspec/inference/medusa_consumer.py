@@ -225,6 +225,84 @@ class GreedyVerifier(Protocol):
         ...
 
 
+def _valid_steps(proposal: TreeProposal, width: int) -> Tensor:
+    steps = torch.arange(width - 1, device=proposal.candidates.device)[None, :]
+    return steps < (proposal.lengths - 1)[:, None]
+
+
+def _pick_best(proposal: TreeProposal, mask: Tensor, *, likelihood: Tensor | None = None) -> Acceptance:
+    lengths = torch.cumprod(mask, dim=1).sum(dim=1)
+    best_length = int(lengths.max())
+    candidates = (lengths == best_length).nonzero().flatten()
+    if likelihood is not None and best_length > 0:
+        scores = torch.log(likelihood[candidates, :best_length] + 1e-12).sum(dim=-1)
+        best = candidates[scores.argmax()]
+    else:
+        best = candidates[0]
+    accepted = proposal.candidates[best, :best_length + 1].clone()
+    return Acceptance(path_index=int(best), accept_length=int(best_length),
+                      accepted_tokens=accepted)
+
+
+def accept_typical(
+    proposal: TreeProposal,
+    logits: Tensor,
+    *,
+    temperature: float,
+    posterior_threshold: float = 0.3,
+    posterior_alpha: float = 0.09,
+) -> Acceptance:
+    """Reference typical-acceptance fast path (deterministic)."""
+    if temperature <= 0:
+        raise ValueError("typical acceptance requires temperature > 0")
+    if not 0 <= posterior_threshold <= 1:
+        raise ValueError("posterior_threshold must be in [0, 1]")
+    if posterior_alpha < 0:
+        raise ValueError("posterior_alpha must be non-negative")
+    width = proposal.candidates.shape[1]
+    probs = torch.softmax(logits[:, :width - 1].float() / temperature, dim=-1)
+    tokens = proposal.candidates[:, 1:width].to(probs.device)
+    candidate_prob = probs.gather(-1, tokens.unsqueeze(-1)).squeeze(-1)
+    entropy = -(probs * torch.log(probs + 1e-5)).sum(dim=-1)
+    threshold = torch.minimum(
+        torch.full_like(entropy, posterior_threshold),
+        torch.exp(-entropy) * posterior_alpha,
+    )
+    mask = (candidate_prob > threshold) & _valid_steps(proposal, width).to(probs.device)
+    return _pick_best(proposal, mask, likelihood=candidate_prob)
+
+
+def accept_nucleus(
+    proposal: TreeProposal,
+    logits: Tensor,
+    *,
+    temperature: float,
+    top_p: float,
+    generator: torch.Generator,
+) -> Acceptance:
+    """Reference nucleus sampling acceptance."""
+    if temperature <= 0:
+        raise ValueError("nucleus acceptance requires temperature > 0")
+    if not 0 < top_p <= 1:
+        raise ValueError("top_p must be in (0, 1]")
+    width = proposal.candidates.shape[1]
+    probs = torch.softmax(logits[:, :width - 1].float() / temperature, dim=-1)
+    flat = probs.reshape(-1, probs.shape[-1])
+    if top_p < 1:
+        sorted_probs, sorted_indices = torch.sort(flat, descending=True, dim=-1)
+        cumulative = torch.cumsum(sorted_probs, dim=-1)
+        remove = cumulative > top_p
+        remove[..., 1:] = remove[..., :-1].clone()
+        remove[..., 0] = False
+        filtered = torch.zeros_like(remove).scatter(1, sorted_indices, remove)
+        flat = flat.masked_fill(filtered, 0.0)
+        flat = flat / flat.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+    sampled = torch.multinomial(flat, 1, generator=generator).view(-1, width - 1)
+    tokens = proposal.candidates[:, 1:width].to(probs.device)
+    mask = (tokens == sampled) & _valid_steps(proposal, width).to(probs.device)
+    return _pick_best(proposal, mask)
+
+
 def accept_greedy(proposal: TreeProposal, next_tokens: Tensor) -> Acceptance:
     """Reference greedy acceptance over verified path predictions."""
     candidates = proposal.candidates
@@ -266,11 +344,44 @@ class MedusaConsumer:
         self.verifier = verifier
 
     @torch.no_grad()
-    def step(self, prefix_ids: Tensor) -> Acceptance:
+    def step(
+        self,
+        prefix_ids: Tensor,
+        *,
+        sampling: str = "greedy",
+        temperature: float = 0.0,
+        top_p: float = 0.8,
+        posterior_threshold: float = 0.3,
+        posterior_alpha: float = 0.09,
+        generator: torch.Generator | None = None,
+    ) -> Acceptance:
         hidden, base_logits = self.verifier.prefill(prefix_ids)
         proposal = self.proposer.propose(hidden, base_logits)
-        next_tokens = self.verifier.verify(prefix_ids, proposal.candidates, proposal.lengths)
-        return accept_greedy(proposal, next_tokens)
+        if sampling == "greedy":
+            next_tokens = self.verifier.verify(
+                prefix_ids, proposal.candidates, proposal.lengths)
+            return accept_greedy(proposal, next_tokens)
+        if not hasattr(self.verifier, "verify_logits"):
+            raise ValueError(f"Verifier does not implement {sampling} acceptance")
+        logits = self.verifier.verify_logits(
+            prefix_ids, proposal.candidates, proposal.lengths)
+        if sampling == "typical":
+            return accept_typical(
+                proposal, logits, temperature=temperature,
+                posterior_threshold=posterior_threshold,
+                posterior_alpha=posterior_alpha)
+        if sampling == "nucleus":
+            if generator is None:
+                raise ValueError("nucleus acceptance requires a torch.Generator")
+            if generator.device.type != logits.device.type or (
+                    generator.device.index is not None
+                    and logits.device.index is not None
+                    and generator.device.index != logits.device.index):
+                raise ValueError("nucleus generator must be on the logits device")
+            return accept_nucleus(
+                proposal, logits, temperature=temperature, top_p=top_p,
+                generator=generator)
+        raise ValueError(f"Unsupported sampling policy: {sampling!r}")
 
     @torch.no_grad()
     def generate(
@@ -279,6 +390,12 @@ class MedusaConsumer:
         *,
         max_new_tokens: int,
         eos_token_id: int | None = None,
+        sampling: str = "greedy",
+        temperature: float = 0.0,
+        top_p: float = 0.8,
+        posterior_threshold: float = 0.3,
+        posterior_alpha: float = 0.09,
+        generator: torch.Generator | None = None,
     ) -> dict[str, Any]:
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
@@ -288,7 +405,10 @@ class MedusaConsumer:
         steps = 0
         accepted_tokens = 0
         while accepted_tokens < max_new_tokens:
-            acceptance = self.step(generated)
+            acceptance = self.step(
+                generated, sampling=sampling, temperature=temperature,
+                top_p=top_p, posterior_threshold=posterior_threshold,
+                posterior_alpha=posterior_alpha, generator=generator)
             new = acceptance.accepted_tokens
             remaining = max_new_tokens - accepted_tokens
             if new.numel() > remaining:
@@ -373,6 +493,35 @@ class HFCausalVerifier:
             path_hidden = hidden[:, prefix.numel():prefix.numel() + width - 1]
             next_tokens = self.lm_head(path_hidden).argmax(dim=-1)
             outputs[start:stop] = next_tokens
+        return outputs
+
+    @torch.no_grad()
+    def verify_logits(
+        self, prefix_ids: Tensor, candidates: Tensor, lengths: Tensor) -> Tensor:
+        """Return next-token logits at candidate prediction positions [paths, width-1, vocab]."""
+        prefix = prefix_ids.reshape(-1).long()
+        paths = candidates.to(self.device)
+        lengths = lengths.to(self.device)
+        width = int(lengths.max())
+        vocab = getattr(self.lm_head, "out_features", None)
+        if vocab is None:
+            vocab = int(self.model.config.vocab_size)
+        outputs = torch.empty(
+            (paths.shape[0], width - 1, vocab), dtype=torch.float32, device=self.device)
+        for start in range(0, paths.shape[0], self.verify_batch_size):
+            stop = min(start + self.verify_batch_size, paths.shape[0])
+            rows = paths[start:stop, :width]
+            mask = (torch.arange(width, device=self.device)[None, :]
+                    < lengths[start:stop, None])
+            sequences = torch.cat(
+                [prefix[None, :].expand(rows.shape[0], -1),
+                 torch.where(mask, rows, torch.zeros_like(rows))], dim=1)
+            attention = torch.cat(
+                [torch.ones((rows.shape[0], prefix.numel()), dtype=torch.long,
+                            device=self.device), mask.long()], dim=1)
+            hidden = self._forward(sequences, attention)
+            path_hidden = hidden[:, prefix.numel():prefix.numel() + width - 1]
+            outputs[start:stop] = self.lm_head(path_hidden).float()
         return outputs
 
     @torch.no_grad()
