@@ -37,10 +37,9 @@ _alive_worker_engines: list = []
 
 
 def _require_supported_engine(engine_type: str) -> None:
-    if engine_type not in {"sgl", "offline"}:
+    if engine_type not in {"sgl", "offline", "megatron"}:
         raise NotImplementedError(
-            "ASpec currently supports the SGLang or offline replay path "
-            f"(inference_engine_type='sgl' or 'offline'); got {engine_type!r}"
+            f"Supported inference engines are sgl, megatron and offline; got {engine_type!r}"
         )
 
 
@@ -59,7 +58,7 @@ def create_inference_engines(args, inference_pg, mooncake_config, engine_group: 
         _wait_for_init(init_refs, "OfflineReplay", timeout=300)
         return engines
 
-    if engine_type not in ("hf", "sgl", "vllm", "trtllm", "tokenspeed"):
+    if engine_type not in ("hf", "sgl", "vllm", "trtllm", "tokenspeed", "megatron"):
         raise ValueError(f"Unknown inference_engine_type: {engine_type}")
 
     logger.info(f"Using {engine_type} engine for inference")
@@ -94,14 +93,14 @@ def prepare_inference_engines(args, inference_pg, mooncake_config, engine_group:
     if engine_type == "offline":
         return _prepare_offline_replay_engines(args, mooncake_config, engine_group)
 
-    if engine_type not in ("hf", "sgl", "vllm", "trtllm", "tokenspeed"):
+    if engine_type not in ("hf", "sgl", "vllm", "trtllm", "tokenspeed", "megatron"):
         raise ValueError(f"Unknown inference_engine_type: {engine_type}")
 
     logger.info(f"Preparing {engine_type} inference engines...")
 
     if engine_type == "hf":
         engines, init_refs = _prepare_hf_engines(args, inference_pg, mooncake_config, engine_group)
-    elif engine_type == "sgl":
+    elif engine_type in {"sgl", "megatron"}:
         engines, init_refs = _prepare_sgl_engines(args, inference_pg, mooncake_config, engine_group)
     elif engine_type == "trtllm":
         engines, init_refs = _prepare_trtllm_engines(
@@ -159,7 +158,7 @@ def init_engines(args, pg, engine_type: str, mooncake_config=None, engine_group:
     _require_supported_engine(engine_type)
     if engine_type == "hf":
         return _init_hf_engines(args, pg, mooncake_config, engine_group)
-    elif engine_type == "sgl":
+    elif engine_type in {"sgl", "megatron"}:
         return _init_sgl_engines(args, pg, mooncake_config, engine_group)
     elif engine_type == "vllm":
         return _init_vllm_engines(args, pg, mooncake_config, engine_group)
@@ -312,9 +311,11 @@ def rollback_unused_targets(engines):
 def _init_sgl_engines(args, pg, mooncake_config=None, engine_group: int = 0) -> list:
     """Initialize SGLang engines with Ray placement groups (blocking)."""
     engines, init_handles = _prepare_sgl_engines(args, pg, mooncake_config, engine_group)
-    init_timeout = getattr(args, "sglang_init_timeout", 300)
+    from aspec.inference.service_protocol import target_init_timeout
+
+    init_timeout = target_init_timeout(args, sglang_default=300)
     try:
-        _wait_for_init(init_handles, "Sgl", timeout=init_timeout)
+        _wait_for_init(init_handles, getattr(args, "target_model_backend", "sglang"), timeout=init_timeout)
     except BaseException:
         rollback_unused_targets(engines)
         raise

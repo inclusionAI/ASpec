@@ -92,7 +92,15 @@ def command_environment():
             raise ValueError("ASPEC_CUDA_COMPAT_DIR must contain libcuda.so.1.")
         paths.append(str(path))
     purelib = Path(sysconfig.get_paths()["purelib"])
+    cudnn = purelib / "nvidia/cudnn"
+    if not env.get("CUDNN_HOME") and (cudnn / "lib/libcudnn.so.9").is_file():
+        # TE searches CUDA_HOME and the host toolkit before LD_LIBRARY_PATH.
+        # Bind its explicit search to this interpreter's cuDNN wheel.
+        env["CUDNN_HOME"] = str(cudnn)
+        env["ASPEC_AUTO_CUDNN_HOME"] = str(cudnn)
     toolkit = purelib / "nvidia/cu13"
+    if (toolkit / "lib/libcudart.so.13").is_file():
+        env.setdefault("CUDNN_FRONTEND_CUDART_LIB_NAME", "libcudart.so.13")
     if not env.get("CUDA_HOME") and not env.get("CUDA_PATH") and (toolkit / "bin/nvcc").is_file():
         view = _toolkit_view(toolkit, env)
         env["CUDA_HOME"] = str(view)
@@ -101,7 +109,8 @@ def command_environment():
         previous = env.get("LIBRARY_PATH", "")
         env["LIBRARY_PATH"] = str(view / "lib64") + (os.pathsep + previous if previous else "")
         paths.append(str(view / "lib64"))
-    paths.extend(str(p) for p in (purelib / "nvidia/cuda_runtime/lib", purelib / "torch/lib")
+    paths.extend(str(p) for p in (purelib / "nvidia/cuda_runtime/lib", purelib / "torch/lib",
+                                 purelib / "nvidia/cudnn/lib", purelib / "nvidia/nccl/lib")
                  if p.is_dir())
     if (toolkit / "lib").is_dir():
         paths.append(str(toolkit / "lib"))

@@ -49,7 +49,10 @@ def main():
         module = "aspec.train_entry"
     help_requested = arguments in (["--help"], ["-h"])
     if module == "aspec.inference.service" and not help_requested and not is_target_environment():
-        raise SystemExit("Start aspec target in the Target environment (pip install ling-aspec-target)")
+        from aspec.inference.service_protocol import target_service_parser
+
+        if target_service_parser().parse_args(arguments).backend == "sglang":
+            raise SystemExit("Start aspec target in the Target environment (pip install ling-aspec-target)")
     try:
         execute([sys.executable, "-m", module, *arguments])
     except (ValueError, OSError) as error:

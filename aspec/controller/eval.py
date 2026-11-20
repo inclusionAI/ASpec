@@ -72,15 +72,23 @@ def eval_cache_identity(args, dataset_identity, count):
     identity = OmegaConf.to_container(OmegaConf.create(identity), resolve=True)
     from aspec.runtime_identity import SGLANG_RUNTIME_RELATIVE_PATHS, module_runtime_identity
 
-    versions = {}
-    for name in ("sglang", "torch", "transformers", "flash-attn-4", "flashinfer-python", "sglang-kernel"):
-        try:
-            versions[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            versions[name] = None
+    if getattr(args, "target_model_backend", None) == "megatron":
+        identity["megatron_tp_size"] = args.megatron_tp_size
+        identity["megatron_implementation"] = args.megatron_implementation
+        producer_code = args.megatron_target_cache_identity
+        versions = producer_code["dependencies"]
+    else:
+        versions = {}
+        for name in ("sglang", "torch", "transformers", "flash-attn-4", "flashinfer-python", "sglang-kernel"):
+            try:
+                versions[name] = importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError:
+                versions[name] = None
+        producer_code = module_runtime_identity(
+            "sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS)["effective_tree_sha256"]
     return {"schema": "aspec.eval-cache/v2", "dataset": dataset_identity,
             "samples": count, "target_snapshot": snapshot, "inputs": identity,
-            "producer_code": module_runtime_identity("sglang", relative_paths=SGLANG_RUNTIME_RELATIVE_PATHS)["effective_tree_sha256"],
+            "producer_code": producer_code,
             "consumer_cache_code": {name: module_runtime_identity(name)["effective_tree_sha256"]
                                     for name in ("aspec.training.data_fetcher", "aspec.utils.processing",
                                                  "aspec.data.utils")},

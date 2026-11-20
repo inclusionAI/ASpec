@@ -35,6 +35,15 @@ from aspec.config.mooncake_config import MooncakeConfig
 
 
 @dataclass
+class MegatronConfig:
+    """Node-local, frozen Qwen3 prefill through upstream Megatron Core."""
+
+    tp_size: int = 1
+    init_timeout: int = 600
+    implementation: str = "transformer_engine"
+
+
+@dataclass
 class SGLangConfig:
     """Essential SGLang engine configuration.
 
@@ -195,6 +204,7 @@ class InferenceConfig:
     # performance default; the Plan must explicitly admit or omit it.
     target_prefill_memory_optimized: bool = False
     offline: OfflineTrainingConfig = field(default_factory=OfflineTrainingConfig)
+    megatron: MegatronConfig = field(default_factory=MegatronConfig)
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     vllm: VllmConfig = field(default_factory=VllmConfig)
     trtllm: TrtllmConfig = field(default_factory=TrtllmConfig)

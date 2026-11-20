@@ -302,9 +302,9 @@ def _validate_and_configure_dflash(args, draft_model_config) -> None:
     algo = "DSpark" if is_dspark else "DFlash"
 
     engine_type = getattr(args, "inference_engine_type", "sgl")
-    if engine_type not in {"sgl", "offline"}:
+    if engine_type not in {"sgl", "megatron", "offline"}:
         raise NotImplementedError(
-            f"{algo} currently supports inference_engine_type='sgl' or 'offline', got '{engine_type}'."
+            f"{algo} requires inference_engine_type=sgl, megatron or offline; got {engine_type!r}"
         )
     if getattr(args, "defer_tokenization", False):
         raise NotImplementedError(f"{algo} does not support defer_tokenization=True.")
@@ -458,6 +458,15 @@ def train_async_no_generation(args, evidence: RunEvidenceRecorder | None = None)
         inference_engine_statuses = ray.get(
             [engine.get_status.remote() for engine in inference_engines]
         )
+        if args.inference_engine_type == "megatron":
+            # The Draft interpreter may not have any Target dependencies installed.
+            runtime = inference_engine_statuses[0]["runtime"]
+            args.megatron_target_cache_identity = {
+                "adapter": runtime["code_sha256"],
+                "core": runtime["backend_identity"]["effective_tree_sha256"],
+                "dependencies": runtime["dependencies"],
+                "torch": runtime["torch"], "cuda": runtime["cuda"],
+            }
         if evidence is not None:
             evidence.record_actor_initialization(
                 training_actor_count=n_train,
@@ -489,7 +498,7 @@ def train_async_no_generation(args, evidence: RunEvidenceRecorder | None = None)
         timer.log_summary()
 
     except BaseException:
-        if args.inference_engine_type == "sgl":
+        if args.inference_engine_type in {"sgl", "megatron"}:
             rollback_unused_targets(inference_engines)
         raise
 

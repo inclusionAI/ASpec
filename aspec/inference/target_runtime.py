@@ -35,8 +35,21 @@ def dependency_versions(*names):
     return result
 
 
-def inventory():
+def inventory(backend="sglang"):
     """Read Target identity in its own interpreter, without starting GPU services."""
+    if backend == "megatron":
+        from aspec.models.megatron import require_megatron
+        from aspec.runtime_identity import MEGATRON_RUNTIME_RELATIVE_PATHS, module_runtime_identity
+
+        require_megatron()
+        # Load the same native kernel symbols the Target worker needs before advertising readiness.
+        from aspec.models.megatron_target import Qwen3Target  # noqa: F401
+        return {**code_identity(), "backend": backend, "python": sys.executable, "prefix": sys.prefix,
+                "megatron": module_runtime_identity("megatron.core", relative_paths=MEGATRON_RUNTIME_RELATIVE_PATHS),
+                "dependencies": dependency_versions("torch", "ray", "megatron-core", "transformer-engine",
+                                                    "flashinfer-python", "sglang-kernel")}
+    if backend != "sglang":
+        raise ValueError(f"Unsupported Target backend: {backend}")
     from aspec.commands.doctor import inspect_environment
     from aspec.runtime_identity import SGLANG_RUNTIME_RELATIVE_PATHS, module_runtime_identity
 

@@ -236,3 +236,23 @@ def test_cross_node_target_tp_is_rejected_before_creating_facades():
         with pytest.raises(ValueError, match="node-local"):
             _prepare_sgl_engines(Namespace(sglang_nnodes=2), None)
         ray.remote.assert_not_called()
+
+
+@pytest.mark.parametrize("flags,allowed", [
+    (["--back", "megatron"], True),
+    (["--backend=megatron", "--backend=sglang"], False),
+])
+def test_target_cli_guards_the_parsed_backend(monkeypatch, flags, allowed):
+    from aspec import cli
+
+    calls = []
+    monkeypatch.setattr(cli, "is_target_environment", lambda: False)
+    monkeypatch.setattr(cli, "execute", calls.append)
+    monkeypatch.setattr(sys, "argv", ["aspec", "target", *flags])
+    if allowed:
+        cli.main()
+        assert calls == [[sys.executable, "-m", "aspec.inference.service", *flags]]
+    else:
+        with pytest.raises(SystemExit, match="Target environment"):
+            cli.main()
+        assert not calls

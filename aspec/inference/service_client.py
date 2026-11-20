@@ -7,7 +7,12 @@ import uuid
 
 import ray
 
-from aspec.inference.service_protocol import PROTOCOL, engine_arguments, request
+from aspec.inference.service_protocol import (
+    PROTOCOL,
+    engine_arguments,
+    request,
+    target_init_timeout,
+)
 from aspec.inference.target_runtime import release_version
 
 
@@ -16,7 +21,7 @@ class TargetServiceClient:
                  node_ip=None, node_rank=0, engine_group=0):
         self.address = address
         self.key = uuid.uuid4().hex
-        self.timeout = float(getattr(args, "sglang_init_timeout", 1200)) + 60
+        self.timeout = float(target_init_timeout(args, sglang_default=1200)) + 60
         self._closed = threading.Event()
         info = request(address, "/v1/info", timeout=30)
         if info["version"] != release_version():

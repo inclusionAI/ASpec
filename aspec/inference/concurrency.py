@@ -46,19 +46,19 @@ def effective_engine_concurrency(
 
 
 def direct_output_sample_capacity(
-    *, engine_count: int, source_slots: int, slots_per_sample: int = 1
+    *, engine_count: int, source_slots: int, slots_per_sample: int = 1,
+    publication_batch_size: int = 1,
 ) -> int:
-    """Return how many direct-output samples can remain resident at once.
+    """Return the sample capacity available for a complete Draft dispatch.
 
-    A Target engine may own more than one live sample as long as its
-    generation-checked source ring has enough slots.  Source diversity helps
-    balance releases, but one distinct engine per Draft rank is not required.
+    With atomic publication, a blocked Target can hold a partial batch of
+    up to publication_batch_size - 1 unpublished samples per engine.
     """
-    if engine_count < 1 or source_slots < 1 or slots_per_sample < 1:
+    if min(engine_count, source_slots, slots_per_sample, publication_batch_size) < 1:
         raise ValueError(
-            "engine count, source slots, and slots per sample must be positive"
+            "engine count, source slots, slots per sample, and publication batch size must be positive"
         )
-    return engine_count * (source_slots // slots_per_sample)
+    return engine_count * max(0, source_slots // slots_per_sample - publication_batch_size + 1)
 
 
 def required_target_prefill_tokens(

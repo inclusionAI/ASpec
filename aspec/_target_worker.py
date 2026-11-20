@@ -13,6 +13,9 @@ def main():
     automatic_toolkit = os.environ.pop("ASPEC_AUTO_CUDA_HOME", None)
     if automatic_toolkit and os.environ.get("CUDA_HOME") == automatic_toolkit:
         os.environ.pop("CUDA_HOME", None)
+    automatic_cudnn = os.environ.pop("ASPEC_AUTO_CUDNN_HOME", None)
+    if automatic_cudnn and os.environ.get("CUDNN_HOME") == automatic_cudnn:
+        os.environ.pop("CUDNN_HOME", None)
     os.environ["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
     if cache := os.environ.get("ASPEC_CACHE_HOME"):
         if Path(cache).name != "target":

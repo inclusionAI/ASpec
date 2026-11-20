@@ -53,7 +53,8 @@ def managed_target(args, *, draft_gpu_count=None):
     config = root / "target-service.json"
     config.write_text(json.dumps({"model": {"target_model_path": args.target_model_path}}))
     command = [settings["python_executable"], "-m", "aspec._target_worker", "-m",
-               "aspec.inference.service", "--config", str(config), "--address", address]
+               "aspec.inference.service", "--config", str(config), "--address", address,
+               "--backend", getattr(args, "target_model_backend", "sglang")]
     log_path = root / "target-service.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
@@ -61,7 +62,10 @@ def managed_target(args, *, draft_gpu_count=None):
         ready = False
         prior_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
         try:
-            deadline = time.monotonic() + float(getattr(args, "sglang_init_timeout", 300))
+            timeout_field = ("megatron_init_timeout"
+                             if getattr(args, "target_model_backend", "sglang") == "megatron"
+                             else "sglang_init_timeout")
+            deadline = time.monotonic() + float(getattr(args, timeout_field, 300))
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     raise RuntimeError(f"Target exited before readiness; see {log_path}")

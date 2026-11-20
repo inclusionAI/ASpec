@@ -43,8 +43,9 @@ def extract_gradients(model: nn.Module) -> Dict[str, torch.Tensor]:
     """
     gradients = {}
     for name, param in model.named_parameters():
-        if param.grad is not None:
-            gradients[name] = param.grad.detach().clone().cpu()
+        gradient = param.grad if param.grad is not None else getattr(param, "main_grad", None)
+        if gradient is not None:
+            gradients[name] = gradient.detach().clone().cpu()
     return gradients
 
 

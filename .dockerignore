@@ -16,6 +16,7 @@ dist
 .env.*
 **/ray-auth-token
 remote_exec.sh
+*.override.md
 **/*.safetensors
 **/*.pt
 container-cache

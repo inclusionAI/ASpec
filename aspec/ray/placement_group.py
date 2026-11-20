@@ -559,7 +559,7 @@ def create_placement_groups(args, roles: set[str] | None = None):
 
     _ensure_ray_initialized()
 
-    if getattr(args, "inference_engine_type", None) == "sgl":
+    if getattr(args, "inference_engine_type", None) in {"sgl", "megatron"}:
         managed_local = (getattr(args, "target_service", None) or {}).get("mode") == "managed-local"
         if managed_local:
             live_nodes = [node for node in ray.nodes() if node.get("Alive")]

@@ -436,7 +436,7 @@ def _safe_training_cleanup(
     feature_contract_error = None
     read_owner_fence = closed_reader_fence if train_group is None else None
     source_teardown_safe = True
-    external_target = (getattr(args, "inference_engine_type", None) == "sgl"
+    external_target = (getattr(args, "inference_engine_type", None) in {"sgl", "megatron"}
                        and bool(getattr(args, "target_service", None)))
 
     def record(component: str, state: str, error: Exception | None = None) -> None:
