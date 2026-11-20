@@ -81,5 +81,21 @@ The report records the artifact and dataset identities, per-head token counts, t
 mean CE and token accuracy, and the sum of the per-head means. These are held-out training
 observations, not candidate-tree acceptance.
 
-Candidate-tree acceptance and decode-equality under a Medusa evaluator are not part of this
-scope; they require a verified consumer adapter.
+## Candidate-tree acceptance
+
+`aspec.inference.medusa_consumer` builds the reference Medusa tree (one Target bonus token plus
+per-head top-k paths), verifies it, and accounts for accepted tokens. Greedy acceptance and
+decode equality can be measured against a Hugging Face Target:
+
+```bash
+python -m tools.evaluate_medusa_acceptance \
+  --draft outputs/medusa-export --target Qwen/Qwen3-8B \
+  --prompts /path/to/prompts.jsonl --output outputs/medusa-acceptance.json
+```
+
+The report records `acceptance_length = generated_tokens / verifier_calls` (includes the bonus
+token), greedy decode equality against Target-only decoding, and repeat stability, together with
+the artifact and tree-config hashes. The bundled verifier batches teacher-forced candidate paths
+through the Target and re-runs the prefix on every step: it is a reference evaluator, not a
+serving runtime, and it makes no throughput or SGLang-compatibility claim. Sampling acceptance
+(typical/nucleus) is not implemented; the default is deterministic greedy.
