@@ -282,7 +282,8 @@ class MedusaConsumer:
     ) -> dict[str, Any]:
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
-        prefix = prefix_ids.reshape(1, -1).long()
+        device = getattr(self.verifier, "device", prefix_ids.device)
+        prefix = prefix_ids.reshape(1, -1).long().to(device)
         generated = prefix
         steps = 0
         accepted_tokens = 0
@@ -384,7 +385,7 @@ class HFCausalVerifier:
     ) -> dict[str, Any]:
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
-        generated = prefix_ids.reshape(1, -1).long()
+        generated = prefix_ids.reshape(1, -1).long().to(self.device)
         steps = 0
         while steps < max_new_tokens:
             _, logits = self.prefill(generated)
