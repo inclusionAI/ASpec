@@ -117,3 +117,19 @@ def test_default_tree_matches_the_reference_buffers():
     assert buffers.position_ids[:11].tolist() == [0] + [1] * 10
     assert buffers.retrieve_indices.shape == (42, 5)
     assert int(buffers.attention_mask.sum()) == 207
+
+
+def test_eos_stops_both_paths_at_the_same_token():
+    model = _tiny_model()
+    verifier = HFCausalVerifier(model)
+    draft = _FixedDraft(heads=2, vocab=32)
+    consumer = MedusaConsumer(
+        draft, verifier, medusa_choices=[[0], [1], [0, 0], [0, 1]], top_k=2)
+    prefix = torch.tensor([[1, 2, 3, 4]])
+    probe = verifier.greedy_generate(prefix, max_new_tokens=6)
+    eos = int(probe["token_ids"][prefix.shape[1]])
+    baseline = verifier.greedy_generate(
+        prefix, max_new_tokens=6, eos_token_id=eos)
+    speculative = consumer.generate(prefix, max_new_tokens=6, eos_token_id=eos)
+    assert speculative["token_ids"].tolist() == baseline["token_ids"].tolist()
+    assert speculative["token_ids"][-1].item() == eos
