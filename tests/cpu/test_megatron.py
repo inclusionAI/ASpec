@@ -378,3 +378,43 @@ def _tp_input_worker(rank, init_method, use_cuda):
     torch.cuda.device_count() < 2, reason="requires two GPUs for the NCCL payload"))])
 def test_tp_preparation_error_reaches_both_ranks(tmp_path, use_cuda):
     torch.multiprocessing.spawn(_tp_input_worker, args=((tmp_path / "rdzv").as_uri(), use_cuda), nprocs=2)
+
+
+def test_rotary_source_change_invalidates_megatron_eval_cache(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from aspec.controller import eval as evaluation
+    from aspec.runtime_identity import MEGATRON_RUNTIME_RELATIVE_PATHS, module_runtime_identity
+
+    core = tmp_path / "fixture_core"
+    core.mkdir()
+    (core / "__init__.py").touch()
+    for relative in MEGATRON_RUNTIME_RELATIVE_PATHS:
+        path = core / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# original source\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(evaluation.ray, "get", lambda value: value)
+    controller, group = Mock(), Mock()
+    controller.get_dataset_admission_evidence.remote.return_value = {"eval": {"dataset_fingerprint": "sha256:data"}}
+    cached = set()
+    group.load_eval_cache.side_effect = lambda path, identity: [int(path in cached)]
+    args = SimpleNamespace(target_model_path=str(tmp_path), target_model_backend="megatron",
+                           eval_interval=1, checkpoint_dir=None, cache_dir=str(tmp_path / "cache"),
+                           dp_size=1, inference_batch_size=1, megatron_tp_size=1,
+                           megatron_implementation="transformer_engine")
+
+    def lookup():
+        digest = module_runtime_identity(core.name, relative_paths=MEGATRON_RUNTIME_RELATIVE_PATHS)
+        assert not digest["missing_files"]
+        args.megatron_target_cache_identity = {"core": digest["effective_tree_sha256"],
+                                               "dependencies": {"megatron-core": "0.20.0"}}
+        return evaluation.setup_eval(controller, group, args, eval_dataset_size=1)
+
+    initial = lookup()
+    cached.add(initial.eval_cache_path)
+    assert lookup().eval_cache_loaded
+    (core / "models/common/embeddings/rotary_pos_embedding.py").write_text("# changed source\n")
+    changed = lookup()
+    assert not changed.eval_cache_loaded
+    assert changed.eval_cache_path != initial.eval_cache_path

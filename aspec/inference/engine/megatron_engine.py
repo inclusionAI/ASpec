@@ -62,11 +62,23 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
     try:
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in gpu_ids)
         torch.cuda.set_device(local_rank)
+        timeout = timedelta(seconds=getattr(args, "megatron_init_timeout", 600))
         dist.init_process_group(
             "nccl", init_method=f"tcp://127.0.0.1:{port}",
             rank=local_rank, world_size=len(gpu_ids),
-            timeout=timedelta(seconds=getattr(args, "megatron_init_timeout", 600)),
+            timeout=timeout,
         )
+        ready = None
+        if len(gpu_ids) > 1:
+            control = dist.new_group(backend="gloo", timeout=timeout)
+
+            def wait_for_peers():
+                # Finish local GPU work first. A failed peer must not strand the
+                # publishing rank inside a CUDA collective with unreturned slots.
+                torch.cuda.current_stream().synchronize()
+                dist.monitored_barrier(group=control, timeout=timeout)
+
+            ready = wait_for_peers
         groups = initialize_parallelism(len(gpu_ids))
         model, config = load_qwen3_target(
             args.target_model_path, groups,
@@ -120,7 +132,7 @@ def _target_worker(connection, local_rank, gpu_ids, args, mooncake_config, port,
             if method != "generate":
                 raise ValueError(f"Unknown Megatron Target operation: {method}")
             outputs = []
-            with _prefill_batch(dist.barrier if len(gpu_ids) > 1 else None) as stage:
+            with _prefill_batch(ready) as stage:
                 for sample in payload:
                     ids = torch.tensor(sample["tokens"], dtype=torch.long, device="cuda")
                     length = ids.numel()
