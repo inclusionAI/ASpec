@@ -76,8 +76,7 @@ They preserve the BF16 residual stream across fused add/RMSNorm boundaries,
 the Q/K normalization reduction order, RoPE, causal FA3 and fused SwiGLU.
 At an auxiliary MLP boundary the TP leader adds the pending branch and residual
 directly into the transport slot. The final feature uses the checkpoint's RMSNorm.
-Each request goes through the same Core model forward. Each engine processes one
-sequence at a time.
+Each request goes through the same Core model forward. Each engine processes one sequence at a time and publishes the batch together. For one Draft dispatch of `D` samples across `E` Target engines, configure at least `inference_batch_size - 1 + ceil(D / E)` source ring slots per engine. This leaves room for a complete Draft dispatch while an unfinished Target batch holds slots.
 
 Megatron Draft partitions attention heads and dense FFN channels using public
 Core TP projections, and uses Core DDP gradient buffers with ASpec's FP32-master

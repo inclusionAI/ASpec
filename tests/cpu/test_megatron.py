@@ -16,7 +16,7 @@ from aspec.config.megatron import validate_megatron_execution
 from aspec.config.train_config import load_config
 from aspec.feature_contract import build_target_feature_contract, validate_feature_contract
 from aspec.models.megatron import qwen3_parameter
-from aspec.planning import compile_execution_plan
+from aspec.planning import PlanCompileError, compile_execution_plan
 
 
 def test_baseline_import_does_not_require_megatron():
@@ -116,6 +116,26 @@ def test_megatron_fails_closed_before_process_launch(overrides, message):
         validate_megatron_execution(settings(**overrides), {"family": "dspark"})
 
 
+@pytest.mark.parametrize("alpha", [0.0, 1.0])
+def test_megatron_freezes_disabled_confidence_head(monkeypatch, alpha):
+    from aspec.training.dspark_trainer import DSparkTrainer
+    from aspec.training.megatron_trainer import MegatronDSparkTrainer
+
+    trainer = object.__new__(MegatronDSparkTrainer)
+    trainer.confidence_head_alpha = alpha
+    draft = torch.nn.Module()
+    draft.confidence_head = torch.nn.Linear(2, 1)
+    draft.markov_head = torch.nn.Linear(2, 2)
+
+    def build_wrapper(_trainer, model):
+        assert all(p.requires_grad == (alpha > 0) for p in model.confidence_head.parameters())
+        assert all(p.requires_grad for p in model.markov_head.parameters())
+        return SimpleNamespace(_sample_anchor_positions=lambda: None)
+
+    monkeypatch.setattr(DSparkTrainer, "_build_training_wrapper", build_wrapper)
+    trainer._build_training_wrapper(draft)
+
+
 def test_producer_backend_is_part_of_the_feature_identity():
     kwargs = dict(drafter_family="dspark", target_hidden_size=16, target_num_hidden_layers=4,
                   aux_hidden_state_layers=[0, 2], store_last_hidden_states=True)
@@ -143,6 +163,18 @@ def test_tp_source_capacity_counts_dp_replicas_and_target_engines():
     # Two Target GPUs still represent one engine with one source ring.
     with pytest.raises(ValueError, match="cannot retain one complete Draft dispatch"):
         load_config(base_config=config, cli_args=["mooncake.source_gpu_ring_slots=1"])
+
+    # A second batch can stage two samples while the first leaves one ready.
+    # With only three slots, the next complete Draft dispatch cannot be fed.
+    config = load_config(base_config=config, cli_args=[
+        "inference.inference_batch_size=3", "mooncake.source_gpu_ring_slots=4",
+    ])
+    assert compile_execution_plan(config).to_runtime_args().dp_size == 2
+    with pytest.raises(ValueError, match="capacity=1"):
+        load_config(base_config=config, cli_args=["mooncake.source_gpu_ring_slots=3"])
+    config.mooncake.source_gpu_ring_slots = 3
+    with pytest.raises(PlanCompileError, match="capacity=1"):
+        compile_execution_plan(config)
 
 
 def test_tp_receive_slot_remains_owned_until_consumer_releases_it(monkeypatch):

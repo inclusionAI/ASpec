@@ -982,6 +982,10 @@ def _validate_execution_capabilities(config: DictConfig, *, source_context_paral
         engine_count=engine_count,
         source_slots=source_slots,
         slots_per_sample=slots_per_sample,
+        publication_batch_size=(
+            config.inference.inference_batch_size
+            if config.inference.inference_engine_type == "megatron" else 1
+        ),
     )
     if resident_sample_capacity < dispatch_batch_size:
         raise ValueError(

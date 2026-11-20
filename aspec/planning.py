@@ -1296,6 +1296,10 @@ def _validate_scope(args: argparse.Namespace, draft: Mapping[str, Any]) -> None:
             engine_count=engine_count,
             source_slots=int(source_slots),
             slots_per_sample=slots_per_sample,
+            publication_batch_size=(
+                args.inference_batch_size
+                if getattr(args, "inference_engine_type", "sgl") == "megatron" else 1
+            ),
         )
         packing_supply_threshold = 0
         if getattr(args, "dflash_packing", False):

@@ -62,6 +62,9 @@ class MegatronDSparkTrainer(DSparkTrainer):
         return True
 
     def _build_training_wrapper(self, draft_model):
+        # Core DDP expects gradient-ready hooks for every trainable bucket member.
+        if draft_model.confidence_head is not None and self.confidence_head_alpha <= 0:
+            draft_model.confidence_head.requires_grad_(False)
         wrapper = super()._build_training_wrapper(draft_model)
         sample = wrapper._sample_anchor_positions
         wrapper._aspec_anchor_tp_broadcasts = 0
