@@ -286,17 +286,22 @@ the installed ASpec source trees by digest: Torch
 contain both measurements and their absolute relative difference. Each objective
 pools the two microbatch numerators and denominators, counting each TP replica once.
 
-The source checkout includes a portable version of that online driver. Run both
-roles sequentially with the same pretokenized training and evaluation Parquet
-files. Each invocation starts its own managed Target and writes
+Run the following Bash commands from the root of the ASpec checkout. Set the
+paths to the Draft environments, Target interpreters, Qwen3-8B checkpoint,
+pretokenized Parquet files and a fresh output directory. Both backends use the
+same training and evaluation files. Each invocation starts its own managed Target and writes
 `objectives.json` in a fresh directory. The Torch validation plan uses Megatron's
 TP2 scheduling topology and selects native DTensor operations in the Draft workers.
 
 ```bash
+torch_env=/absolute/path/to/torch-draft-venv
+meg_env=/absolute/path/to/megatron-draft-venv
 sgl_target=/absolute/path/to/sglang-target-venv/bin/python
 meg_target=/absolute/path/to/megatron-target-venv/bin/python
+model=/absolute/path/to/Qwen3-8B
 train=/absolute/path/to/train.parquet
 eval_data=/absolute/path/to/eval.parquet
+out=/absolute/path/to/fresh-online-runs
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 for dp in 1 2; do
   devices=0,1,2,3

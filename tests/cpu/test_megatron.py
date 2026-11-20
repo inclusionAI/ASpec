@@ -5,7 +5,6 @@ import subprocess
 import sys
 import threading
 from argparse import Namespace
-from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -340,44 +339,22 @@ def test_bitwise_equality_and_final_reference_policy(tmp_path):
     assert reference_state_path(tmp_path, 4, 4, 0) == final
 
 
-def _tp_input_worker(rank, init_method, use_cuda):
-    import torch.distributed as dist
-
+@pytest.mark.parametrize("prefetch_factor", [0, 2])
+def test_tp_input_rejects_packing_before_setup(prefetch_factor):
     from aspec.training.data_fetcher import MooncakeDataset
 
-    dist.init_process_group("gloo", init_method=init_method, rank=rank, world_size=2,
-                            timeout=timedelta(seconds=60))
-    try:
-        dataset = object.__new__(MooncakeDataset)
-        dataset.tensor_parallel_control_group = dist.group.WORLD
-        if use_cuda:
-            torch.cuda.set_device(rank)
-        group = dist.new_group(backend="nccl") if use_cuda else dist.group.WORLD
-        dataset.tensor_parallel_group = group
-        dataset._tp_source_prefetch = None
-        dataset._tensor_parallel_samples = dataset._tensor_parallel_payload_bytes = 0
-        dataset._feature_contract_runtime = None
-        sample = SimpleNamespace(tensor_shapes={}, tensor_dtypes={}, metadata={})
-        dataset._read_tp_source = lambda: (sample, {"ids": torch.tensor([5])} if use_cuda else {})
-        _, data = dataset._tensor_parallel_item_on_device()
-        if use_cuda:
-            assert data["ids"].tolist() == [5]
-            assert data["ids"].device.type == "cpu"
-
-        def reject(**kwargs):
-            raise ValueError("invalid follower metadata")
-
-        dataset._feature_contract_runtime = SimpleNamespace(validate_metadata=reject)
-        with pytest.raises(RuntimeError, match="rank 1.*invalid follower metadata"):
-            dataset._tensor_parallel_item_on_device()
-    finally:
-        dist.destroy_process_group()
+    with pytest.raises(ValueError, match="TP input cannot be combined with packing"):
+        MooncakeDataset(
+            ray_queue=None, mooncake_store=None, device=torch.device("cpu"),
+            tensor_parallel_group=object(), tensor_parallel_control_group=object(),
+            packing_enabled=True, max_seq_length=16, prefetch_factor=prefetch_factor,
+        )
 
 
-@pytest.mark.parametrize("use_cuda", [False, pytest.param(True, marks=pytest.mark.skipif(
-    torch.cuda.device_count() < 2, reason="requires two GPUs for the NCCL payload"))])
-def test_tp_preparation_error_reaches_both_ranks(tmp_path, use_cuda):
-    torch.multiprocessing.spawn(_tp_input_worker, args=((tmp_path / "rdzv").as_uri(), use_cuda), nprocs=2)
+def test_tp_preparation_error_reaches_both_ranks(tmp_path):
+    from tests.tp_input import tp_input_worker
+
+    torch.multiprocessing.spawn(tp_input_worker, args=((tmp_path / "rdzv").as_uri(), False), nprocs=2)
 
 
 def test_rotary_source_change_invalidates_megatron_eval_cache(tmp_path, monkeypatch):

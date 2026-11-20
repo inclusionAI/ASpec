@@ -147,6 +147,8 @@ class MooncakeDataset(IterableDataset):
             raise ValueError("TP input requires paired GPU-data and CPU-control groups")
         if tensor_parallel_group is not None and (usp_enabled or direct_cp_enabled):
             raise ValueError("TP input cannot be combined with USP or direct CP")
+        if tensor_parallel_group is not None and packing_enabled:
+            raise ValueError("TP input cannot be combined with packing")
         self.tensor_parallel_group = tensor_parallel_group
         self.tensor_parallel_control_group = tensor_parallel_control_group
         self._tensor_parallel_device = (torch.cuda.current_device()
