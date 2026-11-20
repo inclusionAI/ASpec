@@ -37,6 +37,15 @@ def _parse_args():
     parser.add_argument("--choices", type=Path, default=None)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--verify-batch-size", type=int, default=16)
+    parser.add_argument("--sampling", choices=("greedy", "typical", "nucleus"),
+                        default="greedy")
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top-p", type=float, default=0.8, dest="top_p")
+    parser.add_argument("--posterior-threshold", type=float, default=0.3,
+                        dest="posterior_threshold")
+    parser.add_argument("--posterior-alpha", type=float, default=0.09,
+                        dest="posterior_alpha")
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--dtype", choices=("bfloat16", "float16", "float32"), default="bfloat16")
@@ -70,17 +79,46 @@ def main():
         args.prompts, tokenizer, args.limit,
         enable_thinking=True if args.enable_thinking else None)
 
+    greedy = args.sampling == "greedy"
+    if greedy:
+        temperature = 0.0
+    else:
+        if args.temperature <= 0:
+            raise ValueError("sampling acceptance requires --temperature > 0")
+        temperature = args.temperature
+
+    def generator():
+        value = torch.Generator(device=torch.device(device))
+        value.manual_seed(args.seed)
+        return value
+
     eos = tokenizer.eos_token_id
     results = []
     for ids in prompts:
         prefix = torch.tensor(ids, dtype=torch.long)
-        baseline = verifier.greedy_generate(
-            prefix, max_new_tokens=args.max_new_tokens, eos_token_id=eos)
+        if greedy:
+            baseline = verifier.greedy_generate(
+                prefix, max_new_tokens=args.max_new_tokens, eos_token_id=eos)
+        else:
+            baseline = None
         speculative = consumer.generate(
-            prefix, max_new_tokens=args.max_new_tokens, eos_token_id=eos)
+            prefix, max_new_tokens=args.max_new_tokens, eos_token_id=eos,
+            sampling=args.sampling, temperature=temperature, top_p=args.top_p,
+            posterior_threshold=args.posterior_threshold,
+            posterior_alpha=args.posterior_alpha,
+            generator=None if args.sampling != "nucleus" else generator())
         repeat = consumer.generate(
-            prefix, max_new_tokens=args.max_new_tokens, eos_token_id=eos)
+            prefix, max_new_tokens=args.max_new_tokens, eos_token_id=eos,
+            sampling=args.sampling, temperature=temperature, top_p=args.top_p,
+            posterior_threshold=args.posterior_threshold,
+            posterior_alpha=args.posterior_alpha,
+            generator=None if args.sampling != "nucleus" else generator())
         start = len(ids)
+        equal = None
+        if baseline is not None:
+            equal = (
+                speculative["token_ids"][start:].tolist()
+                == baseline["token_ids"][start:].tolist())
         results.append({
             "prompt_sha256": hashlib.sha256(
                 json.dumps(ids).encode("utf-8")).hexdigest(),
@@ -88,9 +126,7 @@ def main():
             "generated_tokens": speculative["generated_tokens"],
             "verifier_calls": speculative["verifier_calls"],
             "acceptance_length": speculative["acceptance_length"],
-            "decode_equal": (
-                speculative["token_ids"][start:].tolist()
-                == baseline["token_ids"][start:].tolist()),
+            "decode_equal": equal,
             "repeat_stable": (
                 speculative["token_ids"].tolist() == repeat["token_ids"].tolist()),
         })
@@ -109,6 +145,12 @@ def main():
         "prompt_count": len(results),
         "max_new_tokens": args.max_new_tokens,
         "top_k": args.top_k,
+        "sampling": args.sampling,
+        "temperature": temperature,
+        "top_p": args.top_p if not greedy else None,
+        "posterior_threshold": (args.posterior_threshold if not greedy else None),
+        "posterior_alpha": args.posterior_alpha if not greedy else None,
+        "seed": args.seed if args.sampling == "nucleus" else None,
         "choices_sha256": hashlib.sha256(choices_blob.encode("utf-8")).hexdigest(),
         "choices_count": len(choices),
         "device": device,
@@ -119,7 +161,9 @@ def main():
         "acceptance_length": total_tokens / total_calls,
         "acceptance_convention": (
             "generated_tokens / verifier_calls; includes the bonus token"),
-        "decode_equal": all(item["decode_equal"] for item in results),
+        "decode_equal": (all(item["decode_equal"] for item in results)
+                         if greedy else None),
+        "decode_equal_applicable": greedy,
         "repeat_stable": all(item["repeat_stable"] for item in results),
         "results": results,
     }
