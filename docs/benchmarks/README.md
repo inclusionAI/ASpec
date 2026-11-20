@@ -15,6 +15,7 @@ frameworks require separate native environments and their disclosed revisions.
 | `tools.performance.deepspec_offline_benchmark` | Native cache preparation and disk-fed training |
 | `tools.performance.bench_eagle3_train_core` | EAGLE3 train-core latency and memory |
 | `tools.performance.bench_thd_cp_attention` | Packed attention with context parallelism |
+| `tools.performance.bench_absorbed_mla` | Absorbed versus materialized MLA attention, including the fused Triton core (one layer) |
 
 Run `python -m <tool> --help` for arguments. Templates are listed in the
 [configuration index](../../configs/README.md). Supply your own model, initial
@@ -75,6 +76,8 @@ completion are included.
 - [DeepSpec](deepspec.md): resident and native cache-first workflows.
 - [EAGLE3](eagle3-h200.md): synthetic train-core measurement and numerical scope.
 - [Packed attention/CP](cudnn-thd-cp.md): attention component results.
+- [Absorbed MLA](absorbed-mla.md): absorbed versus materialized attention identity and a negative training-shape result.
+- [Absorbed MLA fused kernel](absorbed-mla-fused.md): fused Triton forward/backward for the absorbed identity, with memory and speed measurements.
 - [Training and acceptance](dspark-alignment.md): TorchSpec/ASpec BSHD/THD
   training alignment and verifier metrics.
 - [CP quality alignment](dspark-cp-alignment.md): CP2 versus same-layout CP1
