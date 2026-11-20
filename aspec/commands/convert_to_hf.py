@@ -183,11 +183,18 @@ def _serving_config(raw_config: dict) -> dict:
     if raw_config.get("mtp_conditioning"):
         raise NotImplementedError("MTP-conditioned Drafts require native --format aspec export")
     if raw_config.get("architectures") == ["DominoDraftModel"]:
-        raise NotImplementedError(
-            "Domino SGLang export is not validated in ASpec yet; use --format aspec. "
-            "Upstream SGLang 0.5.21 includes a Domino loader and an end-to-end test, "
-            "but ASpec has not validated its exported artifact against it"
-        )
+        from aspec.models.draft.domino import official_domino_config
+
+        config = official_domino_config(raw_config)
+        nested = config.get("dflash_config") or {}
+        if nested.get("pure_draft_prefix_len") != 1:
+            raise NotImplementedError(
+                "SGLang Domino serving requires pure_draft_prefix_len=1; "
+                "use --format aspec for another label layout"
+            )
+        if not isinstance(nested.get("shift_label"), bool):
+            raise ValueError("SGLang Domino serving requires a boolean shift_label")
+        return config
 
     if raw_config.get("architectures") == ["MedusaDraftModel"]:
         raise NotImplementedError(
@@ -355,8 +362,10 @@ def _draft_structure_manifest(raw_config: dict) -> dict:
         "loader_contract": {
             "runtime": "sglang",
             "validated_version": "0.5.21",
-            "speculative_algorithm": ("DFLASH" if algorithm == "dflash2" else
-                                      "EAGLE" if algorithm == "mtp" else algorithm.upper()),
+            "speculative_algorithm": (
+                "DFLASH" if algorithm in {"dflash2", "domino"} else
+                "EAGLE" if algorithm == "mtp" else algorithm.upper()
+            ),
             "required_patch_features": (
                 ["dflash_moe_v1"] if structure["ffn_type"] != "dense" else []
             ),

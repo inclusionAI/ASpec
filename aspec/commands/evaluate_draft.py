@@ -23,6 +23,23 @@ import statistics
 import time
 from pathlib import Path
 
+_SPECULATIVE_ALGORITHMS = {
+    "dspark": "DSPARK",
+    "dflash": "DFLASH",
+    "dflash2": "DFLASH",
+    "domino": "DFLASH",
+    "eagle3": "EAGLE3",
+    "mtp": "EAGLE",
+}
+
+
+def serving_algorithm(name):
+    """Map an exported draft algorithm to the official SGLang runtime name."""
+    try:
+        return _SPECULATIVE_ALGORITHMS[name]
+    except KeyError:
+        raise ValueError(f"unsupported exported draft algorithm: {name!r}") from None
+
 
 def load_prompts(path, tokenizer, limit, *, enable_thinking=None):
     """Only user prefixes are evaluated; never prefill held-out assistant answers."""
@@ -127,6 +144,8 @@ def main():
     parser.add_argument("--max-new-tokens", type=int, default=256)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--tp", type=int, default=1)
+    parser.add_argument("--domino-candidate-pool-size", type=int, default=0,
+                        help="Domino only: 0 scores the full vocabulary")
     parser.add_argument("--trust-remote-code", action="store_true",
                         help="Explicitly allow code supplied by the Target checkpoint")
     parser.add_argument("--disable-thinking", action="store_true", help="match a non-thinking training corpus")
@@ -135,6 +154,8 @@ def main():
     args = parser.parse_args()
     if args.output.exists() or min(args.samples, args.max_new_tokens, args.repeats, args.tp) < 1:
         raise ValueError("use positive budgets and a fresh output")
+    if args.domino_candidate_pool_size < 0:
+        raise ValueError("Domino candidate pool size must be non-negative")
     import sglang as sgl
     import torch
     from transformers import AutoTokenizer
@@ -142,10 +163,13 @@ def main():
     from aspec.inference.sglang_v0521 import TrainingEngine
 
     manifest = json.loads((args.draft / "export_manifest.json").read_text())
-    algorithm = {"dspark": "DSPARK", "dflash": "DFLASH", "dflash2": "DFLASH",
-                 "eagle3": "EAGLE3", "mtp": "EAGLE"}.get(manifest.get("algorithm"))
-    if algorithm is None or manifest.get("storage_format") != "sglang":
+    if manifest.get("storage_format") != "sglang":
         raise ValueError("requires an official SGLang-format draft export")
+    algorithm = serving_algorithm(manifest.get("algorithm"))
+    expected = (((manifest.get("draft_structure") or {}).get("loader_contract") or {})
+                .get("speculative_algorithm"))
+    if expected is not None and expected != algorithm:
+        raise ValueError("export manifest loader contract disagrees with the speculative algorithm")
     for filename, key in (("model.safetensors", "model_sha256"), ("config.json", "config_sha256")):
         digest = hashlib.sha256()
         with (args.draft / filename).open("rb") as stream:
@@ -160,6 +184,7 @@ def main():
     draft_tokens = speculative_token_budget(config, algorithm)
     record = {"schema": "aspec.decode-evaluation/v1", "target": args.target,
               "draft": str(args.draft.resolve()), "algorithm": algorithm,
+              "draft_algorithm": manifest.get("algorithm"),
               "export_manifest_sha256": hashlib.sha256((args.draft / "export_manifest.json").read_bytes()).hexdigest(),
               "data_sha256": hashlib.sha256(args.data.read_bytes()).hexdigest(),
               "prompt_tokens_sha256": hashlib.sha256(json.dumps(prompts).encode()).hexdigest(),
@@ -186,6 +211,8 @@ def main():
         if name == "speculative":
             kwargs.update(speculative_algorithm=algorithm, speculative_draft_model_path=str(args.draft),
                           speculative_num_draft_tokens=draft_tokens)
+            if manifest.get("algorithm") == "domino":
+                kwargs["speculative_domino_candidate_pool_size"] = args.domino_candidate_pool_size
             if algorithm in {"EAGLE", "EAGLE3"}:
                 kwargs.update(speculative_eagle_topk=1, speculative_num_steps=3)
         record["runs"][name] = {"requested_engine_args": kwargs, "samples": []}

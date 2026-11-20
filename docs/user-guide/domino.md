@@ -15,8 +15,8 @@ Target GPU plus two Draft GPUs at 4K (three GPUs total).
   `block_size=16`, `shift_label=true`, `pure_draft_prefix_len=1`).
 - Formal recipe: `configs/recipes/domino_qwen3_8b.yaml` (FlexAttention, CP1,
   non-packing, REPLICATE, Store/TCP transport, held-out eval and the linear
-  `lambda_base` curriculum). It is catalogued as `domino`; its export boundary is
-  native-only. `domino_qwen3_8b_4k_tcp.yaml` remains a shorter smoke test.
+  `lambda_base` curriculum). It is catalogued as `domino`; SGLang and native export
+  are both validated. `domino_qwen3_8b_4k_tcp.yaml` remains a shorter smoke test.
 - `training.domino_lambda_base` is the constant fallback. Set both
   `training.domino_lambda_base_start` and `training.domino_lambda_base_decay_ratio`
   to apply the reference linear schedule. Exact recovery records the constant,
@@ -79,21 +79,41 @@ licensed data, a full learning-rate horizon and the recipe for a real run.
 
 ## Export and strict reload
 
-Export a trained checkpoint with the native ASpec artifact format:
+Export a trained checkpoint either for SGLang serving (default) or as a native ASpec
+artifact:
 
 ```bash
+aspec export --input-dir outputs/domino-qwen3-8b/checkpoints/iter_0000009 \
+  --output-dir outputs/domino-qwen3-8b-sglang
+
 aspec export --input-dir outputs/domino-qwen3-8b/checkpoints/iter_0000009 \
   --output-dir outputs/domino-qwen3-8b-asset --format aspec
 ```
 
-Domino currently exports native-only. ASpec has not validated its SGLang export:
-upstream SGLang 0.5.21 does load `prefix_gru`/`embed_proj` and has an end-to-end
-test for the published checkpoint, but a silent DFlash-style export could still
-drop or mis-bind the correction head. The native manifest records the Domino
-algorithm, trained `block_size`, label layout, Target feature layers and the full
-training objective. `aspec.draft_artifact.load_native_draft` validates the checksums and
-semantics, then loads every tensor strictly. A real 8-step checkpoint has been
-roundtripped through this path (63 tensors, exact values and dtypes).
+SGLang export maps Domino to the published layout
+(`architectures=["DFlashDraftModel"]`, `model_type="qwen3"`, nested
+`dflash_config.projector_type="domino"`) and preserves the trained `block_size`,
+`shift_label`, `pure_draft_prefix_len=1`, `emb_dim`, `gru_hidden_dim` and Target
+feature layers. Other label layouts fail closed and require the native format. The
+manifest records runtime `DFLASH`; SGLang 0.5.21 loads the exported
+`prefix_gru`/`embed_proj` tensors.
+
+The native manifest records the Domino algorithm, trained `block_size`, label layout,
+Target feature layers and the full training objective.
+`aspec.draft_artifact.load_native_draft` validates the checksums and semantics, then
+loads every tensor strictly. A real 8-step checkpoint has been roundtripped through
+this path (63 tensors, exact values and dtypes).
+
+Run real decode acceptance against the SGLang export with `aspec evaluate`. Domino
+defaults to the full-vocabulary candidate pool (`--domino-candidate-pool-size 0`),
+reports measured acceptance length (including Target tokens) and checks greedy
+equality and repeat stability:
+
+```bash
+aspec evaluate --target /path/to/Qwen3-8B \
+  --draft outputs/domino-qwen3-8b-sglang \
+  --data /path/to/held-out-prompts.jsonl --output outputs/domino-decode.json
+```
 
 ### Official checkpoint mapping
 
@@ -134,6 +154,22 @@ CPU numerical contracts are covered by `tests/cpu`. A GPU run with one Target an
 Draft GPUs verified 8-step training and step-4 exact resume: losses, model tensors,
 optimizer state and RNG state matched the uninterrupted run. The public CI lane is
 CPU-only; no throughput or convergence claim is made here.
+
+The SGLang export was loaded by official SGLang 0.5.21 and evaluated with
+`aspec evaluate` on 16 held-out prompts (32 new tokens, greedy, two repeats):
+speculative output matched target-only greedy output, both repeats were stable, and
+the measured acceptance length was 2.016 tokens/verification including Target
+tokens. This is a bounded decode integration check, not convergence or throughput
+evidence.
+
+`tools.validation.domino_acceptance_ablation` runs a paired corrected-versus-backbone
+decode by zeroing only the correction output projection in a copy of the same SGLang
+asset. On the published checkpoint (16 prompts x 32 greedy tokens, two repeats) the
+corrected branch measured 2.829 and backbone-only 2.473 tokens/verification
+(+0.355). On the 450-step synthetic ASpec checkpoint the same comparison measured
+2.016 versus 2.065 (-0.049), so the correction benefit is checkpoint/data-dependent
+rather than unconditional. Both runs kept greedy equality and repeat stability; the
+tool rejects mismatched prompts.
 
 A bounded comparison against SpecForge at its Domino merge commit used the same
 published Qwen3-8B Domino checkpoint, 16 train / 16 held-out rows, 8 steps, block 16,
@@ -269,9 +305,12 @@ handling, empty supervision, and frozen Target/embedding behavior.
 
 ## Remaining work
 
-Native export with strict reloading works for ASpec FSDP checkpoints, the official
-Qwen3-8B Domino config/weight layout maps into ASpec, and the native
-`DominoConsumer` produces proposal tokens for both label layouts. Remaining work is
-longer convergence/quality evidence and a real decoding-serving acceptance run;
-the recipe is catalogued because the native export/strict reload check passes. CPU numerical and Plan checks do not establish
-Qwen3-8B training quality, GPU throughput or decoding acceptance.
+SGLang and native export with strict reloading work for ASpec FSDP checkpoints, the
+official Qwen3-8B Domino config/weight layout maps into ASpec, the native
+`DominoConsumer` produces proposal tokens for both label layouts, bounded real SGLang
+decode reports corrected and backbone-only acceptance, and
+`tools.validation.domino_anchor_protocol` can materialize and verify a hashed
+canonical anchor stream. Remaining work is harder/real data, longer convergence and a
+formal anchor-replay training mode (the aligned comparison here used a local validation
+harness). CPU numerical and Plan checks do not establish Qwen3-8B training quality
+or throughput.

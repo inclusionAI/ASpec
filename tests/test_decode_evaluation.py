@@ -17,7 +17,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from tools.evaluate_draft import load_prompts, output_checks, speculative_token_budget, summarize
+from tools.evaluate_draft import (
+    load_prompts,
+    output_checks,
+    serving_algorithm,
+    speculative_token_budget,
+    summarize,
+)
 
 
 def test_decode_prompt_does_not_contain_held_out_answer(tmp_path):
@@ -88,6 +94,13 @@ def test_dspark_verify_budget_includes_the_target_token_not_an_extra_training_sl
         speculative_token_budget({"block_size": True}, "DSPARK")
     with pytest.raises(ValueError, match="Conflicting"):
         speculative_token_budget({"block_size": 7, "dflash_config": {"block_size": 8}}, "DSPARK")
+
+
+def test_domino_uses_dflash_verification_with_the_trained_block_size():
+    assert serving_algorithm("domino") == "DFLASH"
+    assert speculative_token_budget({"block_size": 16}, "DFLASH") == 16
+    with pytest.raises(ValueError, match="unsupported exported draft algorithm"):
+        serving_algorithm("unknown")
 
 
 def test_equality_between_frameworks_does_not_hide_repeat_instability():

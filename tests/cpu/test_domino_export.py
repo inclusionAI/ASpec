@@ -154,9 +154,59 @@ def test_domino_native_export_rejects_block_size_that_disagrees_with_checkpoint(
         )
 
 
-def test_domino_has_no_serving_export():
-    with pytest.raises(NotImplementedError, match="--format aspec"):
-        convert_to_hf._serving_config(_raw_config())
+def test_domino_serving_config_uses_the_published_layout():
+    raw = _raw_config()
+    exported = convert_to_hf._serving_config(raw)
+
+    assert exported["architectures"] == ["DFlashDraftModel"]
+    assert exported["model_type"] == "qwen3"
+    assert exported["block_size"] == raw["block_size"]
+    assert exported["num_target_layers"] == raw["target_num_hidden_layers"]
+    assert exported["dflash_config"] == {
+        "projector_type": "domino",
+        "mask_token_id": raw["mask_token_id"],
+        "shift_label": True,
+        "target_layer_ids": raw["target_layer_ids"],
+        "pure_draft_prefix_len": 1,
+        "gru_hidden_dim": raw["gru_hidden_dim"],
+        "emb_dim": raw["emb_dim"],
+    }
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"pure_draft_prefix_len": 0}, "pure_draft_prefix_len=1"),
+    ({"shift_label": 1}, "boolean shift_label"),
+])
+def test_domino_serving_export_rejects_unsupported_layout(change, message):
+    with pytest.raises((NotImplementedError, ValueError), match=message):
+        convert_to_hf._serving_config({**_raw_config(), **change})
+
+
+def test_domino_sglang_export_writes_published_config(tmp_path, monkeypatch):
+    raw = _raw_config()
+    model = _model(raw)
+    _monkeypatch_checkpoint(monkeypatch, model)
+    source = _prepare_source(tmp_path, raw)
+    output = tmp_path / "serving"
+
+    manifest = convert_to_hf.convert_checkpoint(
+        input_dir=source, output_dir=output, artifact_format="sglang"
+    )
+
+    assert manifest["storage_format"] == "sglang"
+    assert manifest["algorithm"] == "domino"
+    assert manifest["training_contract"]["block_size"] == raw["block_size"]
+    loader = manifest["draft_structure"]["loader_contract"]
+    assert loader["runtime"] == "sglang"
+    assert loader["speculative_algorithm"] == "DFLASH"
+    exported = json.loads((output / "config.json").read_text())
+    assert exported["architectures"] == ["DFlashDraftModel"]
+    assert exported["model_type"] == "qwen3"
+    assert exported["block_size"] == raw["block_size"]
+    assert exported["num_target_layers"] == raw["target_num_hidden_layers"]
+    assert exported["dflash_config"]["projector_type"] == "domino"
+    assert exported["dflash_config"]["pure_draft_prefix_len"] == 1
+    assert (output / "model.safetensors").is_file()
 
 
 def _write_config(tmp_path, raw):

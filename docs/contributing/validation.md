@@ -76,6 +76,39 @@ bash tools/run_in_env.sh python -m tools.recipes export \
   --checkpoint outputs/my-run/checkpoints/iter_0000101 --output outputs/my-native-asset
 ```
 
+## Domino decode ablation and anchor replay
+
+Run a paired corrected-versus-backbone decode from one SGLang-format Domino asset.
+The tool zeroes only the correction output projection in a copy, so both branches keep
+the trained backbone and the same prompt set:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash tools/run_in_env.sh python -m tools.validation.domino_acceptance_ablation \
+  --corrected outputs/domino-sglang --backbone outputs/domino-backbone \
+  --target /models/Qwen3-8B --data held-out.jsonl \
+  --output outputs/domino-ablation.json --samples 16 --max-new-tokens 32 --repeats 2
+```
+
+The summary rejects mismatched prompt identities and records acceptance length,
+verification count and repeat stability for both branches. It is a bounded decode
+comparison, not throughput or convergence evidence.
+
+For matched training comparisons, materialize one canonical anchor stream and verify
+it before either framework consumes it:
+
+```bash
+python -m tools.validation.domino_anchor_protocol build \
+  --source cache/tokenized_dataset.pt --anchors anchors.json \
+  --num-anchors 128 --block-size 16 --seed 42
+python -m tools.validation.domino_anchor_protocol verify \
+  --source cache/tokenized_dataset.pt --anchors anchors.json \
+  --num-anchors 128 --block-size 16 --seed 42
+```
+
+`verify` regenerates the stream and checks that every kept anchor is supervised in
+its source sample. Consuming the same file in both trainers is still required before
+claiming a matched loss-curve comparison; an identical seed alone is not enough.
+
 ## Algorithm, capacity and fault checks
 
 | Scope | Required additional evidence |
