@@ -338,6 +338,23 @@ def test_target_vocabulary_is_bound_at_startup(tmp_path):
         trainer._load_algorithm_weights(draft, str(mismatched))
 
 
+def test_startup_vocabulary_honors_sglang_overrides(tmp_path):
+    from aspec.training.medusa_trainer import MedusaTrainer
+
+    trainer = object.__new__(MedusaTrainer)
+    trainer.args = SimpleNamespace(trust_remote_code=False, sglang_extra_args={})
+    draft = MedusaDraftModel(_tiny_config())
+    target = str(_fake_qwen_target(tmp_path, vocab_size=33))
+    with pytest.raises(ValueError, match="full Target vocabulary"):
+        trainer._load_algorithm_weights(draft, target)
+    for overrides in ('{"vocab_size": 32}', {"vocab_size": 32}):
+        trainer.args.sglang_extra_args = {"json_model_override_args": overrides}
+        trainer._load_algorithm_weights(draft, target)
+    trainer.args.sglang_extra_args = {"json_model_override_args": {"vocab_size": 34}}
+    with pytest.raises(ValueError, match="full Target vocabulary"):
+        trainer._load_algorithm_weights(draft, target)
+
+
 def test_metric_semantics_drop_unmeasured_acceptance():
     from aspec.training.medusa_trainer import MedusaTrainer
 

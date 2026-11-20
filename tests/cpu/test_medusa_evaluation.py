@@ -13,6 +13,7 @@ from aspec.commands.evaluate_medusa import (
     _record_batch,
     _serialize_report,
     _validate_binding,
+    _validate_target_binding,
     evaluate_records,
 )
 from aspec.feature_contract import build_target_feature_contract
@@ -129,3 +130,21 @@ def test_report_serialization_rejects_non_finite_metrics():
         _serialize_report({"loss": float("nan")})
     with pytest.raises(ValueError, match="non-finite"):
         _serialize_report({"loss": float("inf")})
+
+
+def test_binding_must_match_the_draft_target_binding():
+    draft = _draft()
+    contract = _validate_binding({"feature_contract": _medusa_contract()})
+    _validate_target_binding(contract, draft.config)
+
+    deeper = build_target_feature_contract(
+        drafter_family="medusa", target_hidden_size=8, target_num_hidden_layers=6,
+        aux_hidden_state_layers=[5], store_last_hidden_states=False)
+    with pytest.raises(ValueError, match="Target depth"):
+        _validate_target_binding(deeper, draft.config)
+
+    wider = build_target_feature_contract(
+        drafter_family="medusa", target_hidden_size=16, target_num_hidden_layers=4,
+        aux_hidden_state_layers=[3], store_last_hidden_states=False)
+    with pytest.raises(ValueError, match="hidden size"):
+        _validate_target_binding(wider, draft.config)

@@ -19,7 +19,8 @@ loss landed first; this page describes the current training scope.
 - The heads are the only trainable parameters; the Target is frozen and its post-norm final
   state is the only feature the Draft consumes. At startup the trainer resolves the Target
   config and rejects a draft projection width that differs from its `vocab_size`, including for
-  Hub IDs that Plan could not read locally.
+  Hub IDs that Plan could not read locally. It applies
+  `inference.sglang.extra_args.json_model_override_args` exactly as Plan does.
 
 ## Inputs and prediction semantics
 

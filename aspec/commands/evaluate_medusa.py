@@ -64,6 +64,19 @@ def _validate_binding(binding):
     return contract
 
 
+def _validate_target_binding(contract, draft_config):
+    """The dataset features must come from the Target the Draft was trained against."""
+    if contract["target_num_hidden_layers"] != draft_config.target_num_hidden_layers:
+        raise ValueError(
+            "Offline dataset Target depth differs from the Draft's training Target: "
+            f"{contract['target_num_hidden_layers']} != "
+            f"{draft_config.target_num_hidden_layers}")
+    if contract["target_hidden_size"] != draft_config.target_hidden_size:
+        raise ValueError(
+            "Offline dataset Target hidden size differs from the Draft's training Target: "
+            f"{contract['target_hidden_size']} != {draft_config.target_hidden_size}")
+
+
 def evaluate_records(draft, records, *, device="cpu", expected_hidden_size=None):
     """Aggregate each head's token-weighted CE and accuracy over held-out records."""
     model = MedusaModel(draft).to(device).eval()
@@ -143,6 +156,7 @@ def main():
             raise ValueError("--limit must be positive")
         rows = rows[: args.limit]
     draft = load_native_draft(args.draft, device=args.device)
+    _validate_target_binding(contract, draft.config)
     report = evaluate_records(
         draft, (dataset.load(row) for row in rows), device=args.device,
         expected_hidden_size=int(contract["target_hidden_size"]))
