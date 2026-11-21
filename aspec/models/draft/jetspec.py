@@ -90,3 +90,62 @@ class JetSpecDraftModel(DFlashDraftModel):
             return_router_logits=return_router_logits,
         )
 
+
+def normalize_official_jetspec_config(raw: dict) -> dict:
+    """Translate the published JetSpec config layout into ASpec's flat layout.
+
+    The published draft head uses ``architectures=["DFlashDraftModel"]``,
+    ``model_type="qwen3"`` and nests the JetSpec fields under ``dflash_config``
+    with ``causal_head=true``. In that layout ``num_target_layers`` is the
+    Target decoder depth, while ASpec's flat config uses it as the number of
+    captured feature layers.
+    """
+    raw = dict(raw)
+    nested = raw.pop("dflash_config", None)
+    if not isinstance(nested, dict) or nested.get("causal_head") is not True:
+        raise ValueError("Not an official JetSpec draft config")
+    layer_ids = nested.get("target_layer_ids")
+    if not isinstance(layer_ids, list) or not layer_ids:
+        raise ValueError("Official JetSpec config requires target_layer_ids")
+    target_depth = raw.get("num_target_layers")
+    if isinstance(target_depth, bool) or not isinstance(target_depth, int) or target_depth < 1:
+        raise ValueError("Official JetSpec config requires the Target decoder depth")
+    raw["architectures"] = ["JetSpecDraftModel"]
+    raw["model_type"] = "jetspec"
+    raw["is_causal"] = True
+    for key in ("mask_token_id", "target_layer_ids", "target_hidden_size"):
+        if key in nested:
+            raw[key] = nested[key]
+    raw["num_target_layers"] = len(layer_ids)
+    raw["target_num_hidden_layers"] = target_depth
+    raw.pop("auto_map", None)
+    raw.pop("max_window_layers", None)
+    return raw
+
+
+def official_jetspec_config(raw: dict) -> dict:
+    """Translate ASpec's flat JetSpec config into the published HF layout."""
+    from aspec.config.draft_algorithm import resolve_draft_algorithm
+
+    raw = dict(raw)
+    if resolve_draft_algorithm(raw) != "jetspec":
+        raise ValueError("Not an ASpec JetSpec draft config")
+    target_depth = raw.get("target_num_hidden_layers")
+    layer_ids = raw.get("target_layer_ids")
+    if isinstance(target_depth, bool) or not isinstance(target_depth, int) or target_depth < 1:
+        raise ValueError("JetSpec export requires the Target decoder depth")
+    if not isinstance(layer_ids, list) or not layer_ids:
+        raise ValueError("JetSpec export requires target_layer_ids")
+    nested = {
+        key: raw[key]
+        for key in ("mask_token_id", "target_layer_ids", "target_hidden_size")
+        if key in raw
+    }
+    nested["causal_head"] = True
+    raw["architectures"] = ["DFlashDraftModel"]
+    raw["model_type"] = "qwen3"
+    raw["num_target_layers"] = target_depth
+    raw["dflash_config"] = nested
+    raw.pop("auto_map", None)
+    return raw
+

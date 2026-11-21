@@ -7,16 +7,20 @@ model/loss and initial training path through
 `aspec.models.draft.jetspec.JetSpecDraftModel` and
 `aspec.training.jetspec_trainer.JetSpecTrainer`. The ASpec training CLI selects this
 algorithm through `aspec/config/jetspec_qwen3_8b_draft_config.json`; the
-[example workflow](../../configs/examples/jetspec_qwen3_8b_4k_tcp.yaml) runs one
+[formal recipe](../../configs/recipes/jetspec_qwen3_8b.yaml) and the
+[smoke workflow](../../configs/examples/jetspec_qwen3_8b_4k_tcp.yaml) run one
 Target GPU plus two Draft GPUs at 4K (three GPUs total).
 
 ## Training selection
 
 - Draft config: `aspec/config/jetspec_qwen3_8b_draft_config.json` (Qwen3-8B,
   `block_size=16`, `is_causal=true`).
-- Example: `configs/examples/jetspec_qwen3_8b_4k_tcp.yaml` (FlexAttention, CP1, MBS1,
-  non-packing, REPLICATE, Store/TCP transport,
-  `inference.store_last_hidden_states=true`).
+- Formal recipe: `configs/recipes/jetspec_qwen3_8b.yaml` (FlexAttention, CP1,
+  non-packing, REPLICATE, Store/TCP transport, held-out evaluation and
+  `inference.store_last_hidden_states=true`). It is catalogued as `jetspec`; its
+  export boundary is native-only.
+- Smoke example: `configs/examples/jetspec_qwen3_8b_4k_tcp.yaml` (shorter
+  functional run with bundled data).
 - The supported path fails closed outside dense full attention, padded inputs,
   `attention_backend=flex_attention`, `draft_context_parallel_size=1` and
   `dflash_packing=false`. MoE, sliding-window layers, MTP conditioning, packing,
@@ -70,6 +74,42 @@ The example is a short functional smoke-test recipe, not evidence of convergence
 throughput or decoding acceptance. Public CI is CPU-only; GPU end-to-end training
 and exact resume still need a hardware run before making quality claims.
 
+## Export and strict reload
+
+Export a trained checkpoint with the native ASpec artifact format:
+
+```bash
+aspec export \
+  --input-dir outputs/jetspec_qwen3_8b_4k_tcp_resumed/checkpoints/iter_0000009 \
+  --output-dir outputs/jetspec-qwen3-8b-asset --format aspec
+```
+
+JetSpec deliberately rejects the SGLang artifact format: SGLang 0.5.21 has no
+validated JetSpec loader, so a DFlash-style serving export could silently lose the
+causal block contract. The native manifest records the JetSpec algorithm, trained
+`block_size`, Target feature layers, temperature, KL chunk size and weighting.
+`aspec.draft_artifact.load_native_draft` validates the checksums and semantics, then
+loads every tensor strictly and preserves dtypes.
+
+### Official checkpoint mapping
+
+The published `JetSpec/jetspec-qwen3-8b` draft head uses
+`architectures=["DFlashDraftModel"]`, `model_type="qwen3"` and nests
+`causal_head=true`, `mask_token_id` and `target_layer_ids` under `dflash_config`.
+In that layout `num_target_layers` is the Target decoder depth (36), not ASpec's
+feature count (5). `AutoDraftModelConfig.from_dict` detects `causal_head=true` and
+produces the flat `JetSpecDraftModel`/`model_type="jetspec"` config. The published
+weight layout matches ASpec's export names; `load_initial_draft_weights` loads the
+draft tensors strictly and borrows the missing Target embedding.
+
+### Native proposal component
+
+`aspec.draft_artifact.JetSpecConsumer` loads a native JetSpec asset and proposes one
+block. It runs the same causal intra-block attention used in training, excludes the
+anchor position from predictions and applies the frozen Target output head. On CPU
+it materializes the same dense causal block mask as training; on CUDA it uses the
+masked FlexAttention path. Verification and acceptance remain caller-owned.
+
 ## Validation status
 
 Registration, Plan compilation, trainer construction, checkpoint topology and the
@@ -77,8 +117,10 @@ CPU numerical contracts are covered by `tests/cpu`. The CPU checks cover the
 configuration contract, causal mask construction, bounded forward KL and gradients
 against independent equations, explicit-mask and packed fail-closed paths,
 anchor/loss-mask exclusion, empty supervision and next-token label/teacher
-alignment. GPU attention execution, convergence, acceptance length and serving
-performance are not certified by those checks.
+alignment. Native export, strict reload and the proposal consumer have focused CPU
+coverage, including causal visibility and anchor-feature isolation. GPU attention
+execution, convergence, acceptance length and serving performance are not certified
+by those checks.
 
 ## Reference and selected method
 
@@ -194,8 +236,11 @@ denominator. Per-position loss now reports KL rather than CE.
 
 ## Boundaries
 
-- This integration does not provide tree construction, export, strict reloading,
-  held-out acceptance observations or a serving consumer. Those remain for
-  follow-up work under the issue's expected outcomes.
-- The default tests are in `tests/cpu/test_jetspec.py` and
-  `tests/cpu/test_jetspec_integration.py`.
+- Native export, strict reload and a native proposal consumer are supported; the
+  published Qwen3-8B config/weight layout maps into ASpec.
+- This integration does not provide tree construction, SGLang serving export, a
+  real verifier-acceptance run or a same-budget comparison with the official
+  implementation. Those remain follow-up work under the issue's expected outcomes.
+- The default tests are in `tests/cpu/test_jetspec.py`,
+  `tests/cpu/test_jetspec_integration.py`, `tests/cpu/test_jetspec_export.py`,
+  `tests/cpu/test_jetspec_consumer.py` and `tests/cpu/test_jetspec_official.py`.

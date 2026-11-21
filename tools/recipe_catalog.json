@@ -43,6 +43,17 @@
     "draft_gpus": 2,
     "native_only_export": true
   },
+  "jetspec": {
+    "configs": [
+      "configs/recipes/jetspec_qwen3_8b.yaml"
+    ],
+    "model": "Qwen3-8B",
+    "nodes": 1,
+    "gpus": 3,
+    "target_gpus": 1,
+    "draft_gpus": 2,
+    "native_only_export": true
+  },
   "eagle3": {
     "configs": [
       "configs/recipes/qwen3_8b_eagle3.yaml"
