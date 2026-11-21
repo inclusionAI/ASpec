@@ -323,10 +323,9 @@ def accept_nucleus(
     if not 0 < top_p <= 1:
         raise ValueError("top_p must be in (0, 1]")
     width = proposal.candidates.shape[1]
-    probs = _nucleus_probs(
-        logits[:, :width - 1], temperature=temperature, top_p=top_p)
-    flat = probs.reshape(-1, probs.shape[-1])
-    sampled = torch.multinomial(flat, 1, generator=generator).view(-1, width - 1)
+    flat_logits = logits[:, :width - 1].reshape(-1, logits.shape[-1])
+    probs = _nucleus_probs(flat_logits, temperature=temperature, top_p=top_p)
+    sampled = torch.multinomial(probs, 1, generator=generator).view(-1, width - 1)
     tokens = proposal.candidates[:, 1:width].to(probs.device)
     mask = (tokens == sampled) & _valid_steps(proposal, width).to(probs.device)
     return _pick_best(proposal, mask)
