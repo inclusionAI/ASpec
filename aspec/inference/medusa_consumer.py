@@ -189,7 +189,10 @@ class MedusaTreeProposer:
         self.top_k = top_k
 
     @torch.no_grad()
-    def propose(self, last_hidden: Tensor, base_logits: Tensor) -> TreeProposal:
+    def propose(
+        self, last_hidden: Tensor, base_logits: Tensor, *,
+        bonus_token: Tensor | None = None,
+    ) -> TreeProposal:
         hidden = last_hidden.reshape(1, 1, -1).to(
             device=self.buffers.tree_indices.device, dtype=_draft_dtype(self.model))
         logits = self.model(hidden)
@@ -200,7 +203,12 @@ class MedusaTreeProposer:
         flat_base = base_logits.reshape(-1)
         if flat_base.numel() != logits.shape[-1]:
             raise ValueError("Base logits vocabulary differs from the draft head vocabulary")
-        bonus = flat_base.argmax()
+        if bonus_token is None:
+            bonus = flat_base.argmax()
+        else:
+            bonus = bonus_token.reshape(-1).to(device=flat_base.device, dtype=torch.long)
+            if bonus.numel() != 1:
+                raise ValueError("bonus_token must be a scalar")
         candidates = torch.cat([bonus.reshape(1), topk])
         tree_tokens = candidates[self.buffers.tree_indices]
         extended = torch.cat([tree_tokens, torch.zeros(1, dtype=torch.long,
@@ -272,6 +280,35 @@ def accept_typical(
     return _pick_best(proposal, mask, likelihood=candidate_prob)
 
 
+def _nucleus_probs(logits: Tensor, *, temperature: float, top_p: float) -> Tensor:
+    probs = torch.softmax(logits.float() / temperature, dim=-1)
+    if top_p < 1:
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+        cumulative = torch.cumsum(sorted_probs, dim=-1)
+        remove = cumulative > top_p
+        remove[..., 1:] = remove[..., :-1].clone()
+        remove[..., 0] = False
+        filtered = torch.zeros_like(remove).scatter(1, sorted_indices, remove)
+        probs = probs.masked_fill(filtered, 0.0)
+        probs = probs / probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+    return probs
+
+
+def sample_nucleus_token(
+    logits: Tensor, *, temperature: float, top_p: float,
+    generator: torch.Generator,
+) -> Tensor:
+    """Draw the bonus token from the nucleus distribution, as the reference does."""
+    if temperature <= 0:
+        raise ValueError("nucleus sampling requires temperature > 0")
+    if not 0 < top_p <= 1:
+        raise ValueError("top_p must be in (0, 1]")
+    if generator.device.type != logits.device.type:
+        raise ValueError("nucleus generator must be on the logits device")
+    probs = _nucleus_probs(logits.reshape(1, -1), temperature=temperature, top_p=top_p)
+    return torch.multinomial(probs, 1, generator=generator).reshape(())
+
+
 def accept_nucleus(
     proposal: TreeProposal,
     logits: Tensor,
@@ -286,17 +323,9 @@ def accept_nucleus(
     if not 0 < top_p <= 1:
         raise ValueError("top_p must be in (0, 1]")
     width = proposal.candidates.shape[1]
-    probs = torch.softmax(logits[:, :width - 1].float() / temperature, dim=-1)
+    probs = _nucleus_probs(
+        logits[:, :width - 1], temperature=temperature, top_p=top_p)
     flat = probs.reshape(-1, probs.shape[-1])
-    if top_p < 1:
-        sorted_probs, sorted_indices = torch.sort(flat, descending=True, dim=-1)
-        cumulative = torch.cumsum(sorted_probs, dim=-1)
-        remove = cumulative > top_p
-        remove[..., 1:] = remove[..., :-1].clone()
-        remove[..., 0] = False
-        filtered = torch.zeros_like(remove).scatter(1, sorted_indices, remove)
-        flat = flat.masked_fill(filtered, 0.0)
-        flat = flat / flat.sum(dim=-1, keepdim=True).clamp_min(1e-12)
     sampled = torch.multinomial(flat, 1, generator=generator).view(-1, width - 1)
     tokens = proposal.candidates[:, 1:width].to(probs.device)
     mask = (tokens == sampled) & _valid_steps(proposal, width).to(probs.device)
@@ -356,7 +385,17 @@ class MedusaConsumer:
         generator: torch.Generator | None = None,
     ) -> Acceptance:
         hidden, base_logits = self.verifier.prefill(prefix_ids)
-        proposal = self.proposer.propose(hidden, base_logits)
+        if sampling == "nucleus":
+            if generator is None:
+                raise ValueError("nucleus acceptance requires a torch.Generator")
+            if generator.device.type != base_logits.device.type:
+                raise ValueError("nucleus generator must be on the logits device")
+            bonus = sample_nucleus_token(
+                base_logits, temperature=temperature, top_p=top_p,
+                generator=generator)
+            proposal = self.proposer.propose(hidden, base_logits, bonus_token=bonus)
+        else:
+            proposal = self.proposer.propose(hidden, base_logits)
         if sampling == "greedy":
             next_tokens = self.verifier.verify(
                 prefix_ids, proposal.candidates, proposal.lengths)
@@ -417,7 +456,8 @@ class MedusaConsumer:
             accepted_tokens += new.numel()
             steps += 1
             if eos_token_id is not None and int(eos_token_id) in new.tolist():
-                stop = generated[0].tolist().index(int(eos_token_id))
+                stop = (generated.shape[1] - new.numel()
+                        + new.tolist().index(int(eos_token_id)))
                 generated = generated[:, :stop + 1]
                 accepted_tokens = generated.shape[1] - prefix.shape[1]
                 break

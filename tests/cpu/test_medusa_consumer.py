@@ -9,6 +9,7 @@ from torch import nn
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from aspec.inference.medusa_consumer import (
+    Acceptance,
     HFCausalVerifier,
     MedusaConsumer,
     TreeProposal,
@@ -16,6 +17,7 @@ from aspec.inference.medusa_consumer import (
     accept_nucleus,
     accept_typical,
     generate_tree_buffers,
+    sample_nucleus_token,
 )
 
 
@@ -197,3 +199,52 @@ def test_sampling_generation_is_repeatable():
         prefix, max_new_tokens=3, sampling="typical", temperature=1.0)
     assert first["token_ids"].tolist() == second["token_ids"].tolist()
     assert first["verifier_calls"] >= 1
+
+
+
+def test_nucleus_bonus_is_sampled_from_the_base_distribution():
+    logits = torch.log(torch.tensor([[0.6, 0.4]]))
+    picks = {
+        int(sample_nucleus_token(
+            logits, temperature=1.0, top_p=1.0,
+            generator=torch.Generator().manual_seed(seed)))
+        for seed in range(20)
+    }
+    assert picks == {0, 1}
+
+
+def test_nucleus_step_uses_the_sampled_bonus():
+    class Verifier:
+        device = torch.device("cpu")
+
+        def prefill(self, ids):
+            return torch.zeros(1), torch.log(torch.tensor([0.6, 0.4]))
+
+        def verify_logits(self, prefix, candidates, lengths):
+            width = int(lengths.max())
+            return torch.zeros((candidates.shape[0], width - 1, 2))
+
+    draft = _FixedDraft(heads=2, vocab=2)
+    consumer = MedusaConsumer(
+        draft, Verifier(), medusa_choices=[[0], [1]], top_k=2)
+    base = torch.log(torch.tensor([0.6, 0.4]))
+    expected = int(sample_nucleus_token(
+        base, temperature=1.0, top_p=1.0,
+        generator=torch.Generator().manual_seed(3)))
+    acceptance = consumer.step(
+        torch.tensor([[1]]), sampling="nucleus", temperature=1.0, top_p=1.0,
+        generator=torch.Generator().manual_seed(3))
+    assert int(acceptance.accepted_tokens[0]) == expected
+
+
+def test_eos_is_searched_only_in_new_tokens():
+    from types import SimpleNamespace
+
+    consumer = object.__new__(MedusaConsumer)
+    consumer.verifier = SimpleNamespace(device=torch.device("cpu"))
+    consumer.step = lambda ids, **kwargs: Acceptance(
+        path_index=0, accept_length=1, accepted_tokens=torch.tensor([9, 2]))
+    result = consumer.generate(
+        torch.tensor([[7, 2, 8]]), max_new_tokens=5, eos_token_id=2)
+    assert result["token_ids"].tolist() == [7, 2, 8, 9, 2]
+    assert result["generated_tokens"] == 2
