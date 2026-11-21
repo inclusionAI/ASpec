@@ -248,3 +248,15 @@ def test_eos_is_searched_only_in_new_tokens():
         torch.tensor([[7, 2, 8]]), max_new_tokens=5, eos_token_id=2)
     assert result["token_ids"].tolist() == [7, 2, 8, 9, 2]
     assert result["generated_tokens"] == 2
+
+
+
+def test_nucleus_acceptance_filters_top_p_across_positions():
+    logits = torch.zeros(1, 2, 5)
+    logits[0, 0, 1] = 5.0
+    logits[0, 1, 3] = 5.0
+    acceptance = accept_nucleus(
+        _single_path_proposal(), logits, temperature=1.0, top_p=0.8,
+        generator=torch.Generator().manual_seed(7))
+    assert acceptance.accept_length == 1
+    assert acceptance.accepted_tokens.tolist() == [10, 1]
