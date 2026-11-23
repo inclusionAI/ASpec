@@ -9,10 +9,10 @@ Packed DSpark training uses Draft TP1 with `training.dflash_packing=true`,
 `training.anchor_sampling_scope=sample`, and a THD attention backend
 (`cudnn_flex_attention` or `fa4`). The controller assigns complete documents
 to each row. The collator resets positions at document boundaries and retains
-each document's supervision mask and work ID. Fixed-feature comparisons cover
-CP1 and CP2 with cuDNN. For CP2, select the SGLang Target configuration and
+each document's supervision mask and work ID. Fixed-feature and live SGLang
+comparisons cover CP1 and CP2 with cuDNN. For CP2, select the SGLang Target configuration and
 set `training.draft_context_parallel_size=2`. Two Draft GPUs form one replica.
-Online transfer of sharded Target features is outside the CP2 validation scope.
+Each rank reads its own Target feature shard over NVLink.
 Shared Target, decode and MTP conditioning are outside
 this configuration.
 
@@ -253,6 +253,52 @@ The control saves after update 50 and continues to 100. The fresh processes
 compare the remaining updates with their respective controls. Each run records
 the backward policy on every rank, the loss components and gradient norm at every
 update, and logical gradients and optimizer state at the requested milestones.
+
+For an online packed comparison, give both Drafts the same pretokenized Parquet
+file and initial weights. SGLang computes the features from the token IDs on
+each run. Use short documents that fit together within a 1,024-token row.
+The example uses three GPUs for one SGLang Target and a two-rank CP Draft.
+For CP1, set `cp=1` and `devices=0,1`.
+
+```bash
+sgl_target=/absolute/path/to/sglang-target-venv/bin/python
+train=/absolute/path/to/train.parquet
+cp=2
+devices=0,1,2
+online=(--model "$model" --initial "$out/initial/model.safetensors" --train-data "$train"
+        --target-python "$sgl_target" --cp "$cp" --steps 100)
+for draft in torch megatron; do
+  env_dir=$torch_env
+  reference=()
+  if [[ $draft == megatron ]]; then
+    env_dir=$meg_env
+    reference=(--reference "$out/online-packed-torch-cp$cp")
+  fi
+  VIRTUAL_ENV="$env_dir" PATH="$env_dir/bin:$PATH" CUDA_VISIBLE_DEVICES="$devices" \
+    "$env_dir/bin/python" -m aspec._environment "$env_dir/bin/python" \
+    -m tools.validation.megatron_packed_online "${online[@]}" --draft "$draft" \
+    "${reference[@]}" --output "$out/online-packed-$draft-cp$cp"
+done
+```
+
+The comparison checks the document order, token IDs, masks, received hidden
+states and supervision weights for each rank and microbatch. It pools the
+objective over both microbatches and all context shards before computing the
+per-step relative difference against Torch in `objectives.json`.
+
+On SM100, a live Qwen3-8B SGLang TP1 Target computed features from 16
+Alpaca GPT-4 Chinese conversations. Each run consumed 200 packed rows of two
+documents, accumulated two rows per update, and saved a checkpoint at update
+100. Both Drafts used BF16 gradients and deterministic cuDNN THD backward.
+
+| Draft topology | Torch mean objective | Megatron mean objective | Max absolute per-step rel diff | NVLink reads per run |
+| --- | ---: | ---: | ---: | ---: |
+| TP1/CP1/DP1 | 2.77931555 | 2.77931555 | 0% | 400 |
+| TP1/CP2/DP1 | 2.76814709 | 2.76814709 | 0% | 800 |
+
+All reads were released and each rank recorded 1,000 deterministic attention
+backward calls. The [per-step objectives](../benchmarks/megatron-packed-online.csv)
+include the signed relative difference against the same-topology Torch run.
 
 For Target comparison, run `tools/validation/megatron_target_aspec_alignment.py`
 with `torchrun` in the Megatron environment:
