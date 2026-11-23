@@ -298,7 +298,8 @@ class RayTrainGroup:
 
     def _expand_queues_for_usp(self, queues):
         actor_count = len(self._actor_handlers)
-        if getattr(self.args, "train_backend", "fsdp") == "megatron":
+        if (getattr(self.args, "train_backend", "fsdp") == "megatron"
+                and getattr(self.args, "draft_context_parallel_size", 1) == 1):
             tp = self.args.draft_tensor_parallel_size
             if actor_count % tp or len(queues) != actor_count // tp:
                 raise ValueError("Megatron needs one input queue per data-parallel replica")

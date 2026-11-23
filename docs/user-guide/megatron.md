@@ -2,15 +2,18 @@
 
 ASpec supports the public Megatron Core 0.20.0 API
 (`core_v0.20.0`, revision `685fb8bd970185e9ac3283fe32a5d6667bf4b268`).
-Select the Target and Draft independently. The validated configuration uses
-Qwen3-8B prefill and dense full-attention DSpark, BF16, microbatch size one,
-single-node CP1/PP1, and TP1 or TP2. The Megatron Draft supports DP replicas.
-Packed DSpark training uses Draft TP1/CP1 with `training.dflash_packing=true`,
+Select the Target and Draft independently. Qwen3-8B prefill and dense DSpark
+use BF16, microbatch size one and single-node PP1. At CP1 the Target and
+unpacked Draft support TP1 or TP2. The Megatron Draft supports DP replicas.
+Packed DSpark training uses Draft TP1 with `training.dflash_packing=true`,
 `training.anchor_sampling_scope=sample`, and a THD attention backend
 (`cudnn_flex_attention` or `fa4`). The controller assigns complete documents
 to each row. The collator resets positions at document boundaries and retains
-each document's supervision mask and work ID. The 100-update fixed-feature
-comparison used cuDNN. Shared Target, decode and MTP conditioning are outside
+each document's supervision mask and work ID. Fixed-feature comparisons cover
+CP1 and CP2 with cuDNN. For CP2, select the SGLang Target configuration and
+set `training.draft_context_parallel_size=2`. Two Draft GPUs form one replica.
+Online transfer of sharded Target features is outside the CP2 validation scope.
+Shared Target, decode and MTP conditioning are outside
 this configuration.
 
 ## Dependency profiles
@@ -124,7 +127,7 @@ occurs once per DP replica. Anchors/keep masks are shared from the TP leader;
 commit collection checks matching work identity and reports it once per replica.
 
 Gradients are normalized by the complete optimizer window's supervision weight,
-pooled across DP. TP-partial Q/K norm gradients are reduced once, and clipping
+pooled across data and context ranks. TP-partial Q/K norm gradients are reduced once, and clipping
 counts each replicated parameter once. Checkpoints describe logical TP shards and
 restore model, FP32 masters, moments, schedule and both ASpec and Core RNG streams.
 Exact resume requires the same Draft backend, TP topology and world size. Cross-backend weights-only
@@ -166,6 +169,10 @@ tool. The public Torch training entry point supports TP1.
 For a TP1 packed comparison, pass `--packed-pairs` to both runs of
 `megatron_torch_alignment.py`. Supply an even number of complete, unpadded
 documents in the teacher cache. Each adjacent pair must fit within `--length`.
+For CP2, add `--cp 2` and launch two workers per data replica on both backends.
+Each worker reads its context shard from each document before collation.
+For a strict cuDNN comparison, set `CUBLAS_WORKSPACE_CONFIG=:4096:8` and pass
+`--deterministic` to both training runs.
 The driver checks that each document is committed once, compares anchors,
 loss denominators and optimizer updates, and records THD backward evidence.
 
@@ -193,7 +200,29 @@ fixed_run() {
     --source "$src" --model "$model" --teacher "$teacher" "$@"
 }
 fixed_run "$torch_env" 0 1 --backend fsdp --tp 1 --phase prepare --output "$out/initial"
+```
 
+For the packed Draft comparison, use a cache whose adjacent document pairs
+fit within 1,024 tokens. Run each backend on the same devices in sequence.
+
+```bash
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+for cp in 1 2; do
+  devices=0
+  if [[ $cp == 2 ]]; then devices=0,1; fi
+  common=(--tp 1 --cp "$cp" --packed-pairs --length 1024 --anchors 32
+          --steps 100 --deterministic --phase uninterrupted
+          --tensor-steps 1,50,100 --state-steps 100 --initial "$out/initial/model.safetensors")
+  reference="$out/torch-packed-cp$cp"
+  fixed_run "$torch_env" "$devices" "$cp" --backend fsdp "${common[@]}" --output "$reference"
+  fixed_run "$meg_env" "$devices" "$cp" --backend megatron --megatron-grad-dtype bf16 \
+    "${common[@]}" --reference "$reference" --no-save-reference-tensors --output "$out/megatron-packed-cp$cp"
+done
+```
+
+For the unpacked TP2 checkpoint and resume comparison, run:
+
+```bash
 for dp in 1 2; do
   devices=0,1
   milestones=1,2,5,10,20,30,40,50,60,70,80,90,100

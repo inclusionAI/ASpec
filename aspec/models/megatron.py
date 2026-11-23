@@ -32,7 +32,7 @@ def require_megatron():
     return version
 
 
-def initialize_parallelism(tp_size: int, *, seed: int = 42):
+def initialize_parallelism(tp_size: int, *, cp_size: int = 1, seed: int = 42):
     """The caller's default process group contains only one execution role."""
     require_megatron()
     from megatron.core import parallel_state
@@ -45,7 +45,7 @@ def initialize_parallelism(tp_size: int, *, seed: int = 42):
     parallel_state.initialize_model_parallel(
         tensor_model_parallel_size=tp_size,
         pipeline_model_parallel_size=1,
-        context_parallel_size=1,
+        context_parallel_size=cp_size,
         create_gloo_process_groups=False,
     )
     from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed

@@ -32,14 +32,16 @@ class MegatronDSparkTrainer(DSparkTrainer):
 
     def _setup_device_mesh(self):
         self.groups = initialize_parallelism(self.args.draft_tensor_parallel_size,
+                                            cp_size=getattr(self.args, "draft_context_parallel_size", 1),
                                             seed=getattr(self.args, "seed", 42))
         self.tp_size, self.tp_rank = self.groups.tp.size(), self.groups.tp.rank()
         self.dp_size, self.dp_rank = self.groups.dp.size(), self.groups.dp.rank()
-        self.dp_group = self.groups.dp
-        self.cp_size, self.cp_rank, self.cp_group = 1, 0, None
+        self.dp_group = self.groups.dp_cp
+        self.cp_size, self.cp_rank = self.groups.cp.size(), self.groups.cp.rank()
+        self.cp_group = self.groups.cp if self.cp_size > 1 else None
         self.cache_rank = dist.get_rank()
         self.tp_mesh = DeviceMesh.from_group(self.groups.tp, "cuda")
-        self.dp_mesh = DeviceMesh.from_group(self.groups.dp, "cuda")
+        self.dp_mesh = DeviceMesh.from_group(self.dp_group, "cuda")
         self.mesh = self.grad_sync_mesh = self.dp_mesh
         if getattr(self.args, "dflash_packing", False):
             # TP1 packed training uses the controller-owned row reader.
@@ -90,7 +92,7 @@ class MegatronDSparkTrainer(DSparkTrainer):
             set_defaults_if_not_set_tensor_model_parallel_attributes,
         )
 
-        config = draft_transformer_config(draft_model.config, self.tp_size)
+        config = draft_transformer_config(draft_model.config, self.tp_size, self.cp_size)
         partition_dspark(draft_model, config, self.groups, self.tp_mesh)
         for parameter in model.parameters():
             set_defaults_if_not_set_tensor_model_parallel_attributes(parameter)
@@ -134,7 +136,7 @@ class MegatronDSparkTrainer(DSparkTrainer):
         dist.all_reduce(denominator, group=self.dp_group)
         scale = torch.where(
             denominator > 0,
-            self.dp_size * accumulation_steps / denominator.clamp_min(1e-6),
+            self.dp_group.size() * accumulation_steps / denominator.clamp_min(1e-6),
             torch.zeros_like(denominator),
         )
         from aspec.models.ops.gradient_scaling import scale_gradients_
@@ -196,7 +198,7 @@ class MegatronDSparkTrainer(DSparkTrainer):
     def save_draft_model_for_serving(self, output_dir):
         error = None
         try:
-            if self.dp_rank == 0:
+            if self.dp_rank == 0 and self.cp_rank == 0:
                 state = model_checkpoint_state(self.draft_model, self.tp_mesh)
                 state = {name: (value.full_tensor() if isinstance(value, DTensor) else value).cpu()
                          for name, value in state.items()}

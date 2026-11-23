@@ -908,7 +908,8 @@ def _resolve_batch_size(args: argparse.Namespace) -> None:
     )
     args.attention_backend = execution.attention_backend
     args.draft_context_parallel_size = execution.context_parallel_size
-    if getattr(args, "train_backend", "fsdp") == "megatron":
+    if (getattr(args, "train_backend", "fsdp") == "megatron"
+            and getattr(args, "draft_context_parallel_size", 1) == 1):
         tp_size = getattr(args, "draft_tensor_parallel_size", 1)
         if type(tp_size) is not int or tp_size < 1 or world_size % tp_size:
             raise PlanCompileError("Draft world size must be divisible by positive draft_tensor_parallel_size")
@@ -1801,17 +1802,32 @@ def _policy(
         ),
     )
     megatron_input_memory = None
-    if runtime.get("train_backend") == "megatron" and not runtime.get("dflash_packing", False):
+    if runtime.get("train_backend") == "megatron":
         # Receive/collate copies on the consumer thread. Leader source prefetch
         # borrows registered destination slots, counted separately as rings.
         resident_batches = 2
+        storage = "consumer_cuda_payloads_replicated_over_tp"
+        metadata_bytes_per_token = 40
+        if runtime.get("dflash_packing", False):
+            storage = "packed_cuda_input_payloads"
+            # Bound the active row, its successor and the document fragments
+            # used by the collator. A transfer-engine reader can enqueue CUDA
+            # rows and hold one more while waiting for a queue slot.
+            resident_batches = 3
+            depth = int(runtime["prefetch_depth"])
+            if depth > 0 and data_plane == "transfer_engine":
+                resident_batches += depth + 1
+            if runtime["draft_context_parallel_size"] > 1:
+                metadata_bytes_per_token += 8  # packed_context_positions
         feature_width = int(_select(config, "mooncake.hidden_dim", 4096))
         feature_bytes_per_token = 2 * feature_width * (
             len(runtime["aux_hidden_states_layers"]) + int(runtime.get("store_last_hidden_states", False)))
         # Token IDs plus masks/positions alongside the captured feature ABI.
-        bytes_per_batch = (feature_bytes_per_token + 40) * int(runtime["max_seq_length"]) * int(runtime["micro_batch_size"])
+        # A CP rank can own an entire short document after shard alignment.
+        bytes_per_batch = ((feature_bytes_per_token + metadata_bytes_per_token)
+                           * int(runtime["max_seq_length"]) * int(runtime["micro_batch_size"]))
         megatron_input_memory = {
-            "storage": "consumer_cuda_payloads_replicated_over_tp",
+            "storage": storage,
             "resident_batch_bound_per_rank": resident_batches,
             "payload_bytes_bound_per_rank": resident_batches * bytes_per_batch,
             "excludes": "registered_rings_model_activations_and_projection_caches",

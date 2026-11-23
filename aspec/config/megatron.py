@@ -22,7 +22,7 @@ def resolve_megatron_gradient_precision(args):
 
 
 def validate_megatron_execution(args, draft):
-    """Reject combinations outside the runnable dense DSpark CP1/PP1 lane."""
+    """Reject combinations outside the supported dense DSpark topologies."""
     training = getattr(args, "train_backend", "fsdp")
     target = getattr(args, "target_model_backend", "sglang")
     resolve_megatron_gradient_precision(args)
@@ -41,8 +41,12 @@ def validate_megatron_execution(args, draft):
         raise ValueError("Megatron currently supports the DSpark objective")
     if draft.get("mtp_conditioning"):
         raise ValueError("Megatron currently requires an unconditioned DSpark Draft")
-    if getattr(args, "draft_context_parallel_size", 1) != 1:
-        raise ValueError("Megatron currently requires Draft CP1")
+    cp = getattr(args, "draft_context_parallel_size", 1)
+    if cp != 1 and not (
+        cp == 2 and tp == 1 and training == "megatron" and target == "sglang"
+        and getattr(args, "dflash_packing", False) and getattr(args, "world_size", 1) % cp == 0
+    ):
+        raise ValueError("Megatron requires Draft CP1 or packed TP1/CP2 with an SGLang Target")
     if target == "megatron":
         if getattr(args, "sglang_extra_args", None) or getattr(args, "sglang_allow_context_length_override", False):
             raise ValueError("Megatron Target does not apply SGLang backend overrides")

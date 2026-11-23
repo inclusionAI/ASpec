@@ -30,7 +30,9 @@ passing Plan validation establishes legality, not performance, convergence or do
 ## Execution and assets
 
 - Experimental upstream Megatron Core Target/Draft adapters cover Qwen3-8B dense DSpark,
-  single-node CP1/PP1, Target TP1/TP2 and Draft TP1/TP2 with DP. The roles select backends
+  single-node PP1 and independent Target and Draft TP1/TP2 at CP1 for unpacked training.
+  Packed Drafts use TP1. Fixed-feature training is validated at CP1 and CP2 with cuDNN.
+  Online CP2 feature transfer is outside the verified scope. The roles select backends
   independently and use separate environments. See [scope and validation](user-guide/megatron.md)
   for current evidence and numerical/replay boundaries; no Core fork is required.
 - Single-node online training supports required NVLink and explicitly selected Store/transport paths.

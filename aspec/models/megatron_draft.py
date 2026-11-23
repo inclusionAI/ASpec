@@ -13,7 +13,7 @@ from torch.distributed.tensor import DTensor, Shard
 from aspec.models.megatron import require_megatron
 
 
-def draft_transformer_config(config, tp_size):
+def draft_transformer_config(config, tp_size, cp_size=1):
     require_megatron()
     from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -30,7 +30,7 @@ def draft_transformer_config(config, tp_size):
         layernorm_epsilon=config.rms_norm_eps, gated_linear_unit=True,
         activation_func=torch.nn.functional.silu, add_bias_linear=False,
         params_dtype=torch.bfloat16, bf16=True,
-        tensor_model_parallel_size=tp_size, context_parallel_size=1,
+        tensor_model_parallel_size=tp_size, context_parallel_size=cp_size,
         pipeline_model_parallel_size=1, sequence_parallel=False,
         perform_initialization=False, use_cpu_initialization=False,
         gradient_accumulation_fusion=False, attention_dropout=0.0, hidden_dropout=0.0,

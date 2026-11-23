@@ -151,6 +151,55 @@ def test_packed_megatron_draft_requires_thd_and_document_anchors(backend):
         validate_megatron_execution(args, {"family": "dspark"})
 
 
+def test_packed_megatron_cp2_requires_two_context_ranks_per_replica():
+    args = settings(target_model_backend="sglang", draft_tensor_parallel_size=1,
+                    draft_context_parallel_size=2, dflash_packing=True,
+                    attention_backend="cudnn_flex_attention", anchor_sampling_scope="sample")
+    validate_megatron_execution(args, {"family": "dspark"})
+    for field, value in (("world_size", 3), ("draft_tensor_parallel_size", 2),
+                         ("draft_context_parallel_size", 4), ("dflash_packing", False),
+                         ("target_model_backend", "megatron")):
+        with pytest.raises(ValueError, match="CP1"):
+            validate_megatron_execution(Namespace(**{**vars(args), field: value}), {"family": "dspark"})
+
+
+def test_packed_cp2_counts_logical_replicas_and_routes_one_queue_per_context_rank():
+    from aspec.planning import _resolve_batch_size
+    from aspec.ray.train_group import RayTrainGroup
+
+    args = settings(target_model_backend="sglang", draft_tensor_parallel_size=1,
+                    draft_context_parallel_size=2, dflash_packing=True,
+                    attention_backend="cudnn_flex_attention", micro_batch_size=1,
+                    training_num_nodes=1, training_num_gpus_per_node=4, draft_accumulation_steps=2)
+    _resolve_batch_size(args)
+    assert (args.dp_size, args.global_batch_size) == (2, 4)
+
+    group = SimpleNamespace(args=args, _actor_handlers=[object() for _ in range(4)])
+    queues = [object() for _ in range(4)]
+    assert RayTrainGroup._expand_queues_for_usp(group, queues) == queues
+    with pytest.raises(ValueError, match="number of actors"):
+        RayTrainGroup._expand_queues_for_usp(group, queues[:args.dp_size])
+
+
+@pytest.mark.parametrize("cp,depth", [(1, 0), (1, 2), (2, 2)])
+def test_packed_input_staging_accounts_for_collated_rows(cp, depth):
+    recipe = Path(__file__).resolve().parents[2] / "configs/recipes/quickstart_qwen3_8b.yaml"
+    config = load_config(str(recipe), cli_args=[
+        "training.train_backend=megatron", "training.dflash_packing=true",
+        "training.anchor_sampling_scope=sample", f"training.prefetch_depth={depth}",
+        f"training.draft_context_parallel_size={cp}", f"training.training_num_gpus_per_node={cp}",
+    ])
+    plan = compile_execution_plan(config)
+    runtime = plan.to_runtime_args()
+    memory = plan.policy.capacity["device_memory"]["megatron_input_staging"]
+    rows = 3 + (depth + 1 if depth else 0)
+    feature_bytes = 2 * config.mooncake.hidden_dim * (len(runtime.aux_hidden_states_layers) + 1)
+    token_bytes = feature_bytes + 40 + (8 if cp > 1 else 0)
+    assert memory["storage"] == "packed_cuda_input_payloads"
+    assert memory["resident_batch_bound_per_rank"] == rows
+    assert memory["payload_bytes_bound_per_rank"] == rows * runtime.max_seq_length * token_bytes
+
+
 def test_producer_backend_is_part_of_the_feature_identity():
     kwargs = dict(drafter_family="dspark", target_hidden_size=16, target_num_hidden_layers=4,
                   aux_hidden_state_layers=[0, 2], store_last_hidden_states=True)
