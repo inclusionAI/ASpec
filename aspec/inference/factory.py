@@ -211,7 +211,7 @@ def _prepare_sgl_engines(
 ) -> tuple[list, list]:
     """Start one complete, node-local TP group per Target engine."""
     from aspec.inference.service_client import TargetServiceClient
-    from aspec.inference.service_protocol import validate_target_tp
+    from aspec.inference.service_protocol import target_actor_startup_timeout, validate_target_tp
 
     validate_target_tp(getattr(args, "sglang_nnodes", 1))
     num_gpus_total = getattr(args, "inference_num_gpus", 1)
@@ -266,10 +266,11 @@ def _prepare_sgl_engines(
         # port probe, not a reservation: a later external bind still fails closed.
         pre_allocated_ports: dict[int, int] = {}
         next_start = 10000 + secrets.randbelow(40000)
+        startup_timeout = target_actor_startup_timeout(args)
         for i in range(num_engines):
             port = ray.get(
                 engines[i].find_free_port.remote(start_port=next_start, consecutive=2),
-                timeout=120,
+                timeout=startup_timeout,
             )
             pre_allocated_ports[i] = port
             next_start = port + 2

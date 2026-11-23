@@ -4,6 +4,7 @@ cuda-toolkit[cccl,nvcc]==13.0.3.0
 numpy<2.4
 setuptools>=80
 wheel
+wheel-stub==0.5.0
 packaging>=24.2
 pybind11
 cmake

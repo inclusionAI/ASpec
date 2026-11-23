@@ -50,6 +50,12 @@ def target_service_parser():
     return parser
 
 
+def target_actor_startup_timeout(args):
+    if getattr(args, "target_model_backend", "sglang") == "megatron":
+        return getattr(args, "megatron_init_timeout", 600)
+    return 120
+
+
 def target_init_timeout(args, *, sglang_default):
     if getattr(args, "target_model_backend", "sglang") == "megatron":
         return getattr(args, "megatron_init_timeout", 600)

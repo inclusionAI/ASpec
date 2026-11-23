@@ -27,6 +27,7 @@ from aspec.inference.service_protocol import (
     TARGET_ARGUMENTS,
     decode,
     encode,
+    target_actor_startup_timeout,
     target_service_parser,
     validate_address,
     validate_target_tp,
@@ -145,7 +146,7 @@ class TargetService:
                                  "generation_admitted": False}
             self.claims.update({gpu: key for gpu in gpus})
         try:
-            status = ray.get(actor.get_status.remote(), timeout=120)
+            status = ray.get(actor.get_status.remote(), timeout=target_actor_startup_timeout(args))
             pid = status["pid"]
             if os.getpgid(pid) != pid:
                 raise RuntimeError("Target worker requires its own Ray process group")
