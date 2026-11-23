@@ -5,7 +5,12 @@ ASpec supports the public Megatron Core 0.20.0 API
 Select the Target and Draft independently. The validated configuration uses
 Qwen3-8B prefill and dense full-attention DSpark, BF16, microbatch size one,
 single-node CP1/PP1, and TP1 or TP2. The Megatron Draft supports DP replicas.
-Shared Target, decode, MTP conditioning and Megatron Draft packing are outside
+Packed DSpark training uses Draft TP1/CP1 with `training.dflash_packing=true`,
+`training.anchor_sampling_scope=sample`, and a THD attention backend
+(`cudnn_flex_attention` or `fa4`). The controller assigns complete documents
+to each row. The collator resets positions at document boundaries and retains
+each document's supervision mask and work ID. The 100-update fixed-feature
+comparison used cuDNN. Shared Target, decode and MTP conditioning are outside
 this configuration.
 
 ## Dependency profiles
@@ -108,7 +113,7 @@ and the Core DDP flag. Exact resume preserves this setting; checkpoints without
 the field are interpreted as FP32. Changing gradient precision requires
 a weights-only new stage rather than an exact continuation.
 
-One TP leader prefetches source GETs into bounded, preallocated destination rings.
+For unpacked training, one TP leader prefetches source GETs into bounded, preallocated destination rings.
 TP broadcasts and collation run on the consumer thread between microbatches, in
 the same order as model collectives. Availability and tensor metadata use a CPU
 Gloo group; no background reader launches NCCL work. Training and evaluation own
@@ -157,6 +162,12 @@ Prepare the initial weights with `megatron_torch_alignment.py --backend fsdp
 verification tool uses a native PyTorch DTensor adapter around the existing
 DSpark trainer and optimizer. This adapter is available only in the validation
 tool. The public Torch training entry point supports TP1.
+
+For a TP1 packed comparison, pass `--packed-pairs` to both runs of
+`megatron_torch_alignment.py`. Supply an even number of complete, unpadded
+documents in the teacher cache. Each adjacent pair must fit within `--length`.
+The driver checks that each document is committed once, compares anchors,
+loss denominators and optimizer updates, and records THD backward evidence.
 
 Run the following Bash commands from the checkout. Supply the role venvs, model,
 SGLang feature cache and an empty output root. The same backend that wrote a

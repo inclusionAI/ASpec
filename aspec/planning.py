@@ -1801,7 +1801,7 @@ def _policy(
         ),
     )
     megatron_input_memory = None
-    if runtime.get("train_backend") == "megatron":
+    if runtime.get("train_backend") == "megatron" and not runtime.get("dflash_packing", False):
         # Receive/collate copies on the consumer thread. Leader source prefetch
         # borrows registered destination slots, counted separately as rings.
         resident_batches = 2

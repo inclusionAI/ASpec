@@ -136,6 +136,21 @@ def test_megatron_freezes_disabled_confidence_head(monkeypatch, alpha):
     trainer._build_training_wrapper(draft)
 
 
+@pytest.mark.parametrize("backend", ["fa4", "cudnn_flex_attention"])
+def test_packed_megatron_draft_requires_thd_and_document_anchors(backend):
+    args = settings(draft_tensor_parallel_size=1, dflash_packing=True,
+                    attention_backend=backend, anchor_sampling_scope="sample",
+                    prefetch_depth=1, mooncake_destination_gpu_ring_slots=2)
+    validate_megatron_execution(args, {"family": "dspark"})
+    args.anchor_sampling_scope = "row"
+    with pytest.raises(ValueError, match="per-sample"):
+        validate_megatron_execution(args, {"family": "dspark"})
+    args.anchor_sampling_scope = "sample"
+    args.attention_backend = "flex_attention"
+    with pytest.raises(ValueError, match="THD"):
+        validate_megatron_execution(args, {"family": "dspark"})
+
+
 def test_producer_backend_is_part_of_the_feature_identity():
     kwargs = dict(drafter_family="dspark", target_hidden_size=16, target_num_hidden_layers=4,
                   aux_hidden_state_layers=[0, 2], store_last_hidden_states=True)

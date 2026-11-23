@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Dependency-light capability boundary for the upstream Megatron integration."""
 
+from aspec.config.draft_execution import is_direct_cp_backend
+
 MEGATRON_VERSION = "0.20.0"
 MEGATRON_REVISION = "685fb8bd970185e9ac3283fe32a5d6667bf4b268"
 
@@ -71,7 +73,7 @@ def validate_megatron_execution(args, draft):
         prefetch = max(int(getattr(args, "prefetch_depth", 0)), 0)
         destination_slots = (getattr(args, "mooncake_destination_gpu_ring_slots", None)
                              or getattr(args, "mooncake_gpu_ring_slots", 2))
-        if prefetch and destination_slots < prefetch + 2:
+        if not getattr(args, "dflash_packing", False) and prefetch and destination_slots < prefetch + 2:
             raise ValueError("Megatron source prefetch requires destination_gpu_ring_slots >= prefetch_depth + 2")
         if tp not in {1, 2}:
             raise ValueError("Megatron Draft currently validates TP1/TP2")
@@ -84,7 +86,12 @@ def validate_megatron_execution(args, draft):
         if getattr(args, "world_size", 1) % tp:
             raise ValueError("Draft world size must be divisible by draft_tensor_parallel_size")
         if getattr(args, "dflash_packing", False):
-            raise ValueError("Megatron Draft packed execution is not supported yet")
+            if tp != 1:
+                raise ValueError("Megatron Draft packed execution requires TP1")
+            if not is_direct_cp_backend(getattr(args, "attention_backend", None)):
+                raise ValueError("Megatron Draft packing requires a THD attention backend")
+            if getattr(args, "anchor_sampling_scope", "row") != "sample":
+                raise ValueError("Megatron Draft packing requires per-sample anchor budgets")
         if getattr(args, "compile_model", False):
             raise ValueError("Megatron Draft currently compiles individual optimized kernels only")
         if draft.get("structure", {}).get("ffn_type", "dense") != "dense":

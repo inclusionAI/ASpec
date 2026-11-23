@@ -41,6 +41,9 @@ class MegatronDSparkTrainer(DSparkTrainer):
         self.tp_mesh = DeviceMesh.from_group(self.groups.tp, "cuda")
         self.dp_mesh = DeviceMesh.from_group(self.groups.dp, "cuda")
         self.mesh = self.grad_sync_mesh = self.dp_mesh
+        if getattr(self.args, "dflash_packing", False):
+            # TP1 packed training uses the controller-owned row reader.
+            return
         # Only source GET is prefetched. Input collectives run on the model's
         # consumer thread, in a consistent order across overlapping TP/DP groups.
         for replica in range(self.dp_size):
