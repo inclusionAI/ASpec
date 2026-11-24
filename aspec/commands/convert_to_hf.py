@@ -208,6 +208,8 @@ def _serving_config(raw_config: dict) -> dict:
             "SGLang has no verified candidate-tree Medusa loader")
 
     if raw_config.get("architectures") == ["NativeMTPDraftModel"]:
+        if raw_config.get("num_hidden_layers", 1) > 1:
+            raise NotImplementedError("Independent MTP predictors require --format aspec")
         native = json.loads(json.dumps(raw_config["native_config"]))
         native["architectures"] = ["Qwen3_5ForCausalLMMTP"]
         native["mtp_num_hidden_layers"] = 1

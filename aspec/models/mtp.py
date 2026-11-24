@@ -33,9 +33,17 @@ class MTPModel(nn.Module):
     def __init__(self, draft_model, length=3, gradient_checkpointing=False):
         super().__init__()
         self.draft_model = draft_model
+        if draft_model.config.num_hidden_layers not in (1, length):
+            raise ValueError("Independent MTP predictors require one layer per rollout step")
         self.length = length
         self.gradient_checkpointing = gradient_checkpointing
         self.vocab_pruning = False
+
+    def _predict(self, state, ids, positions, depth, layout=None):
+        if self.gradient_checkpointing and self.training:
+            return checkpoint(self.draft_model.predict, state, ids, positions, layout,
+                              depth=depth, use_reentrant=False)
+        return self.draft_model.predict(state, ids, positions, layout, depth=depth)
 
     def forward(self, input_ids, hidden_states, loss_mask, attention_mask, thd_layout=None):
         if thd_layout is not None:
@@ -54,10 +62,7 @@ class MTPModel(nn.Module):
             positions = torch.arange(valid_length, device=state.device)[None]
             for depth in range(steps):
                 ids = input_ids[row:row + 1, depth + 1:depth + 1 + valid_length]
-                if self.gradient_checkpointing and self.training:
-                    state = checkpoint(self.draft_model.predict, state, ids, positions, use_reentrant=False)
-                else:
-                    state = self.draft_model.predict(state, ids, positions)
+                state = self._predict(state, ids, positions, depth)
                 # Keep every valid attention position, but supervise only real
                 # response labels at t+depth+2. Never shift masks like EAGLE TTT.
                 labels = input_ids[row, depth + 2:depth + 2 + valid_length]
@@ -98,11 +103,7 @@ class MTPModel(nn.Module):
             requested, same_doc = layout.shifted(depth + 1)
             ids = layout.lookup(layout.full_ids, requested).unsqueeze(0)
             positions = layout.rope.clamp_min(0).unsqueeze(0)
-            if self.gradient_checkpointing and self.training:
-                state = checkpoint(self.draft_model.predict, state, ids, positions, layout,
-                                   use_reentrant=False)
-            else:
-                state = self.draft_model.predict(state, ids, positions, layout)
+            state = self._predict(state, ids, positions, depth, layout)
             label_positions = layout.positions + depth + 2
             labels = layout.lookup(layout.full_ids, label_positions)
             keep = ((layout.docs >= 0) & (depth < steps[layout.docs.clamp_min(0)]) & same_doc

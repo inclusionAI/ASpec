@@ -355,6 +355,7 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
     objective = saved_topology.get("training_objective") or {}
     if (saved_topology.get("draft_algorithm") == current_topology.get("draft_algorithm") == "mtp"
             and saved_semantics.get("architectures") == ["NativeMTPDraftModel"]
+            and saved_semantics.get("num_hidden_layers") == 1
             and saved_semantics.get("is_causal") is True
             and objective.get("loss") == "teacher_forced_native_mtp_ce"
             and objective.get("frozen_shared") == ["embedding", "lm_head"]

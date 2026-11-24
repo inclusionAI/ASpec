@@ -38,6 +38,29 @@ def test_native_mtp_fa4_packing_cp_is_a_public_plan():
     assert plan.workload.models["draft"]["attention"]["draft_block_attention"] == observed["draft_block_attention"]
 
 
+@pytest.mark.parametrize("layers", [1, 3])
+def test_mtp_reports_attention_only_after_all_predictors_execute(layers):
+    from unittest.mock import Mock
+
+    from aspec.training.mtp_trainer import MTPTrainer
+
+    trainer = object.__new__(MTPTrainer)
+    trainer.draft_model = model(layers)
+    trainer.data_fetcher = Mock()
+    trainer.data_fetcher.get_feature_contract_status.return_value = {"role": "consumer"}
+    for layer in trainer.draft_model.layers:
+        assert "draft_attention" not in trainer.get_feature_contract_status()
+        layer.self_attn.attention_observation = {
+            "qkv_format": "thd", "backward_strategy": "fa4",
+            "backward_observed": True, "empty_local_partition": False,
+        }
+    status = trainer.get_feature_contract_status()
+    assert len(status["draft_attention_observations"]) == layers
+    assert status["draft_attention"]["forward_observed"]
+    assert status["draft_attention"]["draft_block_attention"] == "causal_native_mtp"
+    assert status["draft_attention"]["layer_types"] == ["full_attention"] * layers
+
+
 def test_legacy_native_mtp_policy_label_is_normalized_only_at_resume_boundary():
     import copy
 
@@ -65,12 +88,13 @@ def test_legacy_native_mtp_policy_label_is_normalized_only_at_resume_boundary():
 
 
 @pytest.mark.parametrize("lengths", [[13, 9], [2, 3, 5, 11]])
-def test_packed_mtp_keeps_native_prefix_labels_and_complete_gradients(lengths):
+@pytest.mark.parametrize("layers", [1, 3])
+def test_packed_mtp_keeps_native_prefix_labels_and_complete_gradients(lengths, layers):
     """A document SDPA stand-in checks layout/math without loading GPU kernels."""
     from types import MethodType
 
     torch.manual_seed(44)
-    draft, reference = model(), model()
+    draft, reference = model(layers), model(layers)
     reference.load_state_dict(draft.state_dict())
     ids = torch.randint(0, 32, (1, sum(lengths)))
     hidden = torch.randn(1, sum(lengths), 16)
@@ -79,13 +103,13 @@ def test_packed_mtp_keeps_native_prefix_labels_and_complete_gradients(lengths):
     layout = EagleTHDLayout(lengths, ids.flatten(), mask.flatten(), positions)
     native_predict = draft.predict
 
-    def predict(self, states, tokens, rope, layout):
+    def predict(self, states, tokens, rope, layout, *, depth):
         rows, start = [], 0
         for length in lengths:
             steps = min(3, max(0, length - 2))
             size = length - steps - 1 if steps else 0
             value = native_predict(states[:, start:start + size], tokens[:, start:start + size],
-                                   rope[:, start:start + size]) if size else states[:, :0]
+                                   rope[:, start:start + size], depth=depth) if size else states[:, :0]
             rows.append(torch.nn.functional.pad(value, (0, 0, 0, length - size)))
             start += length
         return torch.cat(rows, dim=1)

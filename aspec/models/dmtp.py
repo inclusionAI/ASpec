@@ -125,14 +125,14 @@ class FrozenMTPFeatures(nn.Module):
 
     @torch.no_grad()
     def forward(self, hidden_states, input_embeds, position_ids):
-        from aspec.models.draft.mtp import NativeMTPDraftModel
+        from aspec.models.mtp_features import predict_mtp_embeddings
 
         if not self._rotary_ready:
             # Device moves, to_empty and checkpoint restoration do not carry
             # the native non-persistent frequencies. Regenerate them once.
             self.rotary_emb = type(self.rotary_emb)(self.native, device=hidden_states.device)
             self._rotary_ready = True
-        return NativeMTPDraftModel.predict_embeddings(
+        return predict_mtp_embeddings(
             self, hidden_states.detach(), input_embeds.detach(), position_ids
         ).detach()
 

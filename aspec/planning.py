@@ -301,6 +301,8 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
         beta = _select(config, "training.mtp_step_weight_beta")
         if type(steps) is not int or steps <= 0:
             raise PlanCompileError("Native MTP steps must be a positive integer")
+        if raw["num_hidden_layers"] not in (1, steps):
+            raise PlanCompileError("Independent MTP predictors require one layer per rollout step")
         if isinstance(beta, bool) or not isinstance(beta, (int, float)) or not math.isfinite(beta) or beta < 0:
             raise PlanCompileError("Native MTP step_weight_beta must be finite and non-negative")
         if _select(config, "training.attention_backend") not in {"sdpa", "fa4"} or (
@@ -1529,6 +1531,7 @@ def _workload(
             "step_weight_beta": beta, "step_weights": mtp_step_weights(steps, beta),
             "frozen_shared": ["embedding", "lm_head"],
             "verifier_feature_stage": "post_norm",
+            "prediction_layers": len(draft["attention"]["layer_types"]),
         }
     elif family in {"eagle3", "eagle4"}:
         objective = {

@@ -49,8 +49,8 @@ def native_config():
     }
 
 
-def model():
-    return NativeMTPDraftModel(NativeMTPConfig(native_config=native_config()))
+def model(layers=1):
+    return NativeMTPDraftModel(NativeMTPConfig(native_config=native_config(), num_hidden_layers=layers))
 
 
 def test_native_dispatch_and_public_plan_have_their_own_identity():
@@ -82,9 +82,10 @@ def test_unimplemented_or_invalid_native_mtp_requests_fail_before_launch(change)
         compile_execution_plan(config)
 
 
-def test_native_ce_and_complete_gradients_match_explicit_teacher_forcing():
+@pytest.mark.parametrize("layers", [1, 3])
+def test_native_ce_and_complete_gradients_match_explicit_teacher_forcing(layers):
     torch.manual_seed(91)
-    draft = model()
+    draft = model(layers)
     reference = copy.deepcopy(draft)
     wrapper = MTPModel(draft, length=3, gradient_checkpointing=True)
     ids = torch.randint(0, 32, (1, 13))
@@ -96,11 +97,12 @@ def test_native_ce_and_complete_gradients_match_explicit_teacher_forcing():
     positions = torch.arange(9)[None]
     expected = []
     for depth in range(3):
-        embeds = reference.pre_fc_norm_embedding(reference.embed_tokens(ids[:, depth + 1:depth + 10]))
-        fused = reference.fc(torch.cat((embeds, reference.pre_fc_norm_hidden(state)), -1))
-        rotary = reference.rotary_emb(fused, positions[None].expand(3, -1, -1))
-        state = reference.norm(reference.midlayer(fused, position_embeddings=rotary,
-                                                  attention_mask=None, position_ids=positions))
+        block = reference if layers == 1 else reference.predictors[depth]
+        embeds = block.pre_fc_norm_embedding(reference.embed_tokens(ids[:, depth + 1:depth + 10]))
+        fused = block.fc(torch.cat((embeds, block.pre_fc_norm_hidden(state)), -1))
+        rotary = block.rotary_emb(fused, positions[None].expand(3, -1, -1))
+        state = block.norm(block.midlayer(fused, position_embeddings=rotary,
+                                            attention_mask=None, position_ids=positions))
         labels = ids[:, depth + 2:depth + 11].clone()
         labels[mask[:, depth + 2:depth + 11] == 0] = -100
         expected.append(torch.nn.functional.cross_entropy(
@@ -295,3 +297,91 @@ def test_native_mtp_asset_does_not_claim_a_block_proposal_consumer(tmp_path, mon
     loaded = load_native_draft(output)
     for name, value in draft.state_dict().items():
         torch.testing.assert_close(loaded.state_dict()[name], value, atol=0, rtol=0)
+
+
+def test_independent_predictors_plan_requires_one_layer_per_step():
+    config = load_config(str(ROOT / "configs/recipes/qwen3_5_9b_mtp.yaml"), save_snapshot=False)
+    config.model.draft_model_config = str(ROOT / "aspec/config/qwen3_5_9b_mtp_3layer_draft_config.json")
+    plan = compile_execution_plan(config)
+    assert plan.workload.objective["prediction_layers"] == plan.workload.objective["steps"] == 3
+    config.training.mtp_steps = 2
+    with pytest.raises(PlanCompileError, match="one layer per rollout step"):
+        compile_execution_plan(config)
+
+
+@pytest.mark.parametrize("depth", [None, -1, 3])
+def test_independent_predictors_require_valid_depth(depth):
+    draft = model(3)
+    hidden = torch.zeros(1, 1, 16)
+    token = torch.zeros(1, 1, dtype=torch.long)
+    kwargs = {} if depth is None else {"depth": depth}
+    with pytest.raises(ValueError, match="depth"):
+        draft.predict(hidden, token, token, **kwargs)
+
+
+def test_exact_resume_preserves_independent_predictor_identity():
+    from aspec.training.checkpoint import (
+        _logical_training_topology,
+        _validate_exact_resume_topology,
+    )
+
+    config = load_config(str(ROOT / "configs/recipes/qwen3_5_9b_mtp.yaml"), save_snapshot=False)
+    config.training.training_num_gpus_per_node = 1
+    args = compile_execution_plan(config).to_runtime_args()
+    args.draft_model_config_obj = model(3).config
+    saved = {"world_size": 1, "training_topology": _logical_training_topology(args, 1)}
+    _validate_exact_resume_topology(args, saved)
+    args.draft_model_config_obj = model().config
+    with pytest.raises(RuntimeError, match="logical training-topology"):
+        _validate_exact_resume_topology(args, saved)
+
+
+def test_independent_predictors_initialize_train_export_and_reload(tmp_path):
+    import torch.distributed.checkpoint as dcp
+
+    from aspec.draft_artifact import load_native_draft
+
+    torch.manual_seed(60)
+    shared, draft = model(), model(3)
+    save_file(shared.state_dict_for_serving(), str(tmp_path / "model.safetensors"))
+    draft.initialize_native_weights(str(tmp_path))
+    draft.load_embedding(str(tmp_path), embedding_key="model.embed_tokens.weight")
+    draft.load_lm_head(str(tmp_path), lm_head_key="lm_head.weight")
+    ids = torch.randint(0, 32, (1, 12))
+    hidden = torch.randn(1, 12, 16)
+    mask = torch.ones_like(ids)
+
+    @torch.no_grad()
+    def logits(predictor):
+        state = hidden[:, :8]
+        outputs = []
+        for depth in range(3):
+            tokens = ids[:, depth + 1:depth + 9]
+            state = predictor.predict(state, tokens, torch.arange(8)[None], depth=depth)
+            outputs.append(predictor.compute_logits(state))
+        return torch.stack(outputs)
+
+    torch.testing.assert_close(logits(draft), logits(shared), atol=0, rtol=0)
+    wrapper = MTPModel(draft, length=3, gradient_checkpointing=True)
+    optimizer = torch.optim.AdamW([p for p in draft.parameters() if p.requires_grad], lr=0.001)
+    sum(wrapper(ids, hidden, mask, mask)[0]).backward()
+    optimizer.step()
+    assert len({block.fc.weight.data_ptr() for block in draft.predictors}) == 3
+    assert all(not torch.equal(block.fc.weight, shared.fc.weight) for block in draft.predictors)
+    assert not torch.equal(draft.predictors[1].fc.weight, draft.predictors[2].fc.weight)
+    expected = logits(draft)
+    root = tmp_path / "iter_0000001"
+    dcp.save({"model": wrapper.state_dict()}, checkpoint_id=root / "model")
+    (root / "draft_config.json").write_text(json.dumps(draft.config.to_dict()))
+    output = tmp_path / "export"
+    with pytest.raises(NotImplementedError, match="--format aspec"):
+        convert_to_hf.convert_checkpoint(input_dir=root, output_dir=output)
+    convert_to_hf.convert_checkpoint(input_dir=root, output_dir=output, artifact_format="aspec")
+    restored = load_native_draft(output)
+    torch.testing.assert_close(logits(restored), expected, atol=0, rtol=0)
+    for name, weight in draft.state_dict().items():
+        torch.testing.assert_close(restored.state_dict()[name], weight, atol=0, rtol=0)
+    restored.predictors[1], restored.predictors[2] = restored.predictors[2], restored.predictors[1]
+    swapped = logits(restored)
+    assert torch.equal(swapped[0], expected[0])
+    assert not torch.equal(swapped[1], expected[1])

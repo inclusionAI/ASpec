@@ -55,7 +55,7 @@ binding algorithm, vocabulary, structure, source and hashes. Missing/unexpected 
 Frozen Target tensor bindings remain part of the contract; partial loader success is not compatibility.
 
 CSA/QSA and other native paths that cannot faithfully use official loaders require `--format aspec`
-and their strict loader/proposal component, not a renamed SGLang model. Native MTP can be stitched
+and their strict loader/proposal component, not a renamed SGLang model. Single-layer Qwen3.5 MTP can be stitched
 back with `aspec stitch-mtp`; see [algorithm contracts](algorithms.md).
 These components are not a turnkey serving runtime or arbitrary Target-cache compatibility guarantee.
 
