@@ -101,10 +101,8 @@ by the model position limit and the remaining token budget.
 
 The bundled verifier batches teacher-forced candidate paths through the Target and re-runs the
 prefix on every step: it is a reference evaluator, not a serving runtime, and it makes no
-throughput or SGLang-compatibility claim. It is restricted to the supported Target families
-(Qwen3/Ling) and expects next-token logits to be the direct `lm_head(last_hidden_state)`
-projection; Targets with final-logit softcapping, scaling or other output transformations are
-rejected after validation at several sequence lengths. `--sampling` accepts `greedy` (default),
+throughput or SGLang-compatibility claim. It uses the Target's full `model(...).logits`, so
+Target-side output transformations are honored. `--sampling` accepts `greedy` (default),
 `typical` (fast deterministic threshold) or `nucleus` (seeded top-p); `decode_equal` is only
 reported for greedy, while sampling reports acceptance length and repeat stability with the same
 seed.

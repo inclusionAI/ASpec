@@ -262,48 +262,46 @@ def test_nucleus_acceptance_filters_top_p_across_positions():
     assert acceptance.accepted_tokens.tolist() == [10, 1]
 
 
-def test_hf_verifier_rejects_unsupported_output_transforms():
+def test_verifier_uses_full_target_logits_for_output_transforms():
     from types import SimpleNamespace
 
     class Base(torch.nn.Module):
-        def forward(self, input_ids, attention_mask, use_cache=False):
+        def forward(self, input_ids, attention_mask=None, use_cache=False):
             return SimpleNamespace(
                 last_hidden_state=torch.ones(1, input_ids.shape[1], 4))
 
     class Model(torch.nn.Module):
-        def __init__(self, **config):
+        def __init__(self):
             super().__init__()
             self.model = Base()
             self.lm_head = torch.nn.Linear(4, 8, bias=False)
-            self.config = SimpleNamespace(model_type="llama", **config)
+            self.config = SimpleNamespace()
 
-        def forward(self, input_ids, attention_mask=None, use_cache=False):
+        def forward(self, input_ids, attention_mask=None, use_cache=False,
+                    logits_to_keep=None):
             hidden = self.model(input_ids, attention_mask).last_hidden_state
-            return SimpleNamespace(logits=self.lm_head(hidden))
+            logits = self.lm_head(hidden)
+            if input_ids.shape[1] > 4:
+                logits = logits * 2
+            if logits_to_keep is not None:
+                logits = logits[:, -logits_to_keep:]
+            return SimpleNamespace(logits=logits)
 
-    class ScaledModel(Model):
-        def forward(self, input_ids, attention_mask=None, use_cache=False):
-            output = super().forward(input_ids, attention_mask, use_cache)
-            return SimpleNamespace(logits=output.logits * 2)
+    model = Model()
+    verifier = HFCausalVerifier(model)
+    prefix = torch.arange(1, 6).reshape(1, 5)
+    _, logits = verifier.prefill(prefix)
+    full = model(input_ids=prefix).logits[0, -1]
+    torch.testing.assert_close(logits, full, rtol=1e-5, atol=1e-6)
 
-    class LengthScaledModel(Model):
-        def forward(self, input_ids, attention_mask=None, use_cache=False):
-            output = super().forward(input_ids, attention_mask, use_cache)
-            if input_ids.shape[1] > 1:
-                return SimpleNamespace(logits=output.logits * 2)
-            return output
-
-    with pytest.raises(ValueError, match="final_logit_softcapping"):
-        HFCausalVerifier(Model(final_logit_softcapping=30.0))
-    with pytest.raises(ValueError, match="logit_scale"):
-        HFCausalVerifier(Model(logit_scale=0.5))
-    with pytest.raises(ValueError, match="logit_softcap"):
-        HFCausalVerifier(Model(logit_softcap=30.0))
-    with pytest.raises(ValueError, match="output logits differ"):
-        HFCausalVerifier(ScaledModel(logit_scale=1.0))
-    with pytest.raises(ValueError, match="output logits differ"):
-        HFCausalVerifier(LengthScaledModel(logit_scale=1.0))
-    HFCausalVerifier(Model(logit_scale=1.0))
+    candidates = torch.tensor([[6, 7, 8], [9, 10, 0]])
+    lengths = torch.tensor([3, 2])
+    actual = verifier.verify_logits(prefix, candidates, lengths)
+    for row, length in enumerate(lengths.tolist()):
+        sequence = torch.cat([prefix[0], candidates[row, :length]])
+        expected = model(input_ids=sequence[None]).logits[0, 5:5 + length - 1]
+        torch.testing.assert_close(
+            actual[row, :length - 1], expected, rtol=1e-5, atol=1e-6)
 
 
 def test_prefill_and_verify_logits_match_full_model_logits():

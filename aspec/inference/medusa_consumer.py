@@ -38,12 +38,6 @@ DEFAULT_MEDUSA_CHOICES = [
 ]
 
 
-_SUPPORTED_OUTPUT_MODEL_TYPES = frozenset({
-    "qwen3", "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text",
-    "bailing_hybrid", "llama", "opt",
-})
-
-
 @dataclass(frozen=True)
 class TreeBuffers:
     choices: tuple[tuple[int, ...], ...]
@@ -509,8 +503,8 @@ class MedusaConsumer:
 class HFCausalVerifier:
     """Reference verifier: batched teacher-forced paths through a Hugging Face causal LM.
 
-    Exact for greedy acceptance. It re-runs the prefix on every step and makes no
-    throughput, KV-cache or serving claim.
+    Uses the Target's full ``model(...).logits`` so output transformations are honored.
+    It re-runs the prefix on every step and makes no throughput, KV-cache or serving claim.
     """
 
     def __init__(
@@ -528,62 +522,31 @@ class HFCausalVerifier:
         self.base = getattr(model, "model", None)
         if self.base is None or not hasattr(self.base, "forward"):
             raise ValueError("HFCausalVerifier requires a causal LM exposing model.model")
-        self.lm_head = getattr(model, "lm_head", None)
-        if self.lm_head is None:
-            raise ValueError("HFCausalVerifier requires a causal LM exposing lm_head")
         max_positions = getattr(model.config, "max_position_embeddings", None)
         self.max_positions = (
             int(max_positions)
             if isinstance(max_positions, int) and max_positions > 0 else None)
-        self._reject_output_transforms(model.config)
-        self._validate_output_path()
 
     @torch.no_grad()
-    def _validate_output_path(self):
-        model_type = getattr(self.model.config, "model_type", None)
-        if model_type not in _SUPPORTED_OUTPUT_MODEL_TYPES:
-            raise ValueError(
-                f"Unsupported Target model_type {model_type!r} for the reference verifier")
-        token = getattr(self.model.config, "bos_token_id", None)
-        if not isinstance(token, int):
-            token = getattr(self.model.config, "eos_token_id", None)
-        if not isinstance(token, int):
-            token = 0
-        for length in (1, 2, 4):
-            if self.max_positions is not None and length > self.max_positions:
-                continue
-            input_ids = torch.full(
-                (1, length), token, dtype=torch.long, device=self.device)
-            attention = torch.ones_like(input_ids)
-            hidden = self._forward(input_ids, attention)[0, -1]
-            direct = self.lm_head(hidden).float()
-            try:
-                outputs = self.model(
-                    input_ids=input_ids, attention_mask=attention, use_cache=False)
-                full = outputs.logits[0, -1].float()
-            except Exception as exc:
-                raise ValueError(
-                    "HFCausalVerifier cannot validate the Target output logits") from exc
-            if direct.shape != full.shape or not torch.allclose(
-                    direct, full, rtol=1e-3, atol=1e-3):
-                raise ValueError(
-                    "Target output logits differ from lm_head(last_hidden_state); "
-                    "use a Target without output transformations")
-
-    @staticmethod
-    def _reject_output_transforms(config):
-        softcap = getattr(config, "final_logit_softcapping", None)
-        if softcap is not None:
-            raise ValueError(
-                "Target final_logit_softcapping is not supported by the reference verifier")
-        scale = getattr(config, "logit_scale", None)
-        if scale is not None and float(scale) != 1.0:
-            raise ValueError(
-                "Target logit_scale is not supported by the reference verifier")
-        softcap = getattr(config, "logit_softcap", None)
-        if softcap is not None:
-            raise ValueError(
-                "Target logit_softcap is not supported by the reference verifier")
+    def _full_logits(
+        self, input_ids: Tensor, attention_mask: Tensor, *, keep: int | None = None,
+    ) -> Tensor:
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
+        kwargs = {"use_cache": False}
+        if keep is not None:
+            kwargs["logits_to_keep"] = int(keep)
+        try:
+            outputs = self.model(
+                input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+            logits = outputs.logits
+        except TypeError:
+            outputs = self.model(
+                input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+            logits = outputs.logits
+        if keep is not None and logits.shape[1] != int(keep):
+            logits = logits[:, -int(keep):]
+        return logits
 
     def _forward(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
         outputs = self.base(
@@ -596,8 +559,9 @@ class HFCausalVerifier:
     @torch.no_grad()
     def prefill(self, prefix_ids: Tensor) -> tuple[Tensor, Tensor]:
         prefix = prefix_ids.reshape(1, -1).long().to(self.device)
-        hidden = self._forward(prefix, torch.ones_like(prefix))[0, -1]
-        logits = self.lm_head(hidden)
+        attention = torch.ones_like(prefix)
+        hidden = self._forward(prefix, attention)[0, -1]
+        logits = self._full_logits(prefix, attention, keep=1)[0, -1]
         return hidden, logits
 
     @torch.no_grad()
@@ -619,10 +583,8 @@ class HFCausalVerifier:
             attention = torch.cat(
                 [torch.ones((rows.shape[0], prefix.numel()), dtype=torch.long,
                             device=self.device), mask.long()], dim=1)
-            hidden = self._forward(sequences, attention)
-            path_hidden = hidden[:, prefix.numel():prefix.numel() + width - 1]
-            next_tokens = self.lm_head(path_hidden).argmax(dim=-1)
-            outputs[start:stop] = next_tokens
+            path_logits = self._full_logits(sequences, attention, keep=width)
+            outputs[start:stop] = path_logits[:, :width - 1].argmax(dim=-1)
         return outputs
 
     @torch.no_grad()
@@ -633,9 +595,10 @@ class HFCausalVerifier:
         paths = candidates.to(self.device)
         lengths = lengths.to(self.device)
         width = int(lengths.max())
-        vocab = getattr(self.lm_head, "out_features", None)
-        if vocab is None:
-            vocab = int(self.model.config.vocab_size)
+        vocab = getattr(self.model.config, "vocab_size", None)
+        if not isinstance(vocab, int) or vocab <= 0:
+            head = getattr(self.model, "lm_head", None)
+            vocab = int(getattr(head, "out_features"))
         outputs = torch.empty(
             (paths.shape[0], width - 1, vocab), dtype=torch.float32, device=self.device)
         for start in range(0, paths.shape[0], self.verify_batch_size):
@@ -649,9 +612,8 @@ class HFCausalVerifier:
             attention = torch.cat(
                 [torch.ones((rows.shape[0], prefix.numel()), dtype=torch.long,
                             device=self.device), mask.long()], dim=1)
-            hidden = self._forward(sequences, attention)
-            path_hidden = hidden[:, prefix.numel():prefix.numel() + width - 1]
-            outputs[start:stop] = self.lm_head(path_hidden).float()
+            path_logits = self._full_logits(sequences, attention, keep=width)
+            outputs[start:stop] = path_logits[:, :width - 1].float()
         return outputs
 
     @torch.no_grad()
