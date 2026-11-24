@@ -92,7 +92,10 @@ def main():
         value.manual_seed(args.seed)
         return value
 
-    eos = tokenizer.eos_token_id
+    generation_config = getattr(target, "generation_config", None)
+    eos = getattr(generation_config, "eos_token_id", None)
+    if eos is None:
+        eos = tokenizer.eos_token_id
     results = []
     for ids in prompts:
         prefix = torch.tensor(ids, dtype=torch.long)

@@ -38,6 +38,12 @@ DEFAULT_MEDUSA_CHOICES = [
 ]
 
 
+_SUPPORTED_OUTPUT_MODEL_TYPES = frozenset({
+    "qwen3", "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text",
+    "bailing_hybrid", "llama", "opt",
+})
+
+
 @dataclass(frozen=True)
 class TreeBuffers:
     choices: tuple[tuple[int, ...], ...]
@@ -356,6 +362,18 @@ def accept_greedy(proposal: TreeProposal, next_tokens: Tensor) -> Acceptance:
                       accepted_tokens=accepted_tokens)
 
 
+def _stop_token_ids(eos_token_id) -> frozenset[int]:
+    if eos_token_id is None:
+        return frozenset()
+    if isinstance(eos_token_id, int):
+        return frozenset({int(eos_token_id)})
+    try:
+        return frozenset(int(value) for value in eos_token_id)
+    except TypeError as exc:
+        raise ValueError(
+            "eos_token_id must be an integer or a sequence of integers") from exc
+
+
 class MedusaConsumer:
     """Greedy speculative steps with explicit acceptance accounting."""
 
@@ -382,6 +400,7 @@ class MedusaConsumer:
         posterior_threshold: float = 0.3,
         posterior_alpha: float = 0.09,
         generator: torch.Generator | None = None,
+        remaining_tokens: int | None = None,
     ) -> Acceptance:
         hidden, base_logits = self.verifier.prefill(prefix_ids)
         if sampling == "nucleus":
@@ -392,9 +411,21 @@ class MedusaConsumer:
             bonus = sample_nucleus_token(
                 base_logits, temperature=temperature, top_p=top_p,
                 generator=generator)
-            proposal = self.proposer.propose(hidden, base_logits, bonus_token=bonus)
         else:
-            proposal = self.proposer.propose(hidden, base_logits)
+            bonus = base_logits.reshape(-1).argmax()
+        if remaining_tokens is not None and remaining_tokens <= 1:
+            return Acceptance(
+                path_index=0, accept_length=0, accepted_tokens=bonus.reshape(1))
+        bonus_override = bonus if sampling == "nucleus" else None
+        proposal = self.proposer.propose(
+            hidden, base_logits, bonus_token=bonus_override)
+        if remaining_tokens is not None and remaining_tokens < proposal.candidates.shape[1]:
+            proposal = TreeProposal(
+                bonus_token=proposal.bonus_token,
+                candidates=proposal.candidates[:, :remaining_tokens],
+                lengths=proposal.lengths.clamp(max=remaining_tokens),
+                medusa_logits=proposal.medusa_logits,
+            )
         if sampling == "greedy":
             next_tokens = self.verifier.verify(
                 prefix_ids, proposal.candidates, proposal.lengths)
@@ -427,7 +458,7 @@ class MedusaConsumer:
         prefix_ids: Tensor,
         *,
         max_new_tokens: int,
-        eos_token_id: int | None = None,
+        eos_token_id: int | Sequence[int] | None = None,
         sampling: str = "greedy",
         temperature: float = 0.0,
         top_p: float = 0.8,
@@ -439,24 +470,31 @@ class MedusaConsumer:
             raise ValueError("max_new_tokens must be positive")
         device = getattr(self.verifier, "device", prefix_ids.device)
         prefix = prefix_ids.reshape(1, -1).long().to(device)
+        budget = max_new_tokens
+        max_positions = getattr(self.verifier, "max_positions", None)
+        if isinstance(max_positions, int) and max_positions > 0:
+            budget = min(budget, max_positions - prefix.shape[1])
         generated = prefix
         steps = 0
         accepted_tokens = 0
-        while accepted_tokens < max_new_tokens:
+        stop_ids = _stop_token_ids(eos_token_id)
+        while accepted_tokens < budget:
+            remaining = budget - accepted_tokens
             acceptance = self.step(
                 generated, sampling=sampling, temperature=temperature,
                 top_p=top_p, posterior_threshold=posterior_threshold,
-                posterior_alpha=posterior_alpha, generator=generator)
+                posterior_alpha=posterior_alpha, generator=generator,
+                remaining_tokens=remaining)
             new = acceptance.accepted_tokens
-            remaining = max_new_tokens - accepted_tokens
             if new.numel() > remaining:
                 new = new[:remaining]
             generated = torch.cat([generated, new.reshape(1, -1)], dim=1)
             accepted_tokens += new.numel()
             steps += 1
-            if eos_token_id is not None and int(eos_token_id) in new.tolist():
-                stop = (generated.shape[1] - new.numel()
-                        + new.tolist().index(int(eos_token_id)))
+            stops = [index for index, token in enumerate(new.tolist())
+                     if token in stop_ids]
+            if stops:
+                stop = generated.shape[1] - new.numel() + stops[0]
                 generated = generated[:, :stop + 1]
                 accepted_tokens = generated.shape[1] - prefix.shape[1]
                 break
@@ -493,32 +531,44 @@ class HFCausalVerifier:
         self.lm_head = getattr(model, "lm_head", None)
         if self.lm_head is None:
             raise ValueError("HFCausalVerifier requires a causal LM exposing lm_head")
+        max_positions = getattr(model.config, "max_position_embeddings", None)
+        self.max_positions = (
+            int(max_positions)
+            if isinstance(max_positions, int) and max_positions > 0 else None)
         self._reject_output_transforms(model.config)
         self._validate_output_path()
 
     @torch.no_grad()
     def _validate_output_path(self):
+        model_type = getattr(self.model.config, "model_type", None)
+        if model_type not in _SUPPORTED_OUTPUT_MODEL_TYPES:
+            raise ValueError(
+                f"Unsupported Target model_type {model_type!r} for the reference verifier")
         token = getattr(self.model.config, "bos_token_id", None)
         if not isinstance(token, int):
             token = getattr(self.model.config, "eos_token_id", None)
         if not isinstance(token, int):
             token = 0
-        input_ids = torch.tensor([[token]], dtype=torch.long, device=self.device)
-        attention = torch.ones_like(input_ids)
-        hidden = self._forward(input_ids, attention)[0, -1]
-        direct = self.lm_head(hidden).float()
-        try:
-            outputs = self.model(
-                input_ids=input_ids, attention_mask=attention, use_cache=False)
-            full = outputs.logits[0, -1].float()
-        except Exception as exc:
-            raise ValueError(
-                "HFCausalVerifier cannot validate the Target output logits") from exc
-        if direct.shape != full.shape or not torch.allclose(
-                direct, full, rtol=1e-3, atol=1e-3):
-            raise ValueError(
-                "Target output logits differ from lm_head(last_hidden_state); "
-                "use a Target without output transformations")
+        for length in (1, 2, 4):
+            if self.max_positions is not None and length > self.max_positions:
+                continue
+            input_ids = torch.full(
+                (1, length), token, dtype=torch.long, device=self.device)
+            attention = torch.ones_like(input_ids)
+            hidden = self._forward(input_ids, attention)[0, -1]
+            direct = self.lm_head(hidden).float()
+            try:
+                outputs = self.model(
+                    input_ids=input_ids, attention_mask=attention, use_cache=False)
+                full = outputs.logits[0, -1].float()
+            except Exception as exc:
+                raise ValueError(
+                    "HFCausalVerifier cannot validate the Target output logits") from exc
+            if direct.shape != full.shape or not torch.allclose(
+                    direct, full, rtol=1e-3, atol=1e-3):
+                raise ValueError(
+                    "Target output logits differ from lm_head(last_hidden_state); "
+                    "use a Target without output transformations")
 
     @staticmethod
     def _reject_output_transforms(config):
@@ -610,18 +660,22 @@ class HFCausalVerifier:
         prefix_ids: Tensor,
         *,
         max_new_tokens: int,
-        eos_token_id: int | None = None,
+        eos_token_id: int | Sequence[int] | None = None,
     ) -> dict[str, Any]:
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
         generated = prefix_ids.reshape(1, -1).long().to(self.device)
+        budget = max_new_tokens
+        if self.max_positions is not None:
+            budget = min(budget, self.max_positions - generated.shape[1])
+        stop_ids = _stop_token_ids(eos_token_id)
         steps = 0
-        while steps < max_new_tokens:
+        while steps < budget:
             _, logits = self.prefill(generated)
             token = logits.argmax().reshape(1, 1)
             generated = torch.cat([generated, token], dim=1)
             steps += 1
-            if eos_token_id is not None and int(token) == int(eos_token_id):
+            if int(token) in stop_ids:
                 break
         return {
             "token_ids": generated[0],

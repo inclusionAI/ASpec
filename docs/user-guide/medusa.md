@@ -95,11 +95,16 @@ python -m tools.evaluate_medusa_acceptance \
 
 The report records `acceptance_length = generated_tokens / verifier_calls` (includes the bonus
 token), greedy decode equality against Target-only decoding, and repeat stability, together with
-the artifact and tree-config hashes. The bundled verifier batches teacher-forced candidate paths
-through the Target and re-runs the prefix on every step: it is a reference evaluator, not a
-serving runtime, and it makes no throughput or SGLang-compatibility claim. It requires Targets
-whose next-token logits are the direct `lm_head(last_hidden_state)` projection; Targets that
-apply final-logit softcapping or scaling are rejected. `--sampling` accepts
-`greedy` (default), `typical` (fast deterministic threshold) or `nucleus` (seeded top-p);
-`decode_equal` is only reported for greedy, while sampling reports acceptance length and
-repeat stability with the same seed.
+the artifact and tree-config hashes. EOS handling uses the Target's full
+`generation_config.eos_token_id` list (falling back to the tokenizer), and generation is capped
+by the model position limit and the remaining token budget.
+
+The bundled verifier batches teacher-forced candidate paths through the Target and re-runs the
+prefix on every step: it is a reference evaluator, not a serving runtime, and it makes no
+throughput or SGLang-compatibility claim. It is restricted to the supported Target families
+(Qwen3/Ling) and expects next-token logits to be the direct `lm_head(last_hidden_state)`
+projection; Targets with final-logit softcapping, scaling or other output transformations are
+rejected after validation at several sequence lengths. `--sampling` accepts `greedy` (default),
+`typical` (fast deterministic threshold) or `nucleus` (seeded top-p); `decode_equal` is only
+reported for greedy, while sampling reports acceptance length and repeat stability with the same
+seed.

@@ -21,12 +21,12 @@ from aspec.inference.medusa_consumer import (
 )
 
 
-def _tiny_model():
+def _tiny_model(max_position_embeddings=128):
     torch.manual_seed(5)
     config = LlamaConfig(
         vocab_size=32, hidden_size=16, intermediate_size=32, num_hidden_layers=1,
-        num_attention_heads=2, num_key_value_heads=1, max_position_embeddings=128,
-        pad_token_id=0,
+        num_attention_heads=2, num_key_value_heads=1,
+        max_position_embeddings=max_position_embeddings, pad_token_id=0,
     )
     return LlamaForCausalLM(config).eval()
 
@@ -275,7 +275,7 @@ def test_hf_verifier_rejects_unsupported_output_transforms():
             super().__init__()
             self.model = Base()
             self.lm_head = torch.nn.Linear(4, 8, bias=False)
-            self.config = SimpleNamespace(**config)
+            self.config = SimpleNamespace(model_type="llama", **config)
 
         def forward(self, input_ids, attention_mask=None, use_cache=False):
             hidden = self.model(input_ids, attention_mask).last_hidden_state
@@ -286,6 +286,13 @@ def test_hf_verifier_rejects_unsupported_output_transforms():
             output = super().forward(input_ids, attention_mask, use_cache)
             return SimpleNamespace(logits=output.logits * 2)
 
+    class LengthScaledModel(Model):
+        def forward(self, input_ids, attention_mask=None, use_cache=False):
+            output = super().forward(input_ids, attention_mask, use_cache)
+            if input_ids.shape[1] > 1:
+                return SimpleNamespace(logits=output.logits * 2)
+            return output
+
     with pytest.raises(ValueError, match="final_logit_softcapping"):
         HFCausalVerifier(Model(final_logit_softcapping=30.0))
     with pytest.raises(ValueError, match="logit_scale"):
@@ -294,6 +301,8 @@ def test_hf_verifier_rejects_unsupported_output_transforms():
         HFCausalVerifier(Model(logit_softcap=30.0))
     with pytest.raises(ValueError, match="output logits differ"):
         HFCausalVerifier(ScaledModel(logit_scale=1.0))
+    with pytest.raises(ValueError, match="output logits differ"):
+        HFCausalVerifier(LengthScaledModel(logit_scale=1.0))
     HFCausalVerifier(Model(logit_scale=1.0))
 
 
@@ -313,3 +322,31 @@ def test_prefill_and_verify_logits_match_full_model_logits():
         expected = model(input_ids=sequence[None]).logits[0, 3:3 + length - 1]
         torch.testing.assert_close(
             logits[row, :length - 1], expected, rtol=1e-5, atol=1e-6)
+
+
+
+def test_generation_uses_all_stop_tokens():
+    from types import SimpleNamespace
+
+    consumer = object.__new__(MedusaConsumer)
+    consumer.verifier = SimpleNamespace(device=torch.device("cpu"))
+    consumer.step = lambda ids, **kwargs: Acceptance(
+        path_index=0, accept_length=1, accepted_tokens=torch.tensor([9, 0]))
+    result = consumer.generate(
+        torch.tensor([[7, 2, 8]]), max_new_tokens=5, eos_token_id=[2, 0])
+    assert result["token_ids"].tolist() == [7, 2, 8, 9, 0]
+    assert result["generated_tokens"] == 2
+
+
+def test_generation_is_capped_by_max_positions():
+    model = _tiny_model(max_position_embeddings=16)
+    verifier = HFCausalVerifier(model)
+    draft = _FixedDraft(heads=2, vocab=32)
+    consumer = MedusaConsumer(
+        draft, verifier, medusa_choices=[[0], [1], [0, 0], [0, 1]], top_k=2)
+    prefix = torch.arange(1, 16).reshape(1, 15)
+    speculative = consumer.generate(prefix, max_new_tokens=4)
+    baseline = verifier.greedy_generate(prefix, max_new_tokens=4)
+    assert speculative["token_ids"].tolist() == baseline["token_ids"].tolist()
+    assert speculative["token_ids"].numel() == 16
+    assert speculative["generated_tokens"] == 1
