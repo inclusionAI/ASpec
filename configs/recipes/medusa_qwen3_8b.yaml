@@ -68,9 +68,10 @@ mooncake:
   max_seq_len: 4096
   hidden_dim: 4096
   global_segment_size: 32GB
-  local_buffer_size: 2GB
-  host_buffer_size: 2GB
-  async_put_pool_size: 8
+  local_buffer_size: 8GB
+  host_buffer_size: 1GB
+  async_put_pool_size: 1
+  enable_hard_pin: true
 logging:
   report_to: none
 output_dir: outputs/qwen3-8b-medusa
