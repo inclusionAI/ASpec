@@ -493,6 +493,22 @@ class HFCausalVerifier:
         self.lm_head = getattr(model, "lm_head", None)
         if self.lm_head is None:
             raise ValueError("HFCausalVerifier requires a causal LM exposing lm_head")
+        self._reject_output_transforms(model.config)
+
+    @staticmethod
+    def _reject_output_transforms(config):
+        softcap = getattr(config, "final_logit_softcapping", None)
+        if softcap is not None:
+            raise ValueError(
+                "Target final_logit_softcapping is not supported by the reference verifier")
+        scale = getattr(config, "logit_scale", None)
+        if scale is not None and float(scale) != 1.0:
+            raise ValueError(
+                "Target logit_scale is not supported by the reference verifier")
+        softcap = getattr(config, "logit_softcap", None)
+        if softcap is not None:
+            raise ValueError(
+                "Target logit_softcap is not supported by the reference verifier")
 
     def _forward(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
         outputs = self.base(
@@ -504,14 +520,14 @@ class HFCausalVerifier:
 
     @torch.no_grad()
     def prefill(self, prefix_ids: Tensor) -> tuple[Tensor, Tensor]:
-        prefix = prefix_ids.reshape(1, -1).long()
+        prefix = prefix_ids.reshape(1, -1).long().to(self.device)
         hidden = self._forward(prefix, torch.ones_like(prefix))[0, -1]
         logits = self.lm_head(hidden)
         return hidden, logits
 
     @torch.no_grad()
     def verify(self, prefix_ids: Tensor, candidates: Tensor, lengths: Tensor) -> Tensor:
-        prefix = prefix_ids.reshape(-1).long()
+        prefix = prefix_ids.reshape(-1).long().to(self.device)
         paths = candidates.to(self.device)
         lengths = lengths.to(self.device)
         width = int(lengths.max())
@@ -538,7 +554,7 @@ class HFCausalVerifier:
     def verify_logits(
         self, prefix_ids: Tensor, candidates: Tensor, lengths: Tensor) -> Tensor:
         """Return next-token logits at candidate prediction positions [paths, width-1, vocab]."""
-        prefix = prefix_ids.reshape(-1).long()
+        prefix = prefix_ids.reshape(-1).long().to(self.device)
         paths = candidates.to(self.device)
         lengths = lengths.to(self.device)
         width = int(lengths.max())

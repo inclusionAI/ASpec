@@ -97,7 +97,9 @@ The report records `acceptance_length = generated_tokens / verifier_calls` (incl
 token), greedy decode equality against Target-only decoding, and repeat stability, together with
 the artifact and tree-config hashes. The bundled verifier batches teacher-forced candidate paths
 through the Target and re-runs the prefix on every step: it is a reference evaluator, not a
-serving runtime, and it makes no throughput or SGLang-compatibility claim. `--sampling` accepts
+serving runtime, and it makes no throughput or SGLang-compatibility claim. It requires Targets
+whose next-token logits are the direct `lm_head(last_hidden_state)` projection; Targets that
+apply final-logit softcapping or scaling are rejected. `--sampling` accepts
 `greedy` (default), `typical` (fast deterministic threshold) or `nucleus` (seeded top-p);
 `decode_equal` is only reported for greedy, while sampling reports acceptance length and
 repeat stability with the same seed.

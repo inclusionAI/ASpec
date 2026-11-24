@@ -260,3 +260,27 @@ def test_nucleus_acceptance_filters_top_p_across_positions():
         generator=torch.Generator().manual_seed(7))
     assert acceptance.accept_length == 1
     assert acceptance.accepted_tokens.tolist() == [10, 1]
+
+
+def test_hf_verifier_rejects_unsupported_output_transforms():
+    from types import SimpleNamespace
+
+    class Base(torch.nn.Module):
+        def forward(self, input_ids, attention_mask, use_cache=False):
+            return SimpleNamespace(
+                last_hidden_state=torch.zeros(1, input_ids.shape[1], 4))
+
+    class Model(torch.nn.Module):
+        def __init__(self, **config):
+            super().__init__()
+            self.model = Base()
+            self.lm_head = torch.nn.Linear(4, 8, bias=False)
+            self.config = SimpleNamespace(**config)
+
+    with pytest.raises(ValueError, match="final_logit_softcapping"):
+        HFCausalVerifier(Model(final_logit_softcapping=30.0))
+    with pytest.raises(ValueError, match="logit_scale"):
+        HFCausalVerifier(Model(logit_scale=0.5))
+    with pytest.raises(ValueError, match="logit_softcap"):
+        HFCausalVerifier(Model(logit_softcap=30.0))
+    HFCausalVerifier(Model(logit_scale=1.0))
