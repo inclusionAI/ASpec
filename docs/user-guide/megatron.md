@@ -281,8 +281,10 @@ for draft in torch megatron; do
 done
 ```
 
-The comparison checks the document order, token IDs, masks, received hidden
-states and supervision weights for each rank and microbatch. It pools the
+For each context rank and microbatch, the comparison checks the sequence of
+document lengths and the hashes of the packed token IDs, loss mask and received
+Target hidden states against Torch. It also checks the anchor seed and
+supervision weight, plus the context positions at CP2. It pools the
 objective over both microbatches and all context shards before computing the
 per-step relative difference against Torch in `objectives.json`.
 
