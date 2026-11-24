@@ -268,7 +268,7 @@ def test_hf_verifier_rejects_unsupported_output_transforms():
     class Base(torch.nn.Module):
         def forward(self, input_ids, attention_mask, use_cache=False):
             return SimpleNamespace(
-                last_hidden_state=torch.zeros(1, input_ids.shape[1], 4))
+                last_hidden_state=torch.ones(1, input_ids.shape[1], 4))
 
     class Model(torch.nn.Module):
         def __init__(self, **config):
@@ -277,10 +277,39 @@ def test_hf_verifier_rejects_unsupported_output_transforms():
             self.lm_head = torch.nn.Linear(4, 8, bias=False)
             self.config = SimpleNamespace(**config)
 
+        def forward(self, input_ids, attention_mask=None, use_cache=False):
+            hidden = self.model(input_ids, attention_mask).last_hidden_state
+            return SimpleNamespace(logits=self.lm_head(hidden))
+
+    class ScaledModel(Model):
+        def forward(self, input_ids, attention_mask=None, use_cache=False):
+            output = super().forward(input_ids, attention_mask, use_cache)
+            return SimpleNamespace(logits=output.logits * 2)
+
     with pytest.raises(ValueError, match="final_logit_softcapping"):
         HFCausalVerifier(Model(final_logit_softcapping=30.0))
     with pytest.raises(ValueError, match="logit_scale"):
         HFCausalVerifier(Model(logit_scale=0.5))
     with pytest.raises(ValueError, match="logit_softcap"):
         HFCausalVerifier(Model(logit_softcap=30.0))
+    with pytest.raises(ValueError, match="output logits differ"):
+        HFCausalVerifier(ScaledModel(logit_scale=1.0))
     HFCausalVerifier(Model(logit_scale=1.0))
+
+
+def test_prefill_and_verify_logits_match_full_model_logits():
+    model = _tiny_model()
+    verifier = HFCausalVerifier(model)
+    prefix = torch.tensor([[1, 2, 3]])
+    _, direct = verifier.prefill(prefix)
+    full = model(input_ids=prefix).logits[0, -1]
+    torch.testing.assert_close(direct, full, rtol=1e-5, atol=1e-6)
+
+    candidates = torch.tensor([[4, 5, 6], [7, 8, 0]])
+    lengths = torch.tensor([3, 2])
+    logits = verifier.verify_logits(prefix, candidates, lengths)
+    for row, length in enumerate(lengths.tolist()):
+        sequence = torch.cat([prefix[0], candidates[row, :length]])
+        expected = model(input_ids=sequence[None]).logits[0, 3:3 + length - 1]
+        torch.testing.assert_close(
+            logits[row, :length - 1], expected, rtol=1e-5, atol=1e-6)

@@ -494,6 +494,31 @@ class HFCausalVerifier:
         if self.lm_head is None:
             raise ValueError("HFCausalVerifier requires a causal LM exposing lm_head")
         self._reject_output_transforms(model.config)
+        self._validate_output_path()
+
+    @torch.no_grad()
+    def _validate_output_path(self):
+        token = getattr(self.model.config, "bos_token_id", None)
+        if not isinstance(token, int):
+            token = getattr(self.model.config, "eos_token_id", None)
+        if not isinstance(token, int):
+            token = 0
+        input_ids = torch.tensor([[token]], dtype=torch.long, device=self.device)
+        attention = torch.ones_like(input_ids)
+        hidden = self._forward(input_ids, attention)[0, -1]
+        direct = self.lm_head(hidden).float()
+        try:
+            outputs = self.model(
+                input_ids=input_ids, attention_mask=attention, use_cache=False)
+            full = outputs.logits[0, -1].float()
+        except Exception as exc:
+            raise ValueError(
+                "HFCausalVerifier cannot validate the Target output logits") from exc
+        if direct.shape != full.shape or not torch.allclose(
+                direct, full, rtol=1e-3, atol=1e-3):
+            raise ValueError(
+                "Target output logits differ from lm_head(last_hidden_state); "
+                "use a Target without output transformations")
 
     @staticmethod
     def _reject_output_transforms(config):
