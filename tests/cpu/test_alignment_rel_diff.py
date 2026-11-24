@@ -60,7 +60,7 @@ def test_declared_observation_steps_do_not_extend_the_trajectory():
         selected_steps("101", 100)
 
 
-def test_online_objective_pools_cp_supervision_and_checks_each_shard(tmp_path):
+def test_online_objective_pools_cp_supervision_and_checks_packed_rows(tmp_path):
     from tools.validation.megatron_packed_online import collect
 
     baseline, candidate = tmp_path / "torch", tmp_path / "megatron"
@@ -69,6 +69,7 @@ def test_online_objective_pools_cp_supervision_and_checks_each_shard(tmp_path):
     for rank in range(2):
         rows = [
             {"step": 1, "documents": [13, 17], "features": {"input_ids": "same", "hidden_states": str(rank)},
+             "work_ids": [f"doc-{2 * micro}", f"doc-{2 * micro + 1}"],
              "anchor_seed": micro, "numerator": 2 + rank, "denominator": 1 + 2 * rank}
             for micro in range(2)
         ]
@@ -79,7 +80,50 @@ def test_online_objective_pools_cp_supervision_and_checks_each_shard(tmp_path):
     (baseline / "objectives.json").write_text(json.dumps(expected))
     assert collect(candidate, 2, 1, baseline)["rel_diff"] == [0.0]
 
+    rank_one = candidate / "recipe-packed-cp1.json"
     rows[0]["features"]["hidden_states"] = "different"
-    (candidate / "recipe-packed-cp1.json").write_text(json.dumps({"rows": rows}))
+    rank_one.write_text(json.dumps({"rows": rows}))
     with pytest.raises(ValueError, match="CP rank 1, step 1"):
         collect(candidate, 2, 1, baseline)
+
+    rows[0]["features"]["hidden_states"] = "1"
+    rows[0]["work_ids"].reverse()
+    rank_one.write_text(json.dumps({"rows": rows}))
+    with pytest.raises(ValueError, match="Context ranks consumed different packed rows"):
+        collect(candidate, 2, 1)
+
+    rank_zero = candidate / "recipe-packed-cp0.json"
+    rank_zero_rows = json.loads(rank_zero.read_text())["rows"]
+    rank_zero_rows[0]["work_ids"].reverse()
+    rank_zero.write_text(json.dumps({"rows": rank_zero_rows}))
+    with pytest.raises(ValueError, match="CP rank 0, step 1"):
+        collect(candidate, 2, 1, baseline)
+
+    rank_zero_rows[0]["documents"].pop()
+    rank_zero.write_text(json.dumps({"rows": rank_zero_rows}))
+    with pytest.raises(ValueError, match="two documents per packed row"):
+        collect(candidate, 2, 1)
+
+
+def test_online_run_requires_four_committed_documents_per_step(tmp_path):
+    from tools.validation.megatron_packed_online import check_online_run
+
+    checkpoint = tmp_path / "checkpoints" / "iter_0000001"
+    checkpoint.mkdir(parents=True)
+    (checkpoint.parent / "latest_checkpointed_iteration.txt").write_text("1")
+    (checkpoint / "complete.json").write_text(json.dumps({"optimizer_step": 1, "committed_work_count": 3}))
+    evidence = {
+        "state": "completed",
+        "observations": {
+            "cleanup": {
+                "work_lifecycle": {"state": "validated", "optimizer_steps_committed": 1, "committed_work": 3},
+            },
+            "training": {"feature_contract": {"transport": {
+                "state": "validated", "protocol": "nvlink_intra", "consumer_endpoints": 1,
+                "destination_reads": 3, "destination_releases": 3, "transfer_failures": 0,
+            }}},
+        },
+    }
+    (tmp_path / "evidence.json").write_text(json.dumps(evidence))
+    with pytest.raises(ValueError, match="four committed documents per optimizer step"):
+        check_online_run(tmp_path, 1, 1)

@@ -36,6 +36,12 @@ class PackedObjectiveActor(TrainerActor):
         self.rows = []
         self.backward_calls = 0
         forward = trainer._forward
+        iter_batches = trainer._iter_batches_from_queue
+
+        def batches_with_work_ids(num_batches):
+            for batch in iter_batches(num_batches):
+                batch["packed_work_ids"] = [item["work_id"] for item in batch["_aspec_work"]]
+                yield batch
 
         def observe(batch, **options):
             outputs = forward(batch, **options)
@@ -49,6 +55,7 @@ class PackedObjectiveActor(TrainerActor):
                     {
                         "step": trainer.global_step + 1,
                         "documents": lengths,
+                        "work_ids": batch["packed_work_ids"],
                         "features": {k: tensor_record(batch[k])["sha256"] for k in features},
                         "anchor_seed": options["anchor_seed"],
                         "numerator": numerator.item(),
@@ -57,6 +64,7 @@ class PackedObjectiveActor(TrainerActor):
                 )
             return outputs
 
+        trainer._iter_batches_from_queue = batches_with_work_ids
         trainer._forward = observe
         return result
 
@@ -98,9 +106,17 @@ def collect(root, cp, steps, reference=None):
     for rank in range(cp):
         name = f"recipe-packed-cp{rank}.json"
         rows = json.loads((root / name).read_text())["rows"]
-        if [r["step"] for r in rows] != expected or not any(len(r["documents"]) > 1 for r in rows):
-            raise ValueError("Incomplete optimizer windows or missing multi-document packing")
-        row_ids = [(r["documents"], r["features"]["input_ids"]) for r in rows]
+        if [r["step"] for r in rows] != expected:
+            raise ValueError("Incomplete optimizer windows")
+        row_ids = []
+        for row in rows:
+            documents = row["documents"]
+            work_ids = row.get("work_ids", ())
+            if len(documents) != 2:
+                raise ValueError("Expected two documents per packed row")
+            if len(work_ids) != 2 or not all(work_ids):
+                raise ValueError("Expected two document work IDs per packed row")
+            row_ids.append((documents, work_ids, row["features"]["input_ids"]))
         if first_rows is not None and first_rows != row_ids:
             raise ValueError("Context ranks consumed different packed rows")
         first_rows = row_ids
@@ -108,8 +124,8 @@ def collect(root, cp, steps, reference=None):
             baseline = json.loads((reference / name).read_text())["rows"]
             for actual, ref in zip(rows, baseline, strict=True):
                 if any(
-                    actual[k] != ref[k]
-                    for k in ("features", "step", "documents", "anchor_seed", "denominator")
+                    actual[k] != ref.get(k)
+                    for k in ("features", "step", "documents", "work_ids", "anchor_seed", "denominator")
                 ):
                     raise ValueError(
                         f"Different online input or supervision on CP rank {rank}, step {actual['step']}"
@@ -134,6 +150,8 @@ def check_online_run(root, cp, steps):
     observations = evidence["observations"]
     lifecycle = observations["cleanup"]["work_lifecycle"]
     transport = observations["training"]["feature_contract"]["transport"]
+    if lifecycle["committed_work"] != 4 * steps:
+        raise ValueError("Expected four committed documents per optimizer step")
     reads = lifecycle["committed_work"] * cp
     if (
         lifecycle["state"] != "validated"
