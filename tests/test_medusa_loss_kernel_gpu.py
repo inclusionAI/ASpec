@@ -27,12 +27,13 @@ from aspec.models.ops import medusa_ce
 from aspec.models.ops.medusa_ce import medusa_head_ce, use_fused_medusa_ce
 
 
-def _tensors(tokens, hidden, vocab, seed=0):
-    generator = torch.Generator(device="cuda").manual_seed(seed)
-    x = torch.randn(tokens, hidden, device="cuda", dtype=torch.bfloat16, generator=generator)
-    w = torch.randn(vocab, hidden, device="cuda", dtype=torch.bfloat16,
+def _tensors(tokens, hidden, vocab, seed=0, device="cuda"):
+    device = torch.device(device)
+    generator = torch.Generator(device=device).manual_seed(seed)
+    x = torch.randn(tokens, hidden, device=device, dtype=torch.bfloat16, generator=generator)
+    w = torch.randn(vocab, hidden, device=device, dtype=torch.bfloat16,
                     generator=generator) * 0.05
-    targets = torch.randint(0, vocab, (tokens,), device="cuda", generator=generator)
+    targets = torch.randint(0, vocab, (tokens,), device=device, generator=generator)
     return x, w, targets
 
 
@@ -133,6 +134,37 @@ def test_large_logits_keep_shifted_normalization():
     torch.testing.assert_close(nll, expected, rtol=1e-5, atol=1e-5)
     torch.testing.assert_close(nll, ref_nll, rtol=1e-5, atol=1e-5)
     assert torch.equal(hits, ref_hits)
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires two GPUs")
+@pytest.mark.parametrize("save_logits", [True, False])
+def test_noncurrent_device_context(save_logits):
+    torch.cuda.set_device(0)
+    device = torch.device("cuda:1")
+    x, w, targets = _tensors(128, 64, 4096, device=device)
+    torch.cuda.set_device(0)
+    try:
+        x_fused = x.detach().clone().requires_grad_(True)
+        w_fused = w.detach().clone().requires_grad_(True)
+        nll, hits = medusa_head_ce(
+            x_fused, w_fused, targets, save_logits=save_logits
+        )
+        nll.sum().backward()
+
+        assert nll.device == device and hits.device == device
+        assert x_fused.grad is not None and x_fused.grad.device == device
+        assert w_fused.grad is not None and w_fused.grad.device == device
+
+        ref_nll, ref_hits = _reference(x, w, targets)
+        torch.testing.assert_close(nll.detach(), ref_nll, rtol=1e-4, atol=1e-5)
+        assert torch.equal(hits, ref_hits)
+
+        x_ref, w_ref = x.detach().clone().requires_grad_(True), w.detach().clone().requires_grad_(True)
+        F.cross_entropy(F.linear(x_ref, w_ref).float(), targets, reduction="sum").backward()
+        _assert_gradient_close(x_fused.grad, x_ref.grad, "noncurrent dx")
+        _assert_gradient_close(w_fused.grad, w_ref.grad, "noncurrent dw")
+    finally:
+        torch.cuda.set_device(0)
 
 
 def test_dx_dw_match_reference():
