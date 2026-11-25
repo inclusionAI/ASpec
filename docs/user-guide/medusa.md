@@ -71,7 +71,9 @@ backward; longer selections recompute. The backward pass keeps one full BF16
 `dlogits` buffer only when it fits a 2 GiB budget; otherwise it accumulates
 `dX`/`dW` per token chunk. The fused path requires `V <= 2^24` because the
 tile argmax column is carried in FP32; larger vocabularies use the reference
-path. No configuration field is added.
+path. NLL and backward probabilities keep the row maximum and log-normalizer
+separate, avoiding FP32 cancellation when logits are large. No configuration
+field is added.
 
 Measured on one NVIDIA L20 48GB (sm_89, driver 580.126.20, CUDA 13.0, torch
 2.13.0+cu130, Triton 3.7.1), Qwen3-8B head shape `K=5`, `H=4096`,
@@ -80,14 +82,15 @@ Measured on one NVIDIA L20 48GB (sm_89, driver 580.126.20, CUDA 13.0, torch
 
 | Cell | Median | p90 | / reference | Peak extra |
 | --- | ---: | ---: | ---: | ---: |
-| Current reference (128-token chunks) | 2456.87 ms | 2457.28 ms | 1.00× | 11.38 GB |
-| Whole-head restructure (diagnostic only) | 905.54 ms | 906.89 ms | 2.71× | 17.75 GB |
-| Fused epilogue + one `dW` per head | **751.54 ms** | **752.79 ms** | **3.27×** | **11.37 GB** |
+| Current reference (128-token chunks) | 2456.51 ms | 2456.89 ms | 1.00× | 8.92 GB |
+| Whole-head restructure (diagnostic only) | 902.82 ms | 903.97 ms | 2.72× | 17.75 GB |
+| Fused epilogue + one `dW` per head | **752.03 ms** | **753.02 ms** | **3.27×** | **9.08 GB** |
 
 Peak extra is the delta after resident model weights/inputs and cleared
-gradients; it includes gradient buffers and excludes optimizer state. Accuracy
-uses the lowest vocabulary index on argmax ties; PyTorch CUDA argmax tie order
-is unspecified, so ties are the only metric difference.
+gradients; it includes gradient buffers and excludes optimizer state. Both
+paths use the first (lowest) maximal index on argmax ties, matching PyTorch's
+documented first-maximum rule; ties are not a parity exception. Any metric
+difference must come from projected logits.
 
 The restructure is a script-only attribution cell, not a shipped path. The
 reference and fused loss fingerprints are close but not bitwise equal:

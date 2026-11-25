@@ -85,6 +85,11 @@ def _resolve_row_chunk(vocab: int, requested: int | None) -> int:
     return max(_MIN_ROW_CHUNK, (chunk // _MIN_ROW_CHUNK) * _MIN_ROW_CHUNK)
 
 
+def _bounded_rows(requested: int, vocab: int, limit_bytes: int) -> int:
+    max_rows = max(1, limit_bytes // (2 * vocab))
+    return max(1, min(int(requested), max_rows))
+
+
 def _save_logits_for_backward(
     save_logits: bool,
     hidden: torch.Tensor,
@@ -166,7 +171,8 @@ if not _triton_unavailable():
     @triton.jit
     def _merge_stats(
         Partials,
-        Lse,
+        RowMax,
+        LogTotal,
         Nll,
         Hits,
         Targets,
@@ -187,7 +193,7 @@ if not _triton_unavailable():
         total = tl.sum(
             tl.where(tmax == -float("inf"), 0.0, tsum * tl.exp(tmax - row_max)), 0
         )
-        lse = row_max + tl.log(total)
+        log_total = tl.log(total)
 
         best_val = tl.max(tmax, 0)
         best_col = tl.min(tl.where(tmax == best_val, arg_col, float(V)), 0)
@@ -197,16 +203,20 @@ if not _triton_unavailable():
             "Medusa CE target index out of vocabulary",
         )
         target_logit = tl.max(target_val, 0)
-        nll = lse - target_logit
+        # Keep the shifted normalization separate from row_max so large logits
+        # do not lose log(total) to FP32 rounding.
+        nll = (row_max - target_logit) + log_total
         hit = (best_col.to(tl.int64) == target).to(tl.float32)
-        tl.store(Lse + row, lse)
+        tl.store(RowMax + row, row_max)
+        tl.store(LogTotal + row, log_total)
         tl.store(Nll + row, nll)
         tl.store(Hits + row, hit)
 
     @triton.jit(do_not_specialize=["V"])
     def _dlogits(
         Z,
-        Lse,
+        RowMax,
+        LogTotal,
         Targets,
         Scale,
         DZ,
@@ -219,10 +229,11 @@ if not _triton_unavailable():
         cols = tile * BLOCK_N + tl.arange(0, BLOCK_N).to(tl.int64)
         mask = cols < V
         z = tl.load(Z + row * V + cols, mask=mask, other=-float("inf")).to(tl.float32)
-        lse = tl.load(Lse + row)
+        row_max = tl.load(RowMax + row)
+        log_total = tl.load(LogTotal + row)
         scale = tl.load(Scale + row)
         target = tl.load(Targets + row).to(tl.int64)
-        probs = tl.exp(z - lse)
+        probs = tl.exp((z - row_max) - log_total)
         probs = tl.where(cols == target, probs - 1.0, probs)
         tl.store(
             DZ + row * V + cols,
@@ -249,8 +260,14 @@ class _MedusaCE(torch.autograd.Function):
         tiles = triton.cdiv(vocab, _BLOCK_N)
         block_tiles = triton.next_power_of_2(tiles)
         merge_warps = _NUM_WARPS_MERGE if block_tiles >= 32 else 1
+        forward_chunk = (
+            row_chunk
+            if save_logits
+            else _bounded_rows(row_chunk, vocab, _SAVE_BYTES)
+        )
         partials = torch.empty((rows, tiles, 4), device=device, dtype=torch.float32)
-        lse = torch.empty((rows,), device=device, dtype=torch.float32)
+        row_max = torch.empty((rows,), device=device, dtype=torch.float32)
+        log_total = torch.empty((rows,), device=device, dtype=torch.float32)
         nll = torch.empty((rows,), device=device, dtype=torch.float32)
         hits = torch.empty((rows,), device=device, dtype=torch.float32)
         saved_logits = (
@@ -262,53 +279,58 @@ class _MedusaCE(torch.autograd.Function):
             None
             if save_logits
             else torch.empty(
-                (min(row_chunk, rows), vocab), device=device, dtype=torch.bfloat16
+                (min(forward_chunk, rows), vocab), device=device, dtype=torch.bfloat16
             )
         )
 
-        for start in range(0, rows, row_chunk):
-            stop = min(start + row_chunk, rows)
-            count = stop - start
-            if saved_logits is not None:
-                logits_chunk = saved_logits[start:stop]
-            else:
-                logits_chunk = scratch[:count]
-            logits_chunk.copy_(F.linear(hidden[start:stop], weight))
-            _ce_partials[(count, tiles)](
-                logits_chunk,
-                targets[start:stop],
-                partials[start:stop],
-                vocab,
-                tiles,
-                _BLOCK_N,
-                num_warps=_NUM_WARPS_N,
-                enable_fp_fusion=False,
-            )
-            _merge_stats[(count,)](
-                partials[start:stop],
-                lse[start:stop],
-                nll[start:stop],
-                hits[start:stop],
-                targets[start:stop],
-                tiles,
-                block_tiles,
-                vocab,
-                num_warps=merge_warps,
-                debug=True,
-                enable_fp_fusion=False,
-            )
+        with torch.cuda.device(device):
+            for start in range(0, rows, forward_chunk):
+                stop = min(start + forward_chunk, rows)
+                count = stop - start
+                if saved_logits is not None:
+                    logits_chunk = saved_logits[start:stop]
+                else:
+                    logits_chunk = scratch[:count]
+                logits_chunk.copy_(F.linear(hidden[start:stop], weight))
+                _ce_partials[(count, tiles)](
+                    logits_chunk,
+                    targets[start:stop],
+                    partials[start:stop],
+                    vocab,
+                    tiles,
+                    _BLOCK_N,
+                    num_warps=_NUM_WARPS_N,
+                    enable_fp_fusion=False,
+                )
+                _merge_stats[(count,)](
+                    partials[start:stop],
+                    row_max[start:stop],
+                    log_total[start:stop],
+                    nll[start:stop],
+                    hits[start:stop],
+                    targets[start:stop],
+                    tiles,
+                    block_tiles,
+                    vocab,
+                    num_warps=merge_warps,
+                    debug=True,
+                    enable_fp_fusion=False,
+                )
 
         if saved_logits is not None:
-            ctx.save_for_backward(hidden, weight, targets, lse, saved_logits)
+            ctx.save_for_backward(
+                hidden, weight, targets, row_max, log_total, saved_logits
+            )
         else:
             ctx.save_for_backward(
                 hidden,
                 weight,
                 targets,
-                lse,
+                row_max,
+                log_total,
                 torch.empty(0, device=device, dtype=torch.bfloat16),
             )
-        ctx.row_chunk = row_chunk
+        ctx.row_chunk = forward_chunk
         ctx.save_logits = save_logits
         ctx.mark_non_differentiable(hits)
         return nll, hits
@@ -317,7 +339,7 @@ class _MedusaCE(torch.autograd.Function):
     @once_differentiable
     def backward(ctx, grad_nll, grad_hits):
         del grad_hits
-        hidden, weight, targets, lse, saved_logits = ctx.saved_tensors
+        hidden, weight, targets, row_max, log_total, saved_logits = ctx.saved_tensors
         rows, vocab = hidden.shape[0], weight.shape[0]
         if grad_nll is None:
             return None, None, None, None, None
@@ -327,12 +349,17 @@ class _MedusaCE(torch.autograd.Function):
             return None, None, None, None, None
         grad_nll = grad_nll.contiguous()
         tiles = triton.cdiv(vocab, _BLOCK_N)
-        with torch.no_grad():
+        backward_chunk = _bounded_rows(ctx.row_chunk, vocab, _DLOGITS_BUDGET_BYTES)
+        if not ctx.save_logits:
+            backward_chunk = min(
+                backward_chunk, _bounded_rows(ctx.row_chunk, vocab, _SAVE_BYTES)
+            )
+        with torch.no_grad(), torch.cuda.device(hidden.device):
             scratch = (
                 None
                 if ctx.save_logits
                 else torch.empty(
-                    (min(ctx.row_chunk, rows), vocab),
+                    (min(backward_chunk, rows), vocab),
                     device=hidden.device,
                     dtype=torch.bfloat16,
                 )
@@ -341,8 +368,8 @@ class _MedusaCE(torch.autograd.Function):
                 dlogits = torch.empty(
                     (rows, vocab), device=hidden.device, dtype=torch.bfloat16
                 )
-                for start in range(0, rows, ctx.row_chunk):
-                    stop = min(start + ctx.row_chunk, rows)
+                for start in range(0, rows, backward_chunk):
+                    stop = min(start + backward_chunk, rows)
                     count = stop - start
                     if ctx.save_logits:
                         logits_chunk = saved_logits[start:stop]
@@ -351,7 +378,8 @@ class _MedusaCE(torch.autograd.Function):
                         logits_chunk.copy_(F.linear(hidden[start:stop], weight))
                     _dlogits[(count, tiles)](
                         logits_chunk,
-                        lse[start:stop],
+                        row_max[start:stop],
+                        log_total[start:stop],
                         targets[start:stop],
                         grad_nll[start:stop],
                         dlogits[start:stop],
@@ -368,8 +396,8 @@ class _MedusaCE(torch.autograd.Function):
                 # buffer; accumulate dW per token chunk instead.
                 dx = torch.empty_like(hidden) if needs_dx else None
                 dw = torch.zeros_like(weight) if needs_dw else None
-                for start in range(0, rows, ctx.row_chunk):
-                    stop = min(start + ctx.row_chunk, rows)
+                for start in range(0, rows, backward_chunk):
+                    stop = min(start + backward_chunk, rows)
                     count = stop - start
                     if ctx.save_logits:
                         logits_chunk = saved_logits[start:stop]
@@ -381,7 +409,8 @@ class _MedusaCE(torch.autograd.Function):
                     )
                     _dlogits[(count, tiles)](
                         logits_chunk,
-                        lse[start:stop],
+                        row_max[start:stop],
+                        log_total[start:stop],
                         targets[start:stop],
                         grad_nll[start:stop],
                         dlogits_chunk,

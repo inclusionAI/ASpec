@@ -245,6 +245,8 @@ def _run_mode(model, hidden, targets, mode, args):
         end.record()
         events.append((start, end))
     torch.cuda.synchronize()
+    # Capture the measured peak before fingerprint conversions allocate.
+    peak = torch.cuda.max_memory_allocated() - peak_base
     times = [start.elapsed_time(end) for start, end in events]
 
     # Fingerprint outside the timed window, without an optimizer step, so the
@@ -258,7 +260,6 @@ def _run_mode(model, hidden, targets, mode, args):
         "hits": float(hits.item()),
         **_grad_stats(params),
     }
-    peak = torch.cuda.max_memory_allocated() - peak_base
     return {
         "mode": mode,
         "timing": _summary(times),

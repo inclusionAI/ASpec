@@ -122,6 +122,19 @@ def test_hits_positive_with_argmax_targets(vocab):
     assert torch.equal(hits, ref_hits)
 
 
+def test_large_logits_keep_shifted_normalization():
+    vocab = 256
+    x = torch.full((64, 1), 4096.0, device="cuda", dtype=torch.bfloat16)
+    w = torch.full((vocab, 1), 4096.0, device="cuda", dtype=torch.bfloat16)
+    targets = torch.zeros(64, device="cuda", dtype=torch.int64)
+    nll, hits = medusa_head_ce(x, w, targets, save_logits=True)
+    ref_nll, ref_hits = _reference(x, w, targets)
+    expected = torch.log(torch.tensor(float(vocab), device="cuda")).expand_as(nll)
+    torch.testing.assert_close(nll, expected, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(nll, ref_nll, rtol=1e-5, atol=1e-5)
+    assert torch.equal(hits, ref_hits)
+
+
 def test_dx_dw_match_reference():
     x, w, targets = _tensors(128, 64, 4096)
     _, _, dx, dw = _fused_grads(x, w, targets, save_logits=True)
@@ -144,7 +157,7 @@ def test_chunked_backward_matches_full(monkeypatch):
     x, w, targets = _tensors(1024, 64, 4096)
     nll_full, hits_full, dx_full, dw_full = _fused_grads(x, w, targets, save_logits=True)
 
-    monkeypatch.setattr(medusa_ce, "_DLOGITS_BUDGET_BYTES", 1)
+    monkeypatch.setattr(medusa_ce, "_DLOGITS_BUDGET_BYTES", 512 * 4096 * 2)
     nll_chunk, hits_chunk, dx_chunk, dw_chunk = _fused_grads(x, w, targets, save_logits=True)
     torch.testing.assert_close(nll_full, nll_chunk, rtol=0, atol=0)
     assert torch.equal(hits_full, hits_chunk)

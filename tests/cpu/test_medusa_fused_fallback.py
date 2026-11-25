@@ -113,6 +113,12 @@ def test_resolve_row_chunk_defaults():
         medusa_ce._resolve_row_chunk(10, 0)
 
 
+def test_bounded_rows_respects_byte_budget():
+    assert medusa_ce._bounded_rows(8192, 151936, 2 * 1024**3) == 7067
+    assert medusa_ce._bounded_rows(8192, 151936, 256 * 1024**2) == 883
+    assert medusa_ce._bounded_rows(1, 151936, 1) == 1
+
+
 def test_should_save_fused_logits_pins_k5_boundary():
     assert should_save_fused_logits(4094, 151936, 5, True) is True
     assert should_save_fused_logits(8192, 151936, 5, True) is False
