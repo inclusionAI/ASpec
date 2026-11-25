@@ -111,6 +111,17 @@ def test_target_at_tile_boundary():
     assert torch.equal(hits, ref_hits)
 
 
+@pytest.mark.parametrize("vocab", [4096, 151936])
+def test_hits_positive_with_argmax_targets(vocab):
+    x, w, _ = _tensors(128, 64, vocab)
+    targets = F.linear(x, w).float().argmax(-1).to(torch.int64)
+    nll, hits = medusa_head_ce(x, w, targets, save_logits=True)
+    ref_nll, ref_hits = _reference(x, w, targets)
+    assert hits.sum() > 0
+    torch.testing.assert_close(nll, ref_nll, rtol=1e-4, atol=1e-5)
+    assert torch.equal(hits, ref_hits)
+
+
 def test_dx_dw_match_reference():
     x, w, targets = _tensors(128, 64, 4096)
     _, _, dx, dw = _fused_grads(x, w, targets, save_logits=True)

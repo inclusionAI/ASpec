@@ -30,7 +30,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 from aspec.models.draft.medusa import MedusaConfig, MedusaDraftModel
-from aspec.models.medusa import SAVE_LOGITS_BUDGET_BYTES
+from aspec.models.medusa import should_save_fused_logits
 from aspec.models.ops.medusa_ce import medusa_head_ce, use_fused_medusa_ce
 from aspec.training.optimizer import BF16Optimizer
 
@@ -184,9 +184,9 @@ def _fused_save_logits(args):
         return True
     if args.fused_logits == "recompute":
         return False
-    if not args.grad_ckpt:
-        return True
-    return args.tokens * args.vocab * 2 * args.heads <= SAVE_LOGITS_BUDGET_BYTES
+    return should_save_fused_logits(
+        args.tokens, args.vocab, args.heads, args.grad_ckpt
+    )
 
 
 def _run_mode(model, hidden, targets, mode, args):
@@ -230,6 +230,8 @@ def _run_mode(model, hidden, targets, mode, args):
 
     for _ in range(args.warmup):
         forward_backward(step_optimizer=False)
+    for parameter in params:
+        parameter.grad = None
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     peak_base = torch.cuda.memory_allocated()

@@ -11,8 +11,38 @@ import torch.nn.functional as F
 from torch import nn
 
 from aspec.models.draft.medusa import MedusaConfig, MedusaDraftModel
-from aspec.models.medusa import MedusaModel
+from aspec.models.medusa import MedusaModel, should_save_fused_logits
 from aspec.models.ops import medusa_ce
+
+
+class _FakeTensor:
+    def __init__(
+        self,
+        shape=(64, 8),
+        *,
+        dtype=torch.bfloat16,
+        is_cuda=True,
+        contiguous=True,
+        ndim=2,
+        device="fake",
+        requires_grad=False,
+    ):
+        self.shape = shape
+        self.dtype = dtype
+        self.is_cuda = is_cuda
+        self._contiguous = contiguous
+        self.ndim = ndim
+        self.device = device
+        self.requires_grad = requires_grad
+
+    def is_contiguous(self):
+        return self._contiguous
+
+
+def _enable_fake_fused(monkeypatch):
+    monkeypatch.setattr(medusa_ce, "_TRITON_IMPORT_ERROR", None)
+    monkeypatch.setattr(medusa_ce, "triton", object())
+    monkeypatch.setattr(medusa_ce, "_device_capability", lambda device: (8, 9))
 
 
 def _tensors(rows=128, hidden=8, vocab=64, dtype=torch.bfloat16):
@@ -27,59 +57,34 @@ def test_predicate_rejects_cpu_tensors():
     assert medusa_ce.use_fused_medusa_ce(hidden, weight) is False
 
 
-def test_predicate_rejects_non_bf16_and_shape_mismatch():
-    hidden, weight = _tensors(dtype=torch.float32)
-    assert medusa_ce.use_fused_medusa_ce(hidden, weight) is False
-    hidden, weight = _tensors()
-    assert medusa_ce.use_fused_medusa_ce(hidden[:, :4], weight) is False
-    assert medusa_ce.use_fused_medusa_ce(hidden.transpose(0, 1), weight) is False
-
-
-def test_predicate_honors_num_rows():
-    hidden, weight = _tensors(rows=1)
-    assert medusa_ce.use_fused_medusa_ce(hidden, weight, num_rows=1) is False
-    assert medusa_ce.use_fused_medusa_ce(hidden, weight, num_rows=1024) is False
+def test_predicate_rejects_non_bf16_and_shape_mismatch(monkeypatch):
+    _enable_fake_fused(monkeypatch)
+    assert medusa_ce.use_fused_medusa_ce(_FakeTensor(), _FakeTensor()) is True
+    assert medusa_ce.use_fused_medusa_ce(
+        _FakeTensor(dtype=torch.float32), _FakeTensor()
+    ) is False
+    assert medusa_ce.use_fused_medusa_ce(
+        _FakeTensor(ndim=3), _FakeTensor()
+    ) is False
+    assert medusa_ce.use_fused_medusa_ce(
+        _FakeTensor(shape=(64, 4)), _FakeTensor()
+    ) is False
+    assert medusa_ce.use_fused_medusa_ce(
+        _FakeTensor(contiguous=False), _FakeTensor()
+    ) is False
 
 
 def test_predicate_small_selection_threshold(monkeypatch):
-    class Fake:
-        is_cuda = True
-        dtype = torch.bfloat16
-        ndim = 2
-        shape = (64, 8)
-        device = "fake"
-
-        @staticmethod
-        def is_contiguous():
-            return True
-
-    hidden, weight = Fake(), Fake()
-    monkeypatch.setattr(medusa_ce, "_TRITON_IMPORT_ERROR", None)
-    monkeypatch.setattr(medusa_ce, "triton", object())
-    monkeypatch.setattr(medusa_ce, "_device_capability", lambda device: (8, 9))
+    _enable_fake_fused(monkeypatch)
+    hidden, weight = _FakeTensor(), _FakeTensor()
     assert medusa_ce.use_fused_medusa_ce(hidden, weight, num_rows=63) is False
     assert medusa_ce.use_fused_medusa_ce(hidden, weight, num_rows=64) is True
 
 
 def test_predicate_rejects_vocab_beyond_exact_argmax(monkeypatch):
-    class Fake:
-        is_cuda = True
-        dtype = torch.bfloat16
-        ndim = 2
-        device = "fake"
-
-        def __init__(self, shape):
-            self.shape = shape
-
-        @staticmethod
-        def is_contiguous():
-            return True
-
-    hidden = Fake((64, 8))
-    weight = Fake((medusa_ce._MAX_EXACT_ARGMAX_VOCAB + 1, 8))
-    monkeypatch.setattr(medusa_ce, "_TRITON_IMPORT_ERROR", None)
-    monkeypatch.setattr(medusa_ce, "triton", object())
-    monkeypatch.setattr(medusa_ce, "_device_capability", lambda device: (8, 9))
+    _enable_fake_fused(monkeypatch)
+    hidden = _FakeTensor()
+    weight = _FakeTensor(shape=(medusa_ce._MAX_EXACT_ARGMAX_VOCAB + 1, 8))
     assert medusa_ce.use_fused_medusa_ce(hidden, weight) is False
 
 
@@ -91,10 +96,12 @@ def test_missing_triton_falls_back(monkeypatch):
         medusa_ce.medusa_head_ce(hidden, weight, torch.zeros(128, dtype=torch.int64))
 
 
-def test_medusa_head_ce_requires_cuda():
-    hidden, weight = _tensors()
-    targets = torch.zeros(128, dtype=torch.int64)
-    with pytest.raises((ValueError, RuntimeError)):
+def test_medusa_head_ce_requires_cuda(monkeypatch):
+    _enable_fake_fused(monkeypatch)
+    hidden = _FakeTensor(is_cuda=False)
+    weight = _FakeTensor()
+    targets = torch.zeros(64, dtype=torch.int64)
+    with pytest.raises(ValueError, match="requires CUDA"):
         medusa_ce.medusa_head_ce(hidden, weight, targets)
 
 
@@ -104,6 +111,30 @@ def test_resolve_row_chunk_defaults():
     assert medusa_ce._resolve_row_chunk(10, 7) == 7
     with pytest.raises(ValueError):
         medusa_ce._resolve_row_chunk(10, 0)
+
+
+def test_should_save_fused_logits_pins_k5_boundary():
+    assert should_save_fused_logits(4094, 151936, 5, True) is True
+    assert should_save_fused_logits(8192, 151936, 5, True) is False
+    assert should_save_fused_logits(100_000, 151936, 5, False) is True
+    model = _tiny_model()
+    assert model._save_fused_logits(4094, 151936) == should_save_fused_logits(
+        4094, 151936, model.num_heads, model.gradient_checkpointing
+    )
+
+
+def test_save_logits_gate():
+    class Requiring:
+        def __init__(self, requires_grad):
+            self.requires_grad = requires_grad
+
+    trainable = Requiring(True)
+    frozen = Requiring(False)
+    with torch.no_grad():
+        assert medusa_ce._save_logits_for_backward(True, trainable, trainable) is False
+    assert medusa_ce._save_logits_for_backward(True, trainable, frozen) is True
+    assert medusa_ce._save_logits_for_backward(True, frozen, frozen) is False
+    assert medusa_ce._save_logits_for_backward(False, trainable, trainable) is False
 
 
 def _tiny_model():
@@ -121,15 +152,6 @@ def _tiny_model():
             nn.init.normal_(head[0].linear.weight, std=0.05)
             nn.init.normal_(head[-1].weight, std=0.05)
     return MedusaModel(draft)
-
-
-def test_save_fused_logits_budget():
-    model = _tiny_model()
-    model.gradient_checkpointing = False
-    assert model._save_fused_logits(4094, 151936) is True
-    model.gradient_checkpointing = True
-    assert model._save_fused_logits(4094, 151936) is True
-    assert model._save_fused_logits(100_000, 151936) is False
 
 
 def test_two_layer_wiring_matches_reference(monkeypatch):
@@ -153,8 +175,10 @@ def test_two_layer_wiring_matches_reference(monkeypatch):
     hidden_states = torch.randn(1, 32, 8)
     loss_mask = (torch.rand(1, 32) > 0.2).long()
     attention_mask = torch.ones(1, 32, dtype=torch.long)
+    calls = []
 
     def fake_fused_ce(hidden, weight, targets, **kwargs):
+        calls.append(hidden.shape)
         logits = F.linear(hidden, weight).float()
         return (
             F.cross_entropy(logits, targets, reduction="none"),
@@ -172,6 +196,8 @@ def test_two_layer_wiring_matches_reference(monkeypatch):
         input_ids, hidden_states, loss_mask, attention_mask
     )
 
+    assert len(calls) == 2
+    assert all(shape[1] == config.hidden_size for shape in calls)
     for fused_loss, ref_loss in zip(fused_losses, ref_losses, strict=True):
         torch.testing.assert_close(fused_loss, ref_loss, rtol=2e-5, atol=2e-6)
     for fused_acc, ref_acc in zip(fused_accs, ref_accs, strict=True):
@@ -185,6 +211,24 @@ def test_two_layer_wiring_matches_reference(monkeypatch):
     ):
         assert name == ref_name
         torch.testing.assert_close(parameter.grad, ref_parameter.grad, rtol=2e-5, atol=2e-6)
+
+
+def test_benchmark_reference_head_matches_model():
+    from tools.performance.bench_medusa_loss import _reference_head
+
+    model = _tiny_model()
+    head = model.draft_model.medusa_head[0]
+    targets = torch.randint(0, 16, (40,))
+    features = torch.randn(40, 8)
+    positions = torch.arange(40)
+    model_loss, model_hits = model._reference_head_loss(
+        head, features, targets, positions, positions, positions
+    )
+    bench_loss, bench_hits = _reference_head(
+        head, features, targets, model.gradient_checkpointing
+    )
+    torch.testing.assert_close(model_loss, bench_loss, rtol=0, atol=0)
+    torch.testing.assert_close(model_hits, bench_hits, rtol=0, atol=0)
 
 
 def test_reference_path_zero_mask_keeps_zero_grads():

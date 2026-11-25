@@ -19,8 +19,15 @@ from aspec.models.ops.medusa_ce import medusa_head_ce, use_fused_medusa_ce
 
 # Retaining BF16 logits removes one projection pass in backward.  Bound the
 # all-head retained bytes so gradient checkpointing still protects long
-# sequences; 4K/Qwen3-8B/K=5 (about 6.2 GiB) uses the faster saved mode.
+# sequences; 4K/Qwen3-8B/K=5 (about 5.8 GiB) uses the faster saved mode.
 SAVE_LOGITS_BUDGET_BYTES = 8 * 1024**3
+
+
+def should_save_fused_logits(tokens, vocab, num_heads, gradient_checkpointing):
+    if not gradient_checkpointing:
+        return True
+    retained = tokens * vocab * 2 * num_heads
+    return retained <= SAVE_LOGITS_BUDGET_BYTES
 
 
 class MedusaModel(nn.Module):
@@ -35,10 +42,9 @@ class MedusaModel(nn.Module):
         self.vocab_pruning = False
 
     def _save_fused_logits(self, tokens, vocab):
-        if not self.gradient_checkpointing:
-            return True
-        retained = tokens * vocab * 2 * self.num_heads
-        return retained <= SAVE_LOGITS_BUDGET_BYTES
+        return should_save_fused_logits(
+            tokens, vocab, self.num_heads, self.gradient_checkpointing
+        )
 
     def _reference_head_loss(
         self,

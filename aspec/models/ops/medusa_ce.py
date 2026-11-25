@@ -85,6 +85,19 @@ def _resolve_row_chunk(vocab: int, requested: int | None) -> int:
     return max(_MIN_ROW_CHUNK, (chunk // _MIN_ROW_CHUNK) * _MIN_ROW_CHUNK)
 
 
+def _save_logits_for_backward(
+    save_logits: bool,
+    hidden: torch.Tensor,
+    weight: torch.Tensor,
+) -> bool:
+    """Retain logits only when a backward pass can actually consume them."""
+    return bool(
+        save_logits
+        and torch.is_grad_enabled()
+        and (hidden.requires_grad or weight.requires_grad)
+    )
+
+
 def use_fused_medusa_ce(
     hidden: torch.Tensor,
     weight: torch.Tensor,
@@ -427,10 +440,11 @@ def medusa_head_ce(
         raise ValueError("fused Medusa CE requires contiguous tensors")
     if not targets.is_contiguous():
         targets = targets.contiguous()
+    save_logits = _save_logits_for_backward(save_logits, hidden, weight)
     return _MedusaCE.apply(
         hidden,
         weight,
         targets,
         _resolve_row_chunk(weight.shape[0], row_chunk),
-        bool(save_logits),
+        save_logits,
     )

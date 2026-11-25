@@ -66,7 +66,7 @@ reference path; `tests/cpu/test_medusa.py` pins that path unchanged.
 through an internal 8 GiB budget; the residual block is applied once and its
 smaller `[T, H]` activations are retained. When the all-head BF16 logits fit
 the budget (Qwen3-8B `K=5`, 4094 selected tokens and `V=151936` is about
-6.2 GiB), the fused path retains them and skips one projection pass in
+5.8 GiB), the fused path retains them and skips one projection pass in
 backward; longer selections recompute. The backward pass keeps one full BF16
 `dlogits` buffer only when it fits a 2 GiB budget; otherwise it accumulates
 `dX`/`dW` per token chunk. The fused path requires `V <= 2^24` because the
@@ -80,20 +80,22 @@ Measured on one NVIDIA L20 48GB (sm_89, driver 580.126.20, CUDA 13.0, torch
 
 | Cell | Median | p90 | / reference | Peak extra |
 | --- | ---: | ---: | ---: | ---: |
-| Current reference (128-token chunks) | 2456.74 ms | 2457.03 ms | 1.00× | 4.98 GB |
-| Whole-head restructure (diagnostic only) | 913.61 ms | 914.79 ms | 2.69× | 11.36 GB |
-| Fused epilogue + one `dW` per head | **761.95 ms** | **762.41 ms** | **3.22×** | **4.98 GB** |
+| Current reference (128-token chunks) | 2456.87 ms | 2457.28 ms | 1.00× | 11.38 GB |
+| Whole-head restructure (diagnostic only) | 905.54 ms | 906.89 ms | 2.71× | 17.75 GB |
+| Fused epilogue + one `dW` per head | **751.54 ms** | **752.79 ms** | **3.27×** | **11.37 GB** |
 
-Peak extra is the delta after resident model weights and inputs; it excludes
-optimizer state. Accuracy uses the lowest vocabulary index on argmax ties;
-PyTorch CUDA argmax tie order is unspecified, so ties are the only metric
-difference.
+Peak extra is the delta after resident model weights/inputs and cleared
+gradients; it includes gradient buffers and excludes optimizer state. Accuracy
+uses the lowest vocabulary index on argmax ties; PyTorch CUDA argmax tie order
+is unspecified, so ties are the only metric difference.
 
 The restructure is a script-only attribution cell, not a shipped path. The
 reference and fused loss fingerprints are close but not bitwise equal:
 `250777.75` vs `250777.95`, gradient norms `13286.11` vs `13274.47` over the
-same 3,195,555,840 gradient elements, and the same accuracy count; the
-difference comes from whole-head versus chunked reduction order. The
+same 3,195,555,840 gradient elements. The benchmark's hit count uses random
+targets and is near chance, so it is not argmax parity evidence; dedicated GPU
+tests cover positive hits, tile boundaries and ties. The difference comes from
+whole-head versus chunked reduction order. The
 vocabulary projection remains on cuBLAS: a fully fused Triton matmul was not
 adopted because sm_89 matmul quality is not expected to beat cuBLAS and the
 backward pass still needs logits for `dlogits`. Forcing recompute on the
