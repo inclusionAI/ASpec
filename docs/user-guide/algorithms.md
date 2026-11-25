@@ -169,6 +169,10 @@ the sum of per-head mean cross-entropies (assistant tokens only): each head's CE
 within a microbatch, and microbatches are weighted equally by gradient accumulation rather than
 pooled by token count. The heads own trainable full-vocabulary projections. Start from
 `configs/recipes/medusa_qwen3_8b.yaml` (SDPA, CP1, MBS1, non-packing, REPLICATE, Store/TCP).
+The loss automatically selects a fused Triton CE/argmax/dlogits epilogue with one `dW` GEMM per
+head (or bounded per-chunk accumulation for long selections) when CUDA BF16 and Triton are
+available, and falls back to the reference path otherwise; `gradient_checkpointing` still bounds
+the dominant vocabulary-logit memory through an internal retained-logits budget.
 Native export, strict reload and per-head held-out reporting are implemented, as is greedy and
 typical/nucleus sampling candidate-tree acceptance through a standalone Hugging Face evaluator;
 SGLang integration and production serving remain future work; see [details](medusa.md).

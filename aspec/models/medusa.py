@@ -15,17 +15,62 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
+from aspec.models.ops.medusa_ce import medusa_head_ce, use_fused_medusa_ce
+
+# Retaining BF16 logits removes one projection pass in backward.  Bound the
+# all-head retained bytes so gradient checkpointing still protects long
+# sequences; 4K/Qwen3-8B/K=5 (about 6.2 GiB) uses the faster saved mode.
+SAVE_LOGITS_BUDGET_BYTES = 8 * 1024**3
+
 
 class MedusaModel(nn.Module):
     def __init__(self, draft_model, gradient_checkpointing=False):
         super().__init__()
-        # Chunked CE retains each chunk's f32 logits until backward
-        # (~chunk x vocab x 4 bytes per head); long-sequence training should
-        # enable gradient_checkpointing, as the maintained recipes do.
+        # The reference path retains each chunk's FP32 logits until backward.
+        # The fused path instead uses the budget below: small selections retain
+        # BF16 logits and skip one projection pass; long selections recompute.
         self.draft_model = draft_model
         self.num_heads = draft_model.medusa_num_heads
         self.gradient_checkpointing = gradient_checkpointing
         self.vocab_pruning = False
+
+    def _save_fused_logits(self, tokens, vocab):
+        if not self.gradient_checkpointing:
+            return True
+        retained = tokens * vocab * 2 * self.num_heads
+        return retained <= SAVE_LOGITS_BUDGET_BYTES
+
+    def _reference_head_loss(
+        self,
+        head,
+        features,
+        input_ids_row,
+        feature_positions,
+        label_positions,
+        selected,
+    ):
+        """Reference per-head CE at the t+2+i offset, one head."""
+        total = features.new_zeros((), dtype=torch.float32)
+        hits = features.new_zeros((), dtype=torch.float32)
+        for indices in selected.split(128):
+            targets = input_ids_row.index_select(
+                0, label_positions.index_select(0, indices))
+            chunk_features = features.index_select(
+                0, feature_positions.index_select(0, indices))
+
+            def loss_chunk(chunk_features, targets, head=head):
+                logits = head(chunk_features)
+                return (F.cross_entropy(logits.float(), targets, reduction="sum"),
+                        (logits.argmax(-1) == targets).float().sum())
+
+            if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
+                loss, chunk_hits = checkpoint(loss_chunk, chunk_features, targets,
+                                              use_reentrant=False)
+            else:
+                loss, chunk_hits = loss_chunk(chunk_features, targets)
+            total = total + loss
+            hits = hits + chunk_hits.detach()
+        return total, hits
 
     def forward(self, input_ids, hidden_states, loss_mask, attention_mask, thd_layout=None):
         if thd_layout is not None:
@@ -54,24 +99,38 @@ class MedusaModel(nn.Module):
                 feature_positions = label_positions - offset
                 keep = loss_mask[row].index_select(0, label_positions).bool()
                 selected = keep.nonzero().flatten()
-                for indices in selected.split(128):
-                    targets = input_ids[row].index_select(
-                        0, label_positions.index_select(0, indices))
-                    chunk_features = features.index_select(
-                        0, feature_positions.index_select(0, indices))
-
-                    def loss_chunk(chunk_features, targets, head=head):
-                        logits = self.draft_model.medusa_head[head](chunk_features)
-                        return (F.cross_entropy(logits.float(), targets, reduction="sum"),
-                                (logits.argmax(-1) == targets).float().sum())
-
-                    if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
-                        loss, hits = checkpoint(loss_chunk, chunk_features, targets,
-                                                use_reentrant=False)
-                    else:
-                        loss, hits = loss_chunk(chunk_features, targets)
-                    sums[head] = sums[head] + loss
-                    correct[head] = correct[head] + hits.detach()
+                head_module = self.draft_model.medusa_head[head]
+                if selected.numel() and use_fused_medusa_ce(
+                    features,
+                    head_module[-1].weight,
+                    num_rows=selected.numel(),
+                ):
+                    selected_features = features.index_select(
+                        0, feature_positions.index_select(0, selected))
+                    selected_labels = label_positions.index_select(0, selected)
+                    targets = input_ids[row].index_select(0, selected_labels)
+                    projected = head_module[:-1](selected_features)
+                    nll, hits = medusa_head_ce(
+                        projected,
+                        head_module[-1].weight,
+                        targets,
+                        save_logits=self._save_fused_logits(
+                            selected.numel(), head_module[-1].weight.shape[0]
+                        ),
+                    )
+                    sums[head] = sums[head] + nll.sum()
+                    correct[head] = correct[head] + hits.sum()
+                elif selected.numel():
+                    loss_sum, hits_sum = self._reference_head_loss(
+                        head_module,
+                        features,
+                        input_ids[row],
+                        feature_positions,
+                        label_positions,
+                        selected,
+                    )
+                    sums[head] = sums[head] + loss_sum
+                    correct[head] = correct[head] + hits_sum
                 counts[head] = counts[head] + selected.numel()
         losses = [value / count.clamp_min(1) for value, count in zip(sums, counts, strict=True)]
         return (losses, [value.detach() for value in losses],
