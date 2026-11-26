@@ -109,6 +109,28 @@ python -m tools.validation.domino_anchor_protocol verify \
 its source sample. Consuming the same file in both trainers is still required before
 claiming a matched loss-curve comparison; an identical seed alone is not enough.
 
+## JetSpec decode acceptance
+
+Export a JetSpec checkpoint for SGLang and run the bounded greedy decode check:
+
+```bash
+aspec export --input-dir outputs/jetspec/checkpoints/iter_0000009 \
+  --output-dir outputs/jetspec-sglang
+
+aspec evaluate --target /models/Qwen3-8B --draft outputs/jetspec-sglang \
+  --data held-out.jsonl --output outputs/jetspec-decode.json \
+  --samples 16 --max-new-tokens 32 --repeats 2
+```
+
+SGLang 0.5.21 needs the exported config to carry top-level `is_causal=true`; the
+published `dflash_config.causal_head` field alone leaves DFlash full-attention layers
+bidirectional. The evaluator checks greedy equality against Target-only decoding and
+repeat stability, and reports acceptance length including Target tokens. Exporting the
+published `JetSpec/jetspec-qwen3-8b` checkpoint with
+`python -m tools.validation.jetspec_published_export --checkpoint ... --target-model ...`
+reproduced the direct checkpoint's bounded acceptance and fixed-order timing; this is a
+decode integration check, not throughput or convergence evidence.
+
 ## Algorithm, capacity and fault checks
 
 | Scope | Required additional evidence |

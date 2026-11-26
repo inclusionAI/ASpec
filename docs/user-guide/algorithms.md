@@ -123,9 +123,9 @@ frozen Target features. `JetSpecConfig` forces that causal contract and rejects
 incompatible structures. The ASpec training CLI selects the algorithm through a
 shipped Qwen3-8B Draft config and a JetSpec trainer that reuses the DFlash
 optimizer/checkpoint path. FlexAttention, CP1, padded/non-packing execution and
-exact recovery are the initial scope. Native export, strict reload and a proposal
-consumer are supported; tree construction, SGLang export and verifier-acceptance
-runs remain pending.
+exact recovery are the initial scope. SGLang/native export, strict reload, a
+proposal consumer and bounded verifier-acceptance runs are supported; tree
+construction and long-run convergence evidence remain pending.
 
 ## Native MTP conditioning for DSpark/DFlash
 

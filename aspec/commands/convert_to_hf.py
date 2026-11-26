@@ -203,6 +203,26 @@ def _serving_config(raw_config: dict) -> dict:
             raise ValueError("SGLang Domino serving requires a boolean shift_label")
         return config
 
+    if raw_config.get("architectures") == ["JetSpecDraftModel"]:
+        from aspec.models.draft.jetspec import JetSpecConfig, official_jetspec_config
+
+        effective = JetSpecConfig.from_dict(raw_config).to_dict()
+        config = official_jetspec_config(effective)
+        if effective.get("fc_norm"):
+            raise NotImplementedError(
+                "SGLang JetSpec export cannot represent per-layer fc_norm; "
+                "use --format aspec"
+            )
+        if effective.get("hidden_act", "silu") != "silu":
+            raise NotImplementedError(
+                "SGLang 0.5.21 DFlash loader only supports SiLU; "
+                "use --format aspec for another activation"
+            )
+        # SGLang 0.5.21 reads top-level is_causal for DFlash full-attention
+        # layers; it does not read dflash_config.causal_head.
+        config["is_causal"] = True
+        return config
+
     if raw_config.get("architectures") == ["MedusaDraftModel"]:
         raise NotImplementedError(
             "Medusa heads require native --format aspec export; "
@@ -213,10 +233,6 @@ def _serving_config(raw_config: dict) -> dict:
         native["architectures"] = ["Qwen3_5ForCausalLMMTP"]
         native["mtp_num_hidden_layers"] = 1
         return native
-    if raw_config.get("architectures") == ["JetSpecDraftModel"]:
-        raise NotImplementedError(
-            "JetSpec requires --format aspec; SGLang 0.5.21 has no JetSpec serving loader"
-        )
     attention = resolve_draft_attention(raw_config)
     if attention["csa"] is not None:
         raise NotImplementedError(
@@ -372,7 +388,7 @@ def _draft_structure_manifest(raw_config: dict) -> dict:
             "runtime": "sglang",
             "validated_version": "0.5.21",
             "speculative_algorithm": (
-                "DFLASH" if algorithm in {"dflash2", "domino"} else
+                "DFLASH" if algorithm in {"dflash2", "domino", "jetspec"} else
                 "EAGLE" if algorithm == "mtp" else algorithm.upper()
             ),
             "required_patch_features": (

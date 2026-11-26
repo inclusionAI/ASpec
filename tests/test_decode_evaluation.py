@@ -118,3 +118,7 @@ def test_equality_between_frameworks_does_not_hide_repeat_instability():
 def test_empty_or_incomplete_repeats_cannot_pass_equality(baseline, candidate):
     with pytest.raises(ValueError, match="complete decode repeats"):
         output_checks(baseline, candidate)
+
+
+def test_jetspec_uses_the_dflash_serving_runtime():
+    assert serving_algorithm("jetspec") == "DFLASH"

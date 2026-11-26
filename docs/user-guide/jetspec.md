@@ -17,8 +17,8 @@ Target GPU plus two Draft GPUs at 4K (three GPUs total).
   `block_size=16`, `is_causal=true`).
 - Formal recipe: `configs/recipes/jetspec_qwen3_8b.yaml` (FlexAttention, CP1,
   non-packing, REPLICATE, Store/TCP transport, held-out evaluation and
-  `inference.store_last_hidden_states=true`). It is catalogued as `jetspec`; its
-  export boundary is native-only.
+  `inference.store_last_hidden_states=true`). It is catalogued as `jetspec`; both
+  SGLang and native export are validated.
 - Smoke example: `configs/examples/jetspec_qwen3_8b_4k_tcp.yaml` (shorter
   functional run with bundled data).
 - The supported path fails closed outside dense full attention, padded inputs,
@@ -76,18 +76,27 @@ and exact resume still need a hardware run before making quality claims.
 
 ## Export and strict reload
 
-Export a trained checkpoint with the native ASpec artifact format:
+Export a trained checkpoint for SGLang serving (default) or as a native ASpec
+artifact:
 
 ```bash
+aspec export \
+  --input-dir outputs/jetspec_qwen3_8b_4k_tcp_resumed/checkpoints/iter_0000009 \
+  --output-dir outputs/jetspec-qwen3-8b-sglang
+
 aspec export \
   --input-dir outputs/jetspec_qwen3_8b_4k_tcp_resumed/checkpoints/iter_0000009 \
   --output-dir outputs/jetspec-qwen3-8b-asset --format aspec
 ```
 
-JetSpec deliberately rejects the SGLang artifact format: SGLang 0.5.21 has no
-validated JetSpec loader, so a DFlash-style serving export could silently lose the
-causal block contract. The native manifest records the JetSpec algorithm, trained
-`block_size`, Target feature layers, temperature, KL chunk size and weighting.
+The SGLang export maps JetSpec to the published DFlash draft layout and sets both
+`dflash_config.causal_head=true` and top-level `is_causal=true`. SGLang 0.5.21 reads
+the top-level flag for DFlash full-attention layers; `causal_head` alone would leave
+the draft bidirectional. The manifest records runtime `DFLASH`; SGLang loads the
+exported `fc`/`hidden_norm`/`norm`/`layers.*` tensors.
+
+The native manifest records the JetSpec algorithm, trained `block_size`, Target
+feature layers, temperature, KL chunk size and weighting.
 `aspec.draft_artifact.load_native_draft` validates the checksums and semantics, then
 loads every tensor strictly and preserves dtypes.
 
@@ -101,6 +110,21 @@ feature count (5). `AutoDraftModelConfig.from_dict` detects `causal_head=true` a
 produces the flat `JetSpecDraftModel`/`model_type="jetspec"` config. The published
 weight layout matches ASpec's export names; `load_initial_draft_weights` loads the
 draft tensors strictly and borrows the missing Target embedding.
+
+### Decode acceptance
+
+Run real decode acceptance against the SGLang export with `aspec evaluate`:
+
+```bash
+aspec evaluate --target /path/to/Qwen3-8B \
+  --draft outputs/jetspec-qwen3-8b-sglang \
+  --data /path/to/held-out-prompts.jsonl --output outputs/jetspec-decode.json
+```
+
+The evaluator reports measured acceptance length (including Target tokens), checks
+greedy equality against Target-only decoding and verifies repeat stability. A
+16-prompt, 32-new-token, two-repeat check on one H100 loaded the asset and produced stable greedy output; the bounded run is a
+decode integration check, not throughput or convergence evidence.
 
 ### Native proposal component
 
@@ -119,8 +143,14 @@ against independent equations, explicit-mask and packed fail-closed paths,
 anchor/loss-mask exclusion, empty supervision and next-token label/teacher
 alignment. Native export, strict reload and the proposal consumer have focused CPU
 coverage, including causal visibility and anchor-feature isolation. GPU attention
-execution, convergence, acceptance length and serving performance are not certified
-by those checks.
+execution, convergence and serving throughput are not certified by those checks.
+Bounded SGLang decode was run on 16 held-out prompts (32 new tokens, greedy, two
+repeats): the 8-step checkpoint produced greedy-equal, repeat-stable output. The published `JetSpec/jetspec-qwen3-8b` checkpoint measured 2.723
+tokens/verification and 1.823x fixed-order median speedup in the same bounded setup; exporting
+that checkpoint through ASpec reproduced the same numbers, confirming tensor/layout
+compatibility. The 8-step checkpoint measured 1.032
+tokens/verification and 0.795x, so this is not a convergence or quality claim. See
+[bounded decode compatibility](../benchmarks/jetspec-decode.md).
 
 ## Reference and selected method
 
@@ -238,9 +268,12 @@ denominator. Per-position loss now reports KL rather than CE.
 
 - Native export, strict reload and a native proposal consumer are supported; the
   published Qwen3-8B config/weight layout maps into ASpec.
-- This integration does not provide tree construction, SGLang serving export, a
-  real verifier-acceptance run or a same-budget comparison with the official
-  implementation. Those remain follow-up work under the issue's expected outcomes.
+- SGLang serving export, native export/strict reload and a bounded real
+  verifier-acceptance run are supported.
+- This integration does not provide tree construction or a same-budget trained
+  comparison with the official implementation. The official repository publishes an
+  inference checkpoint but no comparable training loop; the bounded check therefore
+  compares asset loading and decode acceptance rather than training curves.
 - The default tests are in `tests/cpu/test_jetspec.py`,
   `tests/cpu/test_jetspec_integration.py`, `tests/cpu/test_jetspec_export.py`,
   `tests/cpu/test_jetspec_consumer.py` and `tests/cpu/test_jetspec_official.py`.

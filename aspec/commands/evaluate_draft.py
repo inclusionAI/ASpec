@@ -28,6 +28,7 @@ _SPECULATIVE_ALGORITHMS = {
     "dflash": "DFLASH",
     "dflash2": "DFLASH",
     "domino": "DFLASH",
+    "jetspec": "DFLASH",
     "eagle3": "EAGLE3",
     "mtp": "EAGLE",
 }

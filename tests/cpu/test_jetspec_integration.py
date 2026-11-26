@@ -102,10 +102,12 @@ def test_registration_resolves_jetspec():
     assert semantics["block_size"] == 5
 
 
-def test_sglang_serving_export_rejects_jetspec():
+def test_sglang_serving_export_uses_causal_dflash_layout():
     raw = json.loads(_DRAFT_JSON.read_text())
-    with pytest.raises(NotImplementedError, match="--format aspec"):
-        _serving_config(raw)
+    config = _serving_config(raw)
+    assert config["architectures"] == ["DFlashDraftModel"]
+    assert config["is_causal"] is True
+    assert config["dflash_config"]["causal_head"] is True
 
 
 

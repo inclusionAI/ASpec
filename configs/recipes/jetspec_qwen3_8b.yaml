@@ -1,5 +1,5 @@
 # Formal single-node JetSpec recipe: causal parallel Draft training, exact
-# recovery and native export. Hyperparameters are a starting point, not a
+# recovery and SGLang/native export. Hyperparameters are a starting point, not a
 # convergence or acceptance claim.
 model:
   target_model_path: ${oc.env:ASPEC_TARGET_MODEL,Qwen/Qwen3-8B}

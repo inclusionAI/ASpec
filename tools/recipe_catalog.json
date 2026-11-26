@@ -52,7 +52,7 @@
     "gpus": 3,
     "target_gpus": 1,
     "draft_gpus": 2,
-    "native_only_export": true
+    "native_only_export": false
   },
   "eagle3": {
     "configs": [
