@@ -179,6 +179,7 @@ class DFlashTrainer(Trainer):
             draft_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         draft_model = draft_model.to(torch.bfloat16)
         draft_model.keep_csa_projection_precision()
+        draft_model.keep_kda_gate_precision()
 
         dist.barrier(group=get_gloo_group())
 

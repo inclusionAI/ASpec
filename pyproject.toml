@@ -38,6 +38,9 @@ dspark-qk = [
     # The ASpec-owned kernel uses cutlass.experimental on CUDA 13.
     "nvidia-cutlass-dsl[cu13]==4.7.1",
 ]
+kda = [
+    "flash-linear-attention",
+]
 
 [tool.setuptools.packages.find]
 include = ["aspec*"]

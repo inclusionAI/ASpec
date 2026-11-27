@@ -236,3 +236,14 @@ The maintained validation boundary includes three-stage real-Target training wit
 exact recovery, packed CP numerical checks and 128K component/asset checks. This is functional and
 numerical coverage, not an end-to-end speed, convergence or official-MLA claim. New evidence must
 retain its exact source revision, environment and failures outside the source checkout.
+
+## KDA: Kimi Delta Attention (pure and hybrid)
+
+DSpark/DFlash GQA Drafts also support `kimi_delta_attention` layers in `layer_types`,
+including 3:1 hybrid KDA + Full Attention schedules such as
+`aspec/config/dspark_ling3_tiny_kda_draft_config.json` and
+`configs/examples/ling3_tiny_kda_dspark.yaml`. KDA layers branch each Draft block
+from the causal, document-isolated Target context state `S_{a-1}` (and short-conv
+history), using `fla` CUDA kernels (`kda_backend="fla"`) or the pure-PyTorch
+reference (`kda_backend="reference"`). See [KDA hybrid Drafts](kda.md) for the
+state contract, native export and support boundaries.
