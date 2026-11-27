@@ -7,6 +7,7 @@ tokens or feature-layer offsets. Model/dataset licenses are independent of ASpec
 | Target | YAML | Starting allocation | Draft |
 | --- | --- | --- | --- |
 | Ling-3.0-tiny | `configs/recipes/ling3_tiny_dspark.yaml` | 1 Target + 1 Draft GPU | Two-layer Dense DSpark |
+| Ling-3.0-tiny DFlash | `configs/recipes/ling3_tiny_dflash.yaml` | 1 Target + 2 Draft GPUs | Five-layer Dense DFlash |
 | Ling-3.0-flash BF16 | `configs/recipes/ling3_flash_dspark.yaml` | TP2 Target + 1 Draft GPU | Five-layer Dense DSpark |
 | Ling-3.1-flash FP8 | `configs/recipes/ling31_flash_mla_moe_dspark.yaml` | TP4/EP4 Target + 4 Draft GPUs | Five-layer BF16 materialized MLA + Ling MoE |
 

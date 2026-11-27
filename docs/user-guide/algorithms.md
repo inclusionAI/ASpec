@@ -25,6 +25,10 @@ EAGLE3 uses recurrent TTT and its selected distillation objective. Its pruned vo
 the checkpoint's `d2t/t2d` mapping across recovery/export. Teacher argmax outside the selected
 vocabulary is filtered; omitted probability mass is not reassigned to the reduced head.
 
+Ling targets reuse the same DFlash trainer. `configs/recipes/ling3_tiny_dflash.yaml` binds
+Ling-3.0-tiny's capture layers `[1, 6, 11, 16, 21]`, frozen embedding/head/norm keys, the `ling3`
+template and gMASK 156894; it starts with one Target and two Draft GPUs.
+
 The full-vocabulary recipe sets `training.eagle3_target_cache=logits`. This projects the frozen
 Target head once per microbatch and reuses the resulting BF16 logits across TTT depths and
 checkpoint recomputation; each depth still performs the same FP32 softmax and distillation loss.
