@@ -80,6 +80,9 @@ def validate_native_asset(path, *, expected_config=None, weights_only=False):
     recorded_dsa = ((manifest.get("draft_structure") or {}).get("attention") or {}).get("dsa")
     if recorded_dsa != attention.get("dsa"):
         raise ValueError("Native artifact DSA policy disagrees with its model configuration")
+    recorded_kda = ((manifest.get("draft_structure") or {}).get("attention") or {}).get("kda")
+    if recorded_kda != attention.get("kda"):
+        raise ValueError("Native artifact KDA policy disagrees with its model configuration")
     if expected_config is not None:
         expected_attention = resolve_draft_attention(
             expected_config if isinstance(expected_config, dict) else expected_config.to_dict()
@@ -97,6 +100,15 @@ def validate_native_asset(path, *, expected_config=None, weights_only=False):
                 expected_attention, phase_transition=weights_only
             ):
                 raise ValueError("Native artifact DSA stage/semantics disagree with the requested Draft")
+        if attention.get("kda") is not None or expected_attention.get("kda") is not None:
+            def kda_semantics(policy):
+                kda = policy.get("kda")
+                return (policy["layer_types"], None if kda is None else {
+                    key: value for key, value in kda.items()
+                    if key not in {"chunk_size", "backend"}
+                })
+            if kda_semantics(attention) != kda_semantics(expected_attention):
+                raise ValueError("Native artifact KDA semantics disagree with the requested Draft")
     return config, manifest
 
 
@@ -125,6 +137,8 @@ def load_native_draft(path, *, device="cpu", dtype=None):
     # BF16 and back would silently destroy the checkpoint's retained precision.
     if hasattr(model, "keep_csa_projection_precision"):
         model.keep_csa_projection_precision()
+    if hasattr(model, "keep_kda_gate_precision"):
+        model.keep_kda_gate_precision()
     if dtype is not None:
         expected = model.state_dict()
         state = {key: value.to(expected[key].dtype) if value.is_floating_point() else value
@@ -181,8 +195,24 @@ class BlockDraftConsumer:
         if saved is not None and saved != block_size:
             raise ValueError("Proposal block size disagrees with the trained asset")
         self.block_size = block_size
-        self.backbone = DFlashModel(draft_model, block_size=block_size, num_anchors=1,
-                                   attention_backend="fa4")
+        from aspec.config.draft_attention import resolve_draft_attention
+
+        attention = resolve_draft_attention(draft_model.config.to_dict())
+        self.is_kda = attention.get("kda") is not None
+        if self.is_kda:
+            backend = (
+                "flex_attention"
+                if next(draft_model.parameters()).device.type == "cuda"
+                else "sdpa"
+            )
+            self.backbone = DFlashModel(
+                draft_model, block_size=block_size, num_anchors=1, attention_backend=backend
+            )
+            self.backbone._materialize_cpu_block_mask = True
+        else:
+            self.backbone = DFlashModel(
+                draft_model, block_size=block_size, num_anchors=1, attention_backend="fa4"
+            )
         # Explicit inference component: keep the actual stage and selection, but
         # never project teacher distributions or compute training-only indexer KL.
         from aspec.models.draft.csa import CSALayer, CSALightningIndexer
@@ -211,12 +241,19 @@ class BlockDraftConsumer:
         if length + self.block_size - 1 > config.max_position_embeddings:
             raise ValueError("Proposal exceeds the artifact's supported position range")
         # Pad only cheap token IDs for the training wrapper's anchor bounds.
-        # Future context features are neither constructed nor copied.
+        # Future context features are neither constructed nor copied for FA4;
+        # non-FA4 KDA paths pad zero context rows that remain strictly masked out.
         anchor = torch.tensor([[length - 1]], device=input_ids.device)
+        if self.is_kda:
+            features = F.pad(target_features, (0, 0, 0, self.block_size))
+            packed_positions = None
+        else:
+            features = target_features
+            packed_positions = torch.arange(length, device=input_ids.device)[None]
         hidden = self.backbone._draft_backbone(
-            F.pad(input_ids, (0, self.block_size)), target_features,
+            F.pad(input_ids, (0, self.block_size)), features,
             torch.ones((1, length + self.block_size), device=input_ids.device),
-            packed_context_positions=torch.arange(length, device=input_ids.device)[None],
+            packed_context_positions=packed_positions,
             injected_anchors=anchor, injected_keep_mask=torch.ones_like(anchor, dtype=torch.bool),
         )[0][0]
         if self.algorithm == "dflash":

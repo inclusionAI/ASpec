@@ -22,6 +22,7 @@ and tests do not imply CPU training support.
 | Dense / Qwen MoE / Ling MoE | Structure-specific FFNs, routing state, checkpointing and strict assets | No promise of every algorithm × structure combination |
 | MHA/GQA / materialized MLA | Explicit head geometry and tensor bindings | MLA materializes K/V; no absorbed-MLA claim |
 | SWA / CSA / QSA / DSA | Explicit window or staged compressed/indexed structures; native assets where required | DSA uses per-query raw-token selection on DSpark/DFlash GQA/MHA; no CSA2 or arbitrary structure combinations; short contexts may be slower |
+| KDA (pure or hybrid) | Kimi Delta Attention layers (`kimi_delta_attention`) in DSpark/DFlash GQA Drafts with `fla` CUDA kernels or pure-PyTorch reference, exact recovery, native `--format aspec` export, strict reload and `BlockDraftConsumer` proposal; shipped `Ling-3.0-tiny` 3:1 hybrid config | Padded (`dflash_packing=false`), CP1, `compile_model=false`, single node; no mixing with CSA/QSA/DSA or materialized MLA; no SGLang serving export; see [scope](user-guide/kda.md) |
 
 Use [recipes](user-guide/recipes.md), [algorithm details](user-guide/algorithms.md) and
 [structure details](user-guide/structures.md) to choose a concrete configuration. A configuration

@@ -233,12 +233,18 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
     current_windows = current_topology.get("draft_attention_windows", [])
     current_policy = current_topology.get("draft_attention_policy") or {}
     if (
-        any(current_policy.get(kind) is not None for kind in ("csa", "dsa"))
+        any(current_policy.get(kind) is not None for kind in ("csa", "dsa", "kda"))
         and (saved_topology is None or "draft_attention_policy" not in saved_topology
              or (current_policy.get("dsa") is not None
-                 and not (saved_topology.get("draft_attention_policy") or {}).get("dsa")))
+                 and not (saved_topology.get("draft_attention_policy") or {}).get("dsa"))
+             or (current_policy.get("kda") is not None
+                 and not (saved_topology.get("draft_attention_policy") or {}).get("kda")))
     ):
-        name = "DSA" if current_policy.get("dsa") is not None else "CSA"
+        name = (
+            "KDA" if current_policy.get("kda") is not None
+            else "DSA" if current_policy.get("dsa") is not None
+            else "CSA"
+        )
         raise RuntimeError(
             f"Exact resume cannot reinterpret a checkpoint without a {name} policy; "
             f"use continual_training=true for a new {name} phase"
@@ -322,6 +328,18 @@ def _validate_exact_resume_topology(args: Any, metadata: dict[str, Any], *, chec
             }}
         saved_topology = without_dsa_workspace(saved_topology)
         current_topology = without_dsa_workspace(current_topology)
+    if current_policy.get("kda") is not None:
+        # KDA chunk_size is an execution tile size, not a model/objective change.
+        def without_kda_chunk_size(topology):
+            policy = topology.get("draft_attention_policy") or {}
+            kda = policy.get("kda")
+            if kda is None:
+                return topology
+            return {**topology, "draft_attention_policy": {
+                **policy, "kda": {key: value for key, value in kda.items() if key != "chunk_size"}
+            }}
+        saved_topology = without_kda_chunk_size(saved_topology)
+        current_topology = without_kda_chunk_size(current_topology)
     # Older checkpoints recorded only part of the objective (e.g. block_size).
     # Keep that recovery path, while checking every field that was recorded;
     # newly published checkpoints protect the complete current objective.
@@ -984,6 +1002,8 @@ def load_initial_draft_weights(
             validate_native_asset(checkpoint_path.parent, expected_config=expected_config, weights_only=True)
         if hasattr(draft_model, "keep_csa_projection_precision"):
             draft_model.keep_csa_projection_precision()
+        if hasattr(draft_model, "keep_kda_gate_precision"):
+            draft_model.keep_kda_gate_precision()
         state = tensors
     else:
         state = (draft_model.state_dict_from_serving(tensors)

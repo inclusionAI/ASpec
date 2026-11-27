@@ -697,7 +697,9 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
                 "Materialized MLA Draft does not support mla_use_output_gate=True; "
                 "the retained K3 checkpoint contract has no output-gate weights"
             )
-        if any(attention.get(kind) is not None for kind in ("csa", "qsa", "dsa")):
+        if any(attention.get(kind) is not None for kind in ("csa", "qsa", "dsa", "kda")):
+            if attention.get("kda") is not None:
+                raise PlanCompileError("Materialized MLA Draft does not support KDA layers")
             if attention.get("dsa") is not None:
                 raise PlanCompileError("Materialized MLA Draft has not completed DSA integration")
             raise PlanCompileError(
@@ -750,6 +752,20 @@ def _load_draft_descriptor(config: DictConfig) -> dict[str, Any]:
             raise PlanCompileError("DSA dynamic selection does not yet support compile_model")
         if _select(config, "training.dflash_packing", False) and backend != "fa4":
             raise PlanCompileError("DSA packing requires training.attention_backend=fa4")
+    if attention.get("kda") is not None:
+        if family not in {"dflash", "dspark"}:
+            raise PlanCompileError("KDA is implemented for the DSpark/DFlash GQA Draft path")
+        if backend not in {"sdpa", "flex_attention", "cudnn_flex_attention"}:
+            raise PlanCompileError(
+                "KDA Draft currently requires training.attention_backend=flex_attention, "
+                "cudnn_flex_attention or sdpa for any non-KDA hybrid layers"
+            )
+        if _select(config, "training.compile_model", False):
+            raise PlanCompileError("KDA Draft does not yet support compile_model")
+        if _select(config, "training.dflash_packing", False):
+            raise PlanCompileError("KDA Draft currently requires training.dflash_packing=false")
+        if _select(config, "training.draft_context_parallel_size", 1) != 1:
+            raise PlanCompileError("KDA Draft currently requires training.draft_context_parallel_size=1")
     if any(w is not None for w in attention["context_windows"]) and not (
         (family == "eagle4" and backend == "sdpa") or
         is_fa4_backend(backend) or is_cudnn_flex_backend(backend) or backend == "flex_attention"
@@ -2294,6 +2310,7 @@ def compile_execution_plan(
         or draft["attention"]["csa"] is not None
         or draft["attention"]["qsa"] is not None
         or draft["attention"].get("dsa") is not None
+        or draft["attention"].get("kda") is not None
         or draft["family"] in {"domino", "jetspec"}
     )
     direct_target_output = bool(
@@ -2444,6 +2461,7 @@ def compile_execution_plan(
                         draft["attention"]["csa"] is not None
                         or draft["attention"]["qsa"] is not None
                         or draft["attention"].get("dsa") is not None
+                        or draft["attention"].get("kda") is not None
                     )
                     else {}
                 ),

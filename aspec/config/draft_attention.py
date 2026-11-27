@@ -174,11 +174,13 @@ def resolve_draft_attention(raw: Mapping) -> dict:
         "compressed_sparse_attention",
         "qwen_sparse_attention",
         "deepseek_sparse_attention",
+        "kimi_delta_attention",
     }
     if any(kind not in supported for kind in schedule):
         raise ValueError(
-            "Draft layer_types supports full_attention, sliding_attention and "
-            "compressed_sparse_attention, qwen_sparse_attention and deepseek_sparse_attention only"
+            "Draft layer_types supports full_attention, sliding_attention, "
+            "compressed_sparse_attention, qwen_sparse_attention, "
+            "deepseek_sparse_attention and kimi_delta_attention only"
         )
     window_active = any(
         kind in {"sliding_attention", "compressed_sparse_attention"}
@@ -187,8 +189,9 @@ def resolve_draft_attention(raw: Mapping) -> dict:
     csa_active = "compressed_sparse_attention" in schedule
     qsa_active = "qwen_sparse_attention" in schedule
     dsa_active = "deepseek_sparse_attention" in schedule
-    if sum((csa_active, qsa_active, dsa_active)) > 1:
-        raise ValueError("Draft CSA, QSA and DSA cannot be mixed in one layer schedule")
+    kda_active = "kimi_delta_attention" in schedule
+    if sum((csa_active, qsa_active, dsa_active, kda_active)) > 1:
+        raise ValueError("Draft CSA, QSA, DSA and KDA cannot be mixed in one layer schedule")
     if window_active and window is None:
         raise ValueError("Draft sliding/CSA attention requires sliding_window")
     if legacy is not None and legacy != window_active:
@@ -394,6 +397,70 @@ def resolve_draft_attention(raw: Mapping) -> dict:
         }
     elif any(raw.get(field) is not None for field in dsa_fields):
         raise ValueError("DSA settings require a deepseek_sparse_attention Draft layer")
+
+    kda = None
+    kda_fields = {
+        "kda_num_heads", "kda_head_dim", "kda_expand_v", "kda_use_short_conv",
+        "kda_conv_size", "kda_conv_bias", "kda_allow_neg_eigval",
+        "kda_backend", "kda_chunk_size",
+    }
+    if kda_active:
+        def kda_positive_integer(name: str, default: int) -> int:
+            value = raw.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"Draft {name} must be a positive integer")
+            return value
+
+        kda_num_heads = kda_positive_integer("kda_num_heads", raw.get("num_attention_heads", 32))
+        default_head_dim = raw.get("head_dim")
+        if default_head_dim is None:
+            hidden_size = raw.get("hidden_size", 4096)
+            if isinstance(hidden_size, bool) or not isinstance(hidden_size, int) or hidden_size <= 0:
+                raise ValueError("Draft hidden_size must be a positive integer")
+            default_head_dim = hidden_size // kda_num_heads
+        kda_head_dim = kda_positive_integer("kda_head_dim", default_head_dim)
+        expand_v = raw.get("kda_expand_v", 1.0)
+        if (
+            isinstance(expand_v, bool)
+            or not isinstance(expand_v, (int, float))
+            or not math.isfinite(expand_v)
+            or expand_v <= 0
+        ):
+            raise ValueError("Draft kda_expand_v must be finite and positive")
+        value_head_dim_f = kda_head_dim * float(expand_v)
+        value_head_dim = int(round(value_head_dim_f))
+        if abs(value_head_dim_f - value_head_dim) > 1e-6 or value_head_dim <= 0:
+            raise ValueError("Draft kda_head_dim * kda_expand_v must be a positive integer")
+        use_short_conv = raw.get("kda_use_short_conv", True)
+        if not isinstance(use_short_conv, bool):
+            raise ValueError("Draft kda_use_short_conv must be boolean")
+        conv_size = kda_positive_integer("kda_conv_size", 4)
+        conv_bias = raw.get("kda_conv_bias", False)
+        if not isinstance(conv_bias, bool):
+            raise ValueError("Draft kda_conv_bias must be boolean")
+        allow_neg_eigval = raw.get("kda_allow_neg_eigval", False)
+        if not isinstance(allow_neg_eigval, bool):
+            raise ValueError("Draft kda_allow_neg_eigval must be boolean")
+        kda_backend = raw.get("kda_backend", "fla")
+        if kda_backend not in {"fla", "reference"}:
+            raise ValueError("Draft kda_backend must be 'fla' or 'reference'")
+        kda_chunk_size = kda_positive_integer("kda_chunk_size", 64)
+        kda = {
+            "variant": "kda",
+            "num_heads": kda_num_heads,
+            "head_dim": kda_head_dim,
+            "expand_v": float(expand_v),
+            "value_head_dim": value_head_dim,
+            "use_short_conv": use_short_conv,
+            "conv_size": conv_size,
+            "conv_bias": conv_bias,
+            "allow_neg_eigval": allow_neg_eigval,
+            "backend": kda_backend,
+            "chunk_size": kda_chunk_size,
+            "draft_block_semantics": "causal_anchor_state_branch",
+        }
+    elif any(raw.get(field) is not None for field in kda_fields):
+        raise ValueError("KDA settings require a kimi_delta_attention Draft layer")
     return {
         "sliding_window": window,
         "layer_types": list(schedule),
@@ -401,6 +468,7 @@ def resolve_draft_attention(raw: Mapping) -> dict:
         "csa": csa,
         "qsa": qsa,
         **({"dsa": dsa} if dsa is not None else {}),
+        **({"kda": kda} if kda is not None else {}),
         # DSpark's anchor-shared context window, NOT a moving causal query window.
         "context_windows": [
             window
@@ -421,6 +489,10 @@ def resolve_draft_attention(raw: Mapping) -> dict:
                              else kind == "sliding_attention") else "bidirectional"
                 for kind in schedule
             ] if raw.get("architectures") == ["DFlash2DraftModel"]
+            else [
+                "causal_kda_state_branch" if kind == "kimi_delta_attention" else "bidirectional"
+                for kind in schedule
+            ] if kda_active
             else "bidirectional"
         ),
     }

@@ -988,6 +988,7 @@ class RunEvidenceRecorder:
             planned_csa = policy.get("csa")
             planned_qsa = policy.get("qsa")
             planned_dsa = policy.get("dsa")
+            planned_kda = policy.get("kda")
             expected_csa_layers = [
                 {
                     "layer": layer_id,
@@ -1037,6 +1038,19 @@ class RunEvidenceRecorder:
                 for layer_id, layer_type in enumerate(policy.get("layer_types", []))
                 if planned_dsa is not None and layer_type == "deepseek_sparse_attention"
             ]
+            expected_kda_layers = [
+                {"layer": layer_id, "type": "kimi_delta_attention", "variant": "kda",
+                 "backend": planned_kda["backend"],
+                 "num_heads": planned_kda["num_heads"],
+                 "head_dim": planned_kda["head_dim"],
+                 "value_head_dim": planned_kda["value_head_dim"],
+                 "use_short_conv": planned_kda["use_short_conv"],
+                 "conv_size": planned_kda["conv_size"],
+                 "allow_neg_eigval": planned_kda["allow_neg_eigval"],
+                 "draft_block_semantics": planned_kda["draft_block_semantics"]}
+                for layer_id, layer_type in enumerate(policy.get("layer_types", []))
+                if planned_kda is not None and layer_type == "kimi_delta_attention"
+            ]
             def attention_observed(item):
                 observed = item.get("draft_attention") or {}
                 if (
@@ -1047,29 +1061,42 @@ class RunEvidenceRecorder:
                     or observed.get("forward_observed") is not True
                 ):
                     return False
-                if planned_csa is None and planned_qsa is None and planned_dsa is None:
+                if (
+                    planned_csa is None
+                    and planned_qsa is None
+                    and planned_dsa is None
+                    and planned_kda is None
+                ):
                     return True
                 if observed.get("csa") != planned_csa or observed.get("qsa") != planned_qsa:
                     return False
                 if observed.get("dsa") != planned_dsa:
                     return False
+                if observed.get("kda") != planned_kda:
+                    return False
                 actual_layers = observed.get("layers") or []
-                if planned_dsa is not None:
-                    # A legal mixed full/SWA+DSA schedule also reports ordinary
-                    # attention layers. Only indexed layers belong to this
-                    # per-indexer activation check; do not discard other sparse
-                    # families, which must still make a DSA-only plan fail.
+                if planned_dsa is not None or planned_kda is not None:
+                    # A legal mixed full/SWA+DSA or Hybrid KDA schedule also reports
+                    # ordinary attention layers. Only specialized layers belong to
+                    # this per-layer activation check; do not discard other families.
                     actual_layers = [layer for layer in actual_layers if layer.get("type") in {
-                        "compressed_sparse_attention", "qwen_sparse_attention", "deepseek_sparse_attention"
+                        "compressed_sparse_attention", "qwen_sparse_attention",
+                        "deepseek_sparse_attention", "kimi_delta_attention",
                     }]
-                expected_layers = expected_csa_layers + expected_qsa_layers + expected_dsa_layers
+                expected_layers = (
+                    expected_csa_layers + expected_qsa_layers + expected_dsa_layers + expected_kda_layers
+                )
                 return len(actual_layers) == len(expected_layers) and all(
                     all(actual.get(key) == value for key, value in expected.items())
                     for actual, expected in zip(actual_layers, expected_layers, strict=True)
                 )
 
             selected_policy_requested = (
-                swa_requested or planned_csa is not None or planned_qsa is not None or planned_dsa is not None
+                swa_requested
+                or planned_csa is not None
+                or planned_qsa is not None
+                or planned_dsa is not None
+                or planned_kda is not None
             )
             # Activation is an execution claim, so every consumer must report the
             # physical head layout even for full attention.  Plan-time validation

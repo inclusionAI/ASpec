@@ -819,7 +819,10 @@ class DFlashModel(nn.Module):
             attention_policy.get("dsa") is not None
             and attention_policy["dsa"]["training_stage"] == "sparse"
         )
-        has_dynamic_sparse_layers = has_csa_layers or has_sparse_qsa_layers or has_sparse_dsa_layers
+        has_kda_layers = "kimi_delta_attention" in layer_types
+        has_dynamic_sparse_layers = (
+            has_csa_layers or has_sparse_qsa_layers or has_sparse_dsa_layers or has_kda_layers
+        )
 
         block_mask = None
         if device.type == "cuda" and direct_cp_metadata is None:
@@ -829,11 +832,9 @@ class DFlashModel(nn.Module):
             mask_cache = {}
             block_masks = []
             for layer_id in range(self.draft_model.num_layers):
-                # CSA has a different KV layout (raw KV followed by arbitrary
-                # compressed entries) and must always construct its exact local
-                # plus compressed-entry mask after selection.  A generic mask is
-                # both wasted work and incorrect when there are zero groups.
-                if layer_types[layer_id] == "compressed_sparse_attention" or (
+                # CSA/KDA/sparse layers manage their own visibility rather than
+                # using a generic FlexAttention/cuDNN block mask.
+                if layer_types[layer_id] in {"compressed_sparse_attention", "kimi_delta_attention"} or (
                     layer_types[layer_id] == "qwen_sparse_attention"
                     and has_sparse_qsa_layers
                 ) or (
@@ -892,9 +893,14 @@ class DFlashModel(nn.Module):
             dense_cache = {}
             dense_masks = []
             for layer_id in range(self.draft_model.num_layers):
+                if layer_types[layer_id] == "kimi_delta_attention":
+                    dense_masks.append(None)
+                    continue
                 options = self._block_mask_options_for_layer(layer_id)
                 causal = bool(options.get("is_causal", False))
-                materialize = causal or self._materialize_cpu_block_mask
+                materialize = causal or self._materialize_cpu_block_mask or (
+                    has_kda_layers and ctx_doc_ids is None
+                )
                 if materialize and set(options) - {"is_causal"}:
                     raise ValueError(
                         "CPU Draft attention does not implement these mask options"
@@ -917,7 +923,9 @@ class DFlashModel(nn.Module):
                     dense_masks.append(None)
             if dense_cache:
                 dense_attention_masks = (
-                    dense_masks[0] if len(dense_cache) == 1 else dense_masks
+                    dense_masks[0]
+                    if len(dense_cache) == 1 and not has_kda_layers
+                    else dense_masks
                 )
 
         if direct_cp_metadata is not None:
@@ -1037,6 +1045,17 @@ class DFlashModel(nn.Module):
             if attention_policy.get("dsa") is not None:
                 dsa_metadata, qsa_metadata = qsa_metadata, None
 
+        kda_metadata = None
+        if attention_policy.get("kda") is not None:
+            from aspec.models.draft.kda import KDAForwardMetadata
+
+            kda_metadata = KDAForwardMetadata(
+                anchor_positions=anchor_positions,
+                block_keep_mask=block_keep_mask,
+                block_size=self.block_size,
+                context_doc_ids=ctx_doc_ids,
+            )
+
         # 6. Draft model forward — router/indexer activations live only in this call.
         moe = getattr(getattr(self.draft_model, "config", None), "ffn_type", "dense") != "dense"
         model_kwargs = {"return_router_logits": True} if moe else {}
@@ -1052,6 +1071,7 @@ class DFlashModel(nn.Module):
             csa_metadata=csa_metadata,
             qsa_metadata=qsa_metadata,
             dsa_metadata=dsa_metadata,
+            kda_metadata=kda_metadata,
             **model_kwargs,
         )
         if moe:
@@ -1078,6 +1098,7 @@ class DFlashModel(nn.Module):
             "csa": attention_policy["csa"],
             "qsa": attention_policy["qsa"],
             "dsa": attention_policy.get("dsa"),
+            "kda": attention_policy.get("kda"),
             "layers": list(
                 getattr(self.draft_model, "last_attention_observations", ())
             ),

@@ -155,6 +155,15 @@ class DFlashConfig(PretrainedConfig):
             for field in ("training_stage", "token_budget", "index_n_heads", "index_head_dim",
                           "q_lora_rank", "rope_dim", "rope_theta", "indexer_loss_coef", "workspace_bytes"):
                 setattr(self, f"dsa_{field}", dsa[field])
+        if attention.get("kda") is not None:
+            if self.model_type in {"k3_dspark", "qwen3_dflash2"}:
+                raise NotImplementedError("KDA is not integrated with materialized MLA or DFlash2")
+            kda = attention["kda"]
+            for field in (
+                "num_heads", "head_dim", "expand_v", "use_short_conv",
+                "conv_size", "conv_bias", "allow_neg_eigval", "backend", "chunk_size",
+            ):
+                setattr(self, f"kda_{field}", kda[field])
         structure = resolve_draft_structure({
             **kwargs, "ffn_type": ffn_type, "num_experts": num_experts,
             "num_experts_per_tok": num_experts_per_tok,
@@ -356,6 +365,25 @@ class DFlashAttention(nn.Module):
         self.head_layout = head_layout["type"]
         self.max_position_embeddings = getattr(config, "max_position_embeddings", 32768)
 
+        self.attention_type = config.layer_types[layer_idx]
+        self.kda_layer = None
+        self.csa_layer = None
+        self.qsa_layer = None
+        self.dsa_layer = None
+        self.csa_indexer_loss_per_query = None
+        self.qsa_indexer_loss_per_query = None
+        self.dsa_indexer_loss_per_query = None
+        self.attention_observation = None
+        self.cudnn_gqa_mode = getattr(config, "cudnn_gqa_mode", "auto")
+        self.attention_backend = "flex_attention"
+        self.qk_prepare_backend = "eager"
+
+        if self.attention_type == "kimi_delta_attention":
+            from aspec.models.draft.kda import KDALayer
+
+            self.kda_layer = KDALayer(config, layer_idx)
+            return
+
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=False)
@@ -365,7 +393,6 @@ class DFlashAttention(nn.Module):
         self.q_norm = DFlashRMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = DFlashRMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
-        self.attention_type = config.layer_types[layer_idx]
         rope_base = (
             config.compress_rope_theta
             if self.attention_type == "compressed_sparse_attention"
@@ -378,30 +405,28 @@ class DFlashAttention(nn.Module):
             rope_parameters=(None if self.attention_type == "compressed_sparse_attention"
                              else resolve_dflash_rope_parameters(config)),
         )
-        self.csa_layer = None
         if self.attention_type == "compressed_sparse_attention":
             from aspec.models.draft.csa import CSALayer
 
             self.csa_layer = CSALayer(config, layer_idx)
-        self.qsa_layer = None
         if self.attention_type == "qwen_sparse_attention":
             from aspec.models.draft.qsa import QSALayer
 
             self.qsa_layer = QSALayer(config, layer_idx)
-        self.dsa_layer = None
         if self.attention_type == "deepseek_sparse_attention":
             from aspec.models.draft.dsa import DSALayer
 
             self.dsa_layer = DSALayer(config, layer_idx)
-        self.csa_indexer_loss_per_query = None
-        self.qsa_indexer_loss_per_query = None
-        self.dsa_indexer_loss_per_query = None
-        self.attention_observation = None
-        self.cudnn_gqa_mode = getattr(config, "cudnn_gqa_mode", "auto")
-        self.attention_backend = "flex_attention"
-        self.qk_prepare_backend = "eager"
 
     def set_attention_backend(self, attention_backend: str) -> None:
+        if self.kda_layer is not None:
+            if attention_backend not in {"sdpa", "flex_attention", "cudnn_flex_attention"}:
+                raise NotImplementedError(
+                    "KDA Draft layers support sdpa, flex_attention or cudnn_flex_attention "
+                    f"as the outer hybrid attention backend, got {attention_backend!r}"
+                )
+            self.attention_backend = attention_backend
+            return
         if self.dsa_layer is not None and attention_backend != "flex_attention":
             raise NotImplementedError("DSA uses flex_attention dense execution or the fa4 THD path")
         if self.csa_layer is not None and attention_backend != "flex_attention":
@@ -449,6 +474,7 @@ class DFlashAttention(nn.Module):
         qsa_layout=None,
         dsa_metadata=None,
         dsa_layout=None,
+        kda_metadata=None,
         *,
         draft_attention_mask=None,
     ) -> torch.Tensor:
@@ -463,6 +489,17 @@ class DFlashAttention(nn.Module):
             draft_attention_mask: Boolean [B, draft_len, ctx_len+draft_len]
                 mask for the non-FlexAttention fallback (for example CPU tests).
         """
+        if self.kda_layer is not None:
+            if direct_cp_metadata is not None:
+                raise NotImplementedError("KDA Draft does not yet support Direct CP")
+            if kda_metadata is None:
+                raise ValueError("KDA Draft requires anchor/document KDAForwardMetadata")
+            out, self.attention_observation = self.kda_layer(
+                draft_hidden=draft_hidden,
+                context_hidden=context_hidden,
+                metadata=kda_metadata,
+            )
+            return out
         bsz, draft_len, _ = draft_hidden.shape
         ctx_len = context_hidden.shape[1]
         if (
@@ -1036,6 +1073,7 @@ class DFlashDecoderLayer(nn.Module):
         qsa_layout=None,
         dsa_metadata=None,
         dsa_layout=None,
+        kda_metadata=None,
         *,
         draft_attention_mask=None,
     ) -> torch.Tensor:
@@ -1056,6 +1094,8 @@ class DFlashDecoderLayer(nn.Module):
             }
         if hasattr(self.self_attn, "dsa_layer"):
             qsa_kwargs.update(dsa_metadata=dsa_metadata, dsa_layout=dsa_layout)
+        if hasattr(self.self_attn, "kda_layer"):
+            qsa_kwargs["kda_metadata"] = kda_metadata
         if draft_attention_mask is not None:
             qsa_kwargs["draft_attention_mask"] = draft_attention_mask
         draft_hidden = self.self_attn(
@@ -1288,6 +1328,14 @@ class DFlashDraftModel(PreTrainedModel):
             if csa_layer is not None:
                 csa_layer.keep_projection_fp32()
 
+    def keep_kda_gate_precision(self) -> None:
+        """Restore FP32 precision on KDA A_log and dt_bias gate parameters."""
+
+        for layer in self.layers:
+            kda_layer = getattr(layer.self_attn, "kda_layer", None)
+            if kda_layer is not None:
+                kda_layer.keep_gate_precision_fp32()
+
     def extract_context_feature(
         self, all_hidden_states: List[torch.Tensor] | torch.Tensor
     ) -> torch.Tensor:
@@ -1328,6 +1376,7 @@ class DFlashDraftModel(PreTrainedModel):
         csa_metadata=None,
         qsa_metadata=None,
         dsa_metadata=None,
+        kda_metadata=None,
         return_router_logits: bool = False,
         *,
         draft_attention_mask=None,
@@ -1464,6 +1513,7 @@ class DFlashDraftModel(PreTrainedModel):
                 qsa_layout=qsa_layout,
                 dsa_metadata=dsa_metadata,
                 dsa_layout=dsa_layout,
+                kda_metadata=kda_metadata,
             )
             if csa_layer is not None:
                 csa_indexer_losses.append(layer.self_attn.csa_indexer_loss_per_query)
@@ -1475,13 +1525,13 @@ class DFlashDraftModel(PreTrainedModel):
             module_observation = getattr(
                 layer.self_attn, "attention_observation", None
             )
-            # Sparse-family layers report their executed policy even when the
+            # Sparse/KDA layers report their executed policy even when the
             # non-packed kernel has no THD execution metadata (e.g. evaluation).
             if isinstance(module_observation, dict) and (
                 module_observation.get("qkv_format")
                 or module_observation.get("type") in {
                     "compressed_sparse_attention", "qwen_sparse_attention",
-                    "deepseek_sparse_attention",
+                    "deepseek_sparse_attention", "kimi_delta_attention",
                 }
             ):
                 attention_observation = module_observation

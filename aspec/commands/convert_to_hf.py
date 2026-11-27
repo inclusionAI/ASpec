@@ -244,6 +244,8 @@ def _serving_config(raw_config: dict) -> dict:
         )
     if attention.get("dsa") is not None:
         raise NotImplementedError("DSA Draft requires native --format aspec export")
+    if attention.get("kda") is not None:
+        raise NotImplementedError("KDA Draft requires native --format aspec export")
     resolve_draft_structure(raw_config)
     config = json.loads(json.dumps(raw_config))
     if config.get("architectures") == ["DFlash2DraftModel"]:
@@ -460,6 +462,8 @@ def convert_checkpoint(
     model = AutoEagle3DraftModel.from_config(config, torch_dtype=final_dtype if artifact_format == "aspec" else checkpoint_dtype)
     if artifact_format == "aspec" and hasattr(model, "keep_csa_projection_precision"):
         model.keep_csa_projection_precision()
+    if artifact_format == "aspec" and hasattr(model, "keep_kda_gate_precision"):
+        model.keep_kda_gate_precision()
     if artifact_format == "aspec" and output_dtype is not None:
         expected = model.state_dict()
         state_dict = {key: value.to(expected[key].dtype) if value.is_floating_point() else value
@@ -548,6 +552,8 @@ def convert_checkpoint(
         manifest["draft_structure"]["attention"].update(csa=policy["csa"], qsa=policy["qsa"])
         if policy.get("dsa") is not None:
             manifest["draft_structure"]["attention"]["dsa"] = policy["dsa"]
+        if policy.get("kda") is not None:
+            manifest["draft_structure"]["attention"]["kda"] = policy["kda"]
         algorithm = training_contract["algorithm"]
         block_proposal = algorithm in {"dspark", "dflash"} and not raw_config.get("mtp_conditioning")
         domino_proposal = algorithm == "domino" and not raw_config.get("mtp_conditioning")
