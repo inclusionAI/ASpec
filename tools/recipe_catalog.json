@@ -99,6 +99,17 @@
     "draft_gpus": 1,
     "native_only_export": false
   },
+  "ling-tiny-dflash": {
+    "configs": [
+      "configs/recipes/ling3_tiny_dflash.yaml"
+    ],
+    "model": "Ling-3.0-tiny",
+    "nodes": 1,
+    "gpus": 3,
+    "target_gpus": 1,
+    "draft_gpus": 2,
+    "native_only_export": false
+  },
   "ling-flash": {
     "configs": [
       "configs/recipes/ling3_flash_dspark.yaml"

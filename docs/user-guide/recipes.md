@@ -26,6 +26,7 @@ connections on your hardware before training.
 | `dmtp` | Qwen3.5-9B / MTP-conditioned DSpark | 1 node, 8 GPUs: 4T + 4D; 4K, CP1 | Train a Draft conditioned on the frozen native predictor; native assets |
 | `native-mtp` | Qwen3.5-9B / native predictor | 1 node, 3 GPUs: 1T + 2D; 4K | Fine-tune the Target's native predictor |
 | `ling-tiny` | Ling-3.0-tiny / Dense DSpark | 1 node, 2 GPUs: 1T + 1D; 4K | Train a small Ling Draft |
+| `ling-tiny-dflash` | Ling-3.0-tiny / DFlash | 1 node, 3 GPUs: 1T + 2D; 4K | Train a block-parallel DFlash Draft against Ling-3.0-tiny |
 | `ling-flash` | Ling-3.0-flash / Dense DSpark | 1 node, 3 GPUs: 2T (TP2) + 1D; 4K | Train against a larger Ling Target |
 | `ling-flash31` | Ling-3.1-flash / MLA + LingMoE DSpark | 1 node, 8 GPUs: 4T (TP4/EP4) + 4D; 4K | Train a structured Draft against the FP8 Ling Target |
 | `shared-target` | Qwen3-8B / two independent DSpark Drafts | 1 node, 8 GPUs: 4T + 2D × 2; 4K | Compare independent Drafts sharing Target features |

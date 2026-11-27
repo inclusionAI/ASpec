@@ -21,6 +21,10 @@ RAY_ADDRESS=local aspec --config configs/recipes/qwen3_8b_eagle3.yaml \
 ```
 
 DSpark retains CE/L1/Markov/confidence semantics; DFlash does not use those auxiliary targets.
+Ling targets reuse the same DFlash trainer. `configs/recipes/ling3_tiny_dflash.yaml` binds
+Ling-3.0-tiny's capture layers `[1, 6, 11, 16, 21]`, frozen embedding/head/norm keys, the `ling3`
+template and gMASK 156894; it starts with one Target and two Draft GPUs.
+
 EAGLE3 uses recurrent TTT and its selected distillation objective. Its pruned vocabulary preserves
 the checkpoint's `d2t/t2d` mapping across recovery/export. Teacher argmax outside the selected
 vocabulary is filtered; omitted probability mass is not reassigned to the reduced head.

@@ -7,6 +7,7 @@ tokens or feature-layer offsets. Model/dataset licenses are independent of ASpec
 | Target | YAML | Starting allocation | Draft |
 | --- | --- | --- | --- |
 | Ling-3.0-tiny | `configs/recipes/ling3_tiny_dspark.yaml` | 1 Target + 1 Draft GPU | Two-layer Dense DSpark |
+| Ling-3.0-tiny DFlash | `configs/recipes/ling3_tiny_dflash.yaml` | 1 Target + 2 Draft GPUs | Five-layer Dense DFlash |
 | Ling-3.0-flash BF16 | `configs/recipes/ling3_flash_dspark.yaml` | TP2 Target + 1 Draft GPU | Five-layer Dense DSpark |
 | Ling-3.1-flash FP8 | `configs/recipes/ling31_flash_mla_moe_dspark.yaml` | TP4/EP4 Target + 4 Draft GPUs | Five-layer BF16 materialized MLA + Ling MoE |
 
@@ -78,10 +79,11 @@ properly prepared compatible data supplied by the user.
 Use [exact recovery](training.md) with the same model/data/routing and LR horizon, a complete
 checkpoint and a new output directory. Ling MoE router bias/control state is part of recovery.
 
-Dense Ling DSpark uses faithful SGLang-format export with the correct embedding key. Qwen/Ling
-MoE export declares the `dflash_moe_v1` loader requirement and the verified `moe_ep_size=1` boundary;
-it is not an expert-parallel serving promise. MLA + MoE requires `--format aspec` and strict
-native loading. Target hybrid KDA/MLA does not make every Draft structure or Target cache compatible.
+Dense Ling DSpark and DFlash drafts share the faithful SGLang-format export boundary; supply the
+Target path and the Ling embedding key explicitly. Qwen/Ling MoE export declares the
+`dflash_moe_v1` loader requirement and the verified `moe_ep_size=1` boundary; it is not an
+expert-parallel serving promise. MLA + MoE requires `--format aspec` and strict native loading.
+Target hybrid KDA/MLA does not make every Draft structure or Target cache compatible.
 
 Short train/resume/export checks establish functionality. They do not establish convergence,
 acceptance or decode acceleration. See [support](../support.md) and [structure choices](structures.md).
