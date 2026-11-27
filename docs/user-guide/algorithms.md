@@ -161,6 +161,36 @@ python -m tools.stitch_native_mtp --target /path/to/Qwen3.5-9B \
 The original Target is not overwritten. Official SGLang consumption selects `EAGLE`, not a `MTP`
 flag. A format manifest does not replace testing the particular exported asset with its consumer.
 
+### Independent prediction layers
+
+To train three independent predictors, use the 9B recipe with the three-layer Draft config.
+Set the training and evaluation data paths as for the single-layer recipe.
+
+```bash
+aspec --config configs/recipes/qwen3_5_9b_mtp.yaml \
+  model.draft_model_config=aspec/config/qwen3_5_9b_mtp_3layer_draft_config.json \
+  output_dir=outputs/qwen3.5-9b-mtp-3layer
+```
+
+Each predictor starts from the same published Qwen MTP weights and owns its two input
+norms, fusion projection, decoder and output norm. At depth one it consumes the Target
+feature. Later depths consume the preceding predictor's normalized output. All depths
+share the frozen Target embedding and output head. The outer Draft `num_hidden_layers`
+selects the number of predictors. With multiple predictors it must equal `training.mtp_steps`.
+The Target's nested `native_config` still describes the published single-layer MTP.
+
+Resume from a complete training checkpoint using the same Draft configuration.
+Export the trained predictors together with the frozen embedding and output head.
+
+```bash
+aspec export --input-dir /path/to/iter_checkpoint --format aspec --verify \
+  --output-dir outputs/qwen3.5-9b-mtp-3layer-export
+```
+
+Reload with `aspec.draft_artifact.load_native_draft`. Pass the zero-based `depth` to
+`predict` at each step. Measuring decoding acceptance requires a serving consumer
+that selects the corresponding predictor at each depth.
+
 ## Medusa heads-only
 
 `aspec/config/medusa_qwen3_8b_draft_config.json` trains K parallel heads on the frozen Target's

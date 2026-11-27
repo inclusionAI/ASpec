@@ -35,7 +35,7 @@ class NativeMTPConfig(PretrainedConfig):
     model_type = "aspec_native_mtp"
     has_no_defaults_at_init = True
 
-    def __init__(self, native_config=None, **kwargs):
+    def __init__(self, native_config=None, num_hidden_layers=1, **kwargs):
         if native_config is None or native_config.get("model_type") != "qwen3_5_text":
             raise ValueError("Native MTP currently requires a Qwen3.5 Dense text config")
         native = copy.deepcopy(native_config)
@@ -59,8 +59,10 @@ class NativeMTPConfig(PretrainedConfig):
         vocab = native["vocab_size"]
         if kwargs.get("draft_vocab_size", vocab) != vocab:
             raise ValueError("Native MTP uses the frozen Target vocabulary/head")
-        fixed = dict(architectures=["NativeMTPDraftModel"], num_hidden_layers=1,
-                      layer_types=["full_attention"], draft_vocab_size=vocab,
+        if type(num_hidden_layers) is not int or num_hidden_layers < 1:
+            raise ValueError("Native MTP Draft num_hidden_layers must be a positive integer")
+        fixed = dict(architectures=["NativeMTPDraftModel"], num_hidden_layers=num_hidden_layers,
+                      layer_types=["full_attention"] * num_hidden_layers, draft_vocab_size=vocab,
                       target_hidden_size=native["hidden_size"],
                       target_num_hidden_layers=native["num_hidden_layers"],
                       target_layer_ids=[native["num_hidden_layers"] - 1],
@@ -99,12 +101,17 @@ class NativeMTPDraftModel(Eagle3DraftModel):
         self.target_vocab_size = self.vocab_size = native.vocab_size
         self.embed_tokens = nn.Embedding(native.vocab_size, native.hidden_size)
         self.lm_head = nn.Linear(native.hidden_size, native.vocab_size, bias=False)
-        self.pre_fc_norm_embedding = Qwen3_5RMSNorm(native.hidden_size, native.rms_norm_eps)
-        self.pre_fc_norm_hidden = Qwen3_5RMSNorm(native.hidden_size, native.rms_norm_eps)
-        self.fc = nn.Linear(native.hidden_size * 2, native.hidden_size, bias=False)
-        self.midlayer = Qwen3_5DecoderLayer(native, full_layers[-1])
-        self.norm = Qwen3_5RMSNorm(native.hidden_size, native.rms_norm_eps)
-        self.rotary_emb = Qwen3_5TextRotaryEmbedding(native)
+        # Existing one-layer checkpoints keep their original unprefixed keys.
+        self.predictors = nn.ModuleList()
+        if config.num_hidden_layers > 1:
+            self.predictors.extend(nn.Module() for _ in range(config.num_hidden_layers))
+        for block in self.predictors or (self,):
+            block.pre_fc_norm_embedding = Qwen3_5RMSNorm(native.hidden_size, native.rms_norm_eps)
+            block.pre_fc_norm_hidden = Qwen3_5RMSNorm(native.hidden_size, native.rms_norm_eps)
+            block.fc = nn.Linear(native.hidden_size * 2, native.hidden_size, bias=False)
+            block.midlayer = Qwen3_5DecoderLayer(native, full_layers[-1])
+            block.norm = Qwen3_5RMSNorm(native.hidden_size, native.rms_norm_eps)
+            block.rotary_emb = Qwen3_5TextRotaryEmbedding(native)
         self.norm_output = False
         self.freeze_embedding()
         self.freeze_lm_head()
@@ -118,14 +125,20 @@ class NativeMTPDraftModel(Eagle3DraftModel):
     @torch.no_grad()
     def initialize_native_weights(self, target_model_path):
         """Load only native MTP tensors, never the full verifier transformer."""
-        state = self.state_dict()
-        for name, destination in state.items():
+        blocks = self.predictors or (self,)
+        for name, destination in blocks[0].state_dict().items():
             if name in {"embed_tokens.weight", "lm_head.weight"}:
                 continue
             source = load_tensor_from_pretrained(target_model_path, self.native_key(name))
             if source.shape != destination.shape:
                 raise ValueError("Native MTP tensor shape mismatch: " + name)
             destination.copy_(source)
+        for block in blocks[1:]:
+            block.load_state_dict(blocks[0].state_dict(), strict=True)
+
+    @property
+    def layers(self):
+        return [block.midlayer for block in self.predictors or (self,)]
 
     @torch.no_grad()
     def validate_target_binding(self, target_model_path, *, embedding_key, lm_head_key):
@@ -142,14 +155,20 @@ class NativeMTPDraftModel(Eagle3DraftModel):
                 if not torch.equal(actual[start:start + 1024].cpu(), reference):
                     raise ValueError("Native MTP frozen tensor differs from its Target: " + name)
 
-    def predict(self, hidden_states, input_ids, position_ids, layout=None):
-        return self.predict_embeddings(hidden_states, self.embed_tokens(input_ids), position_ids, layout)
+    def predict(self, hidden_states, input_ids, position_ids, layout=None, *, depth=None):
+        return self.predict_embeddings(hidden_states, self.embed_tokens(input_ids), position_ids,
+                                       layout, depth=depth)
 
-    def predict_embeddings(self, hidden_states, input_embeds, position_ids, layout=None):
+    def predict_embeddings(self, hidden_states, input_embeds, position_ids, layout=None, *, depth=None):
         """Shared native mathematics for trainable MTP and frozen feature extraction."""
         from aspec.models.mtp_features import predict_mtp_embeddings
 
-        return predict_mtp_embeddings(self, hidden_states, input_embeds, position_ids, layout)
+        block = self
+        if self.predictors:
+            if type(depth) is not int or not 0 <= depth < len(self.predictors):
+                raise ValueError(f"Independent MTP requires a depth in [0, {len(self.predictors)})")
+            block = self.predictors[depth]
+        return predict_mtp_embeddings(block, hidden_states, input_embeds, position_ids, layout)
 
     def embed_input_ids(self, input_ids):
         return self.embed_tokens(input_ids)
@@ -165,12 +184,16 @@ class NativeMTPDraftModel(Eagle3DraftModel):
         raise NotImplementedError("Native MTP uses predict(), not EAGLE suffix attention/cache")
 
     def state_dict_for_serving(self, state_dict=None):
+        if self.predictors:
+            raise NotImplementedError("Independent MTP predictors require --format aspec")
         state = self.state_dict() if state_dict is None else state_dict
         return {("model.embed_tokens.weight" if name == "embed_tokens.weight" else
                  name if name == "lm_head.weight" else self.native_key(name)): value
                 for name, value in state.items()}
 
     def state_dict_from_serving(self, tensors):
+        if self.predictors:
+            raise ValueError("Independent MTP predictors require an ASpec native asset")
         names = {("model.embed_tokens.weight" if name == "embed_tokens.weight" else
                   name if name == "lm_head.weight" else self.native_key(name)): name
                  for name in self.state_dict()}

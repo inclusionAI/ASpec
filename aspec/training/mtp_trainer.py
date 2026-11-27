@@ -16,12 +16,24 @@
 
 from types import SimpleNamespace
 
+from aspec.config.draft_attention import resolve_draft_attention, resolve_draft_head_layout
 from aspec.models.mtp import MTPModel
 from aspec.training import checkpoint
 from aspec.training.eagle3_trainer import Eagle3Trainer
+from aspec.training.trainer import Trainer
 
 
 class MTPTrainer(Eagle3Trainer):
+    def get_feature_contract_status(self):
+        status = Trainer.get_feature_contract_status(self)
+        if status.get("draft_attention_observations"):
+            raw = self.draft_model.config.to_dict()
+            status["draft_attention"] = {
+                **resolve_draft_attention(raw), "head_layout": resolve_draft_head_layout(raw),
+                "forward_observed": True,
+            }
+        return status
+
     def _create_training_model(self, draft_model):
         return MTPModel(draft_model, length=self.args.mtp_steps,
                         gradient_checkpointing=self.args.gradient_checkpointing)
