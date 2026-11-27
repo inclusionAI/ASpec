@@ -77,6 +77,7 @@ def _create_dflash_mask_mod(
     sliding_window: int | None = None,
     ctx_doc_ids: Optional[torch.Tensor] = None,
     context_window: int | None = None,
+    attention_mask: Optional[torch.Tensor] = None,
 ):
     """Create a mask_mod function for DFlash block-causal attention.
 
@@ -103,6 +104,9 @@ def _create_dflash_mask_mod(
             context_index = torch.where(is_context, kv_idx, torch.zeros_like(kv_idx))
             context_doc = ctx_doc_ids[b, context_index]
             mask_context = mask_context & (anchor_doc >= 0) & (context_doc == anchor_doc)
+        if attention_mask is not None:
+            context_index = torch.where(is_context, kv_idx, torch.zeros_like(kv_idx))
+            mask_context = mask_context & attention_mask[b, context_index].bool()
 
         is_draft = kv_idx >= ctx_len
         kv_block_id = (kv_idx - ctx_len) // block_size
@@ -137,6 +141,7 @@ def _create_dflash_dense_mask(
     ctx_len: int,
     block_size: int,
     is_causal: bool,
+    attention_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Materialize the block mask for backends without FlexAttention (CPU).
 
@@ -157,6 +162,14 @@ def _create_dflash_dense_mask(
     mask_context = is_context.unsqueeze(0).unsqueeze(0) & (
         kv_index.unsqueeze(0).unsqueeze(0) < anchor.unsqueeze(-1)
     )
+    if attention_mask is not None:
+        if attention_mask.shape != (anchor_positions.shape[0], ctx_len):
+            raise ValueError("DFlash attention_mask must match [B, context length]")
+        context_valid = torch.zeros(
+            attention_mask.shape[0], kv_len, dtype=torch.bool, device=device
+        )
+        context_valid[:, :ctx_len] = attention_mask.to(device=device).bool()
+        mask_context = mask_context & context_valid.unsqueeze(1)
     is_draft = kv_index >= ctx_len
     kv_block = (kv_index - ctx_len) // block_size
     mask_draft = is_draft.unsqueeze(0).unsqueeze(0) & (
@@ -354,6 +367,7 @@ class DFlashModel(nn.Module):
                 )[2] if per_document else self.num_anchors),
                 block_size=self.block_size, ctx_doc_ids=ctx_doc_ids,
                 allow_partial_last_target=per_document,
+                attention_mask=attention_mask,
             )
         generator = None
         if self.deterministic_anchor_sampling:
@@ -856,6 +870,7 @@ class DFlashModel(nn.Module):
                             context_length=seq_len,
                             block_size=self.block_size,
                             ctx_doc_ids=ctx_doc_ids,
+                            attention_mask=attention_mask,
                             **options,
                         )
                     else:
@@ -865,6 +880,7 @@ class DFlashModel(nn.Module):
                             ctx_len=seq_len,
                             block_size=self.block_size,
                             ctx_doc_ids=ctx_doc_ids,
+                            attention_mask=attention_mask,
                             **options,
                         )
                         mask_cache[cache_key] = compile_friendly_create_block_mask(
@@ -911,6 +927,7 @@ class DFlashModel(nn.Module):
                             seq_len,
                             self.block_size,
                             is_causal=causal,
+                            attention_mask=attention_mask,
                         )
                     dense_masks.append(dense_cache[causal])
                 else:

@@ -74,6 +74,16 @@ examples (FlexAttention, CP1, non-packing, Store/TCP). The trainer supports a li
 Scope is dense full attention with padded inputs only. Native export, recipe catalog
 promotion, Target bindings and consumer/acceptance validation remain pending.
 
+## DSpine
+
+The [DSpine model/loss API](dspine.md) adds adjacent-token injection, persistent
+transfer codes and last-write candidate refinement on the retained DFlash block
+backbone. The objective combines backbone CE/L1, refinement CE/L1 and a
+transfer-code alignment term with an explicit warmup/replacement schedule. This
+increment is model/loss only: dense full attention, padded inputs, CP1 and
+non-packing. Trainer, recipe, exact resume, export and consumer/acceptance
+validation remain pending.
+
 ## EAGLE4: two stages
 
 The Draft stage trains the full recurrent model. The candidate stage freezes the entire Draft,

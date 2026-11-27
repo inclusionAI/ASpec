@@ -60,6 +60,7 @@ def build_dspark_mla_mask(
     sliding_window: int | None = None,
     context_window: int | None = None,
     ctx_doc_ids: torch.Tensor | None = None,
+    attention_mask: torch.Tensor | None = None,
 ) -> "CudnnFlexMask":
     """Build exact interval endpoints for the DSpark context+draft mask.
 
@@ -118,11 +119,30 @@ def build_dspark_mla_mask(
     )
 
     context_begin = torch.zeros_like(query_anchors)
+    if attention_mask is not None:
+        expected = (batch_size, context_length)
+        if attention_mask.shape != expected:
+            raise ValueError(
+                f"attention_mask must have shape {expected}, got {attention_mask.shape}"
+            )
+        mask = attention_mask.to(anchors.device).bool()
+        any_valid = mask.any(dim=1)
+        starts = mask.float().argmax(dim=1)
+        ends = context_length - 1 - mask.flip(1).float().argmax(dim=1)
+        counts = mask.sum(dim=1)
+        if bool(((counts != (ends - starts + 1)) & any_valid).any()):
+            raise NotImplementedError(
+                "cuDNN DFlash masks require contiguous valid context spans"
+            )
+        valid = valid & any_valid[:, None]
+        valid = valid & (query_anchors <= ends[:, None])
+        context_begin = torch.maximum(context_begin, starts[:, None])
     if ctx_doc_ids is not None:
         run_starts = _document_run_starts(ctx_doc_ids)
-        context_begin = torch.gather(run_starts, 1, anchors).repeat_interleave(
+        document_begin = torch.gather(run_starts, 1, anchors).repeat_interleave(
             block_size, dim=1
         )
+        context_begin = torch.maximum(context_begin, document_begin)
         anchor_docs = torch.gather(ctx_doc_ids, 1, anchors).repeat_interleave(
             block_size, dim=1
         )
@@ -153,7 +173,12 @@ def build_dspark_mla_mask(
             local_base + torch.clamp(query_offsets + sliding_window, max=block_size),
         )
 
-    if ctx_doc_ids is None and sliding_window is None and context_window is None:
+    if (
+        ctx_doc_ids is None
+        and sliding_window is None
+        and context_window is None
+        and attention_mask is None
+    ):
         endpoints = torch.stack((context_end, local_begin, local_end), dim=1)
     else:
         zeros = torch.zeros_like(query_anchors)
