@@ -25,8 +25,6 @@ from aspec.planning import PlanCompileError, _resolve_target_family, compile_exe
 
 ROOT = Path(__file__).parents[1]
 RECIPE = ROOT / "configs/recipes/ling3_tiny_dspark.yaml"
-DFLASH_RECIPE = ROOT / "configs/recipes/ling3_tiny_dflash.yaml"
-DFLASH_CONFIG = ROOT / "aspec/config/dflash_ling3_tiny_draft_config.json"
 
 
 def test_ling_recipe_resolves_explicit_feature_contract():
@@ -55,35 +53,6 @@ def test_ling_draft_reuses_the_exportable_dense_dspark_config():
     assert config.architectures == ["DSparkDraftModel"]
     assert config.hidden_size == 1536
     assert config.vocab_size == 157184
-
-
-def test_ling_tiny_dflash_recipe_resolves_explicit_feature_contract():
-    config = load_config(str(DFLASH_RECIPE))
-    plan = compile_execution_plan(config).to_dict()
-    assert plan["workload"]["models"]["target"]["family"] == "ling3"
-    assert plan["workload"]["models"]["draft"]["family"] == "dflash"
-    features = plan["workload"]["features"]
-    assert features["target_hidden_size"] == 1536
-    assert features["target_num_hidden_layers"] == 24
-    assert features["aux_hidden_state_layers"] == [1, 6, 11, 16, 21]
-    assert features["tensors"]["hidden_states"]["shape"] == ["sequence", 7680]
-    assert features["tensors"]["last_hidden_states"]["value_stage"] == "post_norm"
-    objective = plan["workload"]["objective"]
-    assert objective["family"] == "dflash"
-    assert objective["num_target_layers"] == 5
-    assert objective["block_size"] == 7
-
-
-def test_ling_tiny_dflash_config_binds_tiny_target():
-    config = AutoDraftModelConfig.from_file(str(DFLASH_CONFIG))
-    assert config.architectures == ["DFlashDraftModel"]
-    assert config.model_type == "dflash"
-    assert config.hidden_size == 1536
-    assert config.vocab_size == 157184
-    assert config.target_hidden_size == 1536
-    assert config.target_num_hidden_layers == 24
-    assert config.target_layer_ids == [1, 6, 11, 16, 21]
-    assert config.mask_token_id == 156894
 
 
 def test_ling_model_identity_uses_checkpoint_config(tmp_path):

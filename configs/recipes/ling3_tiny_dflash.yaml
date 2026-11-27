@@ -2,7 +2,7 @@
 # Hyperparameters are not a convergence/quality claim; see docs/user-guide/recipes.md.
 # Ling-3.0-tiny BF16 Target + five-layer dense DFlash Draft.
 # Data must use Ling's checkpoint chat template; see the recipe document.
-# Initial three-GPU validation plan. Scale replicas from measured service rates.
+# Starting three-GPU allocation. Scale replicas from measured service rates.
 model:
   target_model_path: ${oc.env:ASPEC_TARGET_MODEL,inclusionAI/Ling-3.0-tiny}
   native_context_length: 131072
